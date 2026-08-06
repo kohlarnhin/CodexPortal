@@ -1,6 +1,12 @@
 import React from 'react';
-import { Account } from '../types/account';
+import { Account, AccountUsageWindow } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import {
+  formatUsageResetAt,
+  formatUsageSyncedAt,
+  formatUsageWindowLabel,
+  getRemainingPercent,
+} from '../utils/accountUsage';
 
 interface AccountCardProps {
   account: Account;
@@ -9,9 +15,68 @@ interface AccountCardProps {
   onSetActive: (id: string) => void;
   onEdit: (account: Account) => void;
   onDelete: (id: string) => void;
+  onRefreshUsage: (id: string) => void;
+  isUsageRefreshing: boolean;
 }
 
-const AccountCard: React.FC<AccountCardProps> = ({ account, isActive, isEmailMaskingEnabled, onSetActive, onEdit, onDelete }) => {
+const CompactUsageMeter = ({
+  window,
+  kind,
+}: {
+  window: AccountUsageWindow;
+  kind: 'primary' | 'secondary';
+}) => {
+  const remainingPercent = getRemainingPercent(window);
+  const progressColor = remainingPercent <= 20
+    ? 'bg-[#EF4444]'
+    : remainingPercent <= 50
+      ? 'bg-[#F59E0B]'
+      : 'bg-[#10B981]';
+
+  return (
+    <div className="min-w-0 rounded-lg border border-[#EAEAEA] bg-[#FAFAFA] px-3 py-2.5">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="truncate text-[11px] font-semibold text-[#444444]">
+          {formatUsageWindowLabel(window, kind)}
+        </span>
+        <span className="shrink-0 font-mono text-[12px] font-bold text-black">
+          剩余 {Math.round(remainingPercent)}%
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-[#EAEAEA]">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${progressColor}`}
+          style={{ width: `${remainingPercent}%` }}
+        />
+      </div>
+      <p className="mt-1.5 truncate text-[10px] text-[#888888]">
+        {formatUsageResetAt(window.resetsAt)}
+      </p>
+    </div>
+  );
+};
+
+const AccountCard: React.FC<AccountCardProps> = ({
+  account,
+  isActive,
+  isEmailMaskingEnabled,
+  onSetActive,
+  onEdit,
+  onDelete,
+  onRefreshUsage,
+  isUsageRefreshing,
+}) => {
+  const usageWindows: Array<{
+    window: AccountUsageWindow;
+    kind: 'primary' | 'secondary';
+  }> = [];
+  if (account.usage?.primary) {
+    usageWindows.push({ window: account.usage.primary, kind: 'primary' });
+  }
+  if (account.usage?.secondary) {
+    usageWindows.push({ window: account.usage.secondary, kind: 'secondary' });
+  }
+
   return (
     <div className={`snap-start flex flex-col relative bg-white rounded-xl border-2 transition-all duration-200 ${
       isActive ? 'border-black' : 'border-[#EAEAEA] hover:border-[#D0D0D0]'
@@ -31,6 +96,29 @@ const AccountCard: React.FC<AccountCardProps> = ({ account, isActive, isEmailMas
           
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => onRefreshUsage(account.id)}
+                disabled={!account.canRefreshUsage || isUsageRefreshing}
+                title={account.canRefreshUsage ? '刷新额度' : '仅 Personal Access Token 账号支持额度刷新'}
+                aria-label="刷新额度"
+                className="w-7 h-7 flex items-center justify-center rounded text-[#888888] hover:bg-[#F5F5F5] hover:text-black transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={isUsageRefreshing ? 'animate-spin' : ''}
+                >
+                  <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+                  <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+                </svg>
+              </button>
               <button 
                 onClick={() => onEdit(account)} 
                 title="编辑账号"
@@ -63,6 +151,32 @@ const AccountCard: React.FC<AccountCardProps> = ({ account, isActive, isEmailMas
             </div>
           </div>
         </div>
+
+        <div className="mb-4">
+          {usageWindows.length > 0 ? (
+            <div className={`grid gap-3 ${usageWindows.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {usageWindows.map(({ window, kind }) => (
+                <CompactUsageMeter key={kind} window={window} kind={kind} />
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-[62px] items-center gap-3 rounded-lg border border-dashed border-[#DADADA] bg-[#FAFAFA] px-3.5 py-3">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[#EAEAEA] bg-white text-[#777777]">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 4-7"/></svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-[#555555]">
+                  {account.canRefreshUsage ? '尚未同步额度' : '暂不支持额度同步'}
+                </p>
+                <p className="mt-0.5 truncate text-[10px] text-[#999999]">
+                  {account.canRefreshUsage
+                    ? '点击刷新按钮获取最新额度'
+                    : '仅 Personal Access Token 账号支持'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
         
         <div className="flex items-center justify-between pt-4 border-t border-[#EAEAEA] mt-auto">
           <div className="flex items-center gap-2 overflow-hidden mr-4">
@@ -78,7 +192,9 @@ const AccountCard: React.FC<AccountCardProps> = ({ account, isActive, isEmailMas
             )}
           </div>
           <span className="text-[11px] text-[#999999] shrink-0 font-mono">
-            更新于: {new Date(account.updatedAt).toLocaleDateString()}
+            {account.usage
+              ? formatUsageSyncedAt(account.usage.syncedAt)
+              : `账号更新于 ${new Date(account.updatedAt).toLocaleDateString()}`}
           </span>
         </div>
       </div>

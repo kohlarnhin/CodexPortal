@@ -1,19 +1,33 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
 import AccountCard from './AccountCard';
 import AccountModal from './AccountModal';
 import ConfirmModal from './ConfirmModal';
-import { Account, AccountFormData } from '../types/account';
+import { Account, AccountFormData, AccountUsage } from '../types/account';
 
 interface AccountListProps {
   isEmailMaskingEnabled: boolean;
+  usageRevision: number;
+  onRefreshUsage: (accountId: string) => Promise<AccountUsage>;
+  isUsageRefreshing: (accountId: string) => boolean;
 }
 
-const AccountList: React.FC<AccountListProps> = ({ isEmailMaskingEnabled }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount } = useAccounts();
+const AccountList: React.FC<AccountListProps> = ({
+  isEmailMaskingEnabled,
+  usageRevision,
+  onRefreshUsage,
+  isUsageRefreshing,
+}) => {
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, refresh } = useAccounts();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (usageRevision > 0) {
+      void refresh(false);
+    }
+  }, [refresh, usageRevision]);
 
   const handleAdd = () => {
     setEditingAccount(null);
@@ -26,12 +40,26 @@ const AccountList: React.FC<AccountListProps> = ({ isEmailMaskingEnabled }) => {
   };
 
   const handleSubmit = async (data: AccountFormData) => {
+    let savedAccount: Account;
     if (editingAccount) {
-      await updateAccount(editingAccount.id, data);
+      savedAccount = await updateAccount(editingAccount.id, data);
     } else {
-      await addAccount(data);
+      savedAccount = await addAccount(data);
     }
     setIsModalOpen(false);
+
+    if (savedAccount.canRefreshUsage) {
+      void handleRefreshUsage(savedAccount.id, true);
+    }
+  };
+
+  const handleRefreshUsage = async (accountId: string, accountWasJustSaved = false) => {
+    try {
+      await onRefreshUsage(accountId);
+    } catch (error: any) {
+      const prefix = accountWasJustSaved ? '账号已保存，但额度刷新失败' : '额度刷新失败';
+      alert(`${prefix}: ${error?.message || error?.toString() || '未知错误'}`);
+    }
   };
 
   if (isLoading) {
@@ -106,6 +134,8 @@ const AccountList: React.FC<AccountListProps> = ({ isEmailMaskingEnabled }) => {
                 }}
                 onEdit={handleEdit}
                 onDelete={(id) => setDeleteConfirmId(id)}
+                onRefreshUsage={(id) => void handleRefreshUsage(id)}
+                isUsageRefreshing={account.canRefreshUsage && isUsageRefreshing(account.id)}
               />
             </div>
           ))}

@@ -10,11 +10,13 @@ import UpdateModal from './components/UpdateModal';
 import Logo from './components/Logo';
 import { useUpdater } from './hooks/useUpdater';
 import { useEmailMasking } from './hooks/useEmailMasking';
+import { useAccountUsageScheduler } from './hooks/useAccountUsageScheduler';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const updater = useUpdater();
   const { isEmailMaskingEnabled, toggleEmailMasking } = useEmailMasking();
+  const usageScheduler = useAccountUsageScheduler();
 
   return (
     <>
@@ -161,12 +163,20 @@ function App() {
               <ActiveAccount
                 isEmailMaskingEnabled={isEmailMaskingEnabled}
                 onNavigateToAccounts={() => setActiveTab('accounts')}
+                usageRevision={usageScheduler.usageRevision}
+                onRefreshUsage={usageScheduler.refreshAccountUsage}
+                isUsageRefreshing={usageScheduler.isUsageRefreshing}
               />
             </div>
           )}
           {activeTab === 'accounts' && (
             <div className="flex-1 overflow-y-auto -mr-4 pr-4">
-              <AccountList isEmailMaskingEnabled={isEmailMaskingEnabled} />
+              <AccountList
+                isEmailMaskingEnabled={isEmailMaskingEnabled}
+                usageRevision={usageScheduler.usageRevision}
+                onRefreshUsage={usageScheduler.refreshAccountUsage}
+                isUsageRefreshing={usageScheduler.isUsageRefreshing}
+              />
             </div>
           )}
           {activeTab === 'settings' && (

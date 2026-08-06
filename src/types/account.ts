@@ -1,3 +1,15 @@
+export interface AccountUsageWindow {
+  usedPercent: number;
+  windowMinutes: number | null;
+  resetsAt: number | null;
+}
+
+export interface AccountUsage {
+  primary: AccountUsageWindow | null;
+  secondary: AccountUsageWindow | null;
+  syncedAt: string;
+}
+
 export interface Account {
   id: string;
   name: string;
@@ -6,6 +18,8 @@ export interface Account {
   createdAt: string;
   updatedAt: string;
   planType: 'weekly' | 'monthly';
+  usage: AccountUsage | null;
+  canRefreshUsage: boolean;
 }
 
 export interface AccountStore {
@@ -18,4 +32,9 @@ export interface AccountFormData {
   authJsonContent: string;
   notes: string;
   planType: 'weekly' | 'monthly';
+}
+
+export interface UsageRefreshSummary {
+  refreshedAccountIds: string[];
+  failedAccountIds: string[];
 }

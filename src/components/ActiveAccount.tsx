@@ -1,50 +1,86 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import { AccountUsage, AccountUsageWindow } from '../types/account';
+import {
+  formatUsageResetAt,
+  formatUsageSyncedAt,
+  formatUsageWindowLabel,
+  getRemainingPercent,
+} from '../utils/accountUsage';
 
 interface ActiveAccountProps {
   isEmailMaskingEnabled: boolean;
   onNavigateToAccounts: () => void;
+  usageRevision: number;
+  onRefreshUsage: (accountId: string) => Promise<AccountUsage>;
+  isUsageRefreshing: (accountId: string) => boolean;
 }
 
 const LinearProgress = ({ 
-  percentage, 
-  label, 
-  disabled = false,
+  window,
+  kind,
 }: { 
-  percentage: number;
-  label: string;
-  disabled?: boolean;
+  window: AccountUsageWindow;
+  kind: 'primary' | 'secondary';
 }) => {
+  const remainingPercent = getRemainingPercent(window);
+  const progressColor = remainingPercent <= 20
+    ? 'bg-[#EF4444]'
+    : remainingPercent <= 50
+      ? 'bg-[#F59E0B]'
+      : 'bg-[#10B981]';
+
   return (
-    <div className={`flex items-center gap-5 ${disabled ? 'opacity-50 grayscale' : ''}`}>
-      <div className="w-24 shrink-0 flex items-center gap-2">
-        <span className="text-[14px] font-medium text-[#333333] tracking-wide">{label}</span>
+    <div className="flex items-center gap-5">
+      <div className="w-32 shrink-0">
+        <span className="block text-[14px] font-medium text-[#333333] tracking-wide">
+          {formatUsageWindowLabel(window, kind)}
+        </span>
+        <span className="mt-1 block text-[10px] text-[#999999]">
+          {formatUsageResetAt(window.resetsAt)}
+        </span>
       </div>
       
       <div className="flex-1 h-2 bg-[#F0F0F0] rounded-full overflow-hidden">
         <div 
-          className={`h-full rounded-full transition-all duration-1000 ease-out ${disabled ? 'bg-[#E0E0E0]' : 'bg-[#10B981]'}`}
-          style={{ width: disabled ? '0%' : `${percentage}%` }}
+          className={`h-full rounded-full transition-all duration-1000 ease-out ${progressColor}`}
+          style={{ width: `${remainingPercent}%` }}
         />
       </div>
       
-      <div className="w-20 shrink-0 text-right">
-        {disabled ? (
-          <span className="text-[12px] font-medium text-[#999999] px-2 py-0.5 bg-[#F5F5F5] rounded">不适用</span>
-        ) : (
-          <div className="flex items-baseline justify-end gap-1">
-            <span className="text-[18px] font-bold text-black font-mono tracking-tight leading-none">{percentage}</span>
-            <span className="text-[12px] text-[#666666] font-medium">%</span>
-          </div>
-        )}
+      <div className="w-24 shrink-0 text-right">
+        <div className="flex items-baseline justify-end gap-1">
+          <span className="mr-1 text-[10px] font-medium text-[#777777]">剩余</span>
+          <span className="text-[18px] font-bold text-black font-mono tracking-tight leading-none">
+            {Math.round(remainingPercent)}
+          </span>
+          <span className="text-[12px] text-[#666666] font-medium">%</span>
+        </div>
       </div>
     </div>
   );
 };
 
-const ActiveAccount: React.FC<ActiveAccountProps> = ({ isEmailMaskingEnabled, onNavigateToAccounts }) => {
-  const { accounts, activeAccountId, isLoading } = useAccounts();
+const ActiveAccount: React.FC<ActiveAccountProps> = ({
+  isEmailMaskingEnabled,
+  onNavigateToAccounts,
+  usageRevision,
+  onRefreshUsage,
+  isUsageRefreshing,
+}) => {
+  const { accounts, activeAccountId, isLoading, refresh } = useAccounts();
+  const [usageError, setUsageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (usageRevision > 0) {
+      void refresh(false);
+    }
+  }, [refresh, usageRevision]);
+
+  useEffect(() => {
+    setUsageError(null);
+  }, [activeAccountId]);
 
   if (isLoading) {
     return <div className="p-8 text-[#666666]">加载中...</div>;
@@ -69,6 +105,27 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({ isEmailMaskingEnabled, on
       </div>
     );
   }
+
+  const usageWindows: Array<{
+    window: AccountUsageWindow;
+    kind: 'primary' | 'secondary';
+  }> = [];
+  if (activeAccount.usage?.primary) {
+    usageWindows.push({ window: activeAccount.usage.primary, kind: 'primary' });
+  }
+  if (activeAccount.usage?.secondary) {
+    usageWindows.push({ window: activeAccount.usage.secondary, kind: 'secondary' });
+  }
+  const usageRefreshing = activeAccount.canRefreshUsage && isUsageRefreshing(activeAccount.id);
+
+  const handleRefreshUsage = async () => {
+    setUsageError(null);
+    try {
+      await onRefreshUsage(activeAccount.id);
+    } catch (error: any) {
+      setUsageError(error?.message || error?.toString() || '额度刷新失败');
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto w-full pt-4 h-full flex flex-col">
@@ -97,50 +154,84 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({ isEmailMaskingEnabled, on
             </div>
           </div>
 
-          <div className="space-y-8">
-
-
-            <div className="pt-2">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <label className="block text-[13px] font-semibold text-black uppercase tracking-wider">使用情况与限制</label>
-                  <span className="text-[11px] font-medium text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100 flex items-center gap-1 shadow-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                    可用重置：3 次
+          <div className="pt-2">
+            <div className="mb-6 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <label className="block text-[13px] font-semibold uppercase tracking-wider text-black">
+                  最新额度
+                </label>
+                <span className="flex items-center gap-1 rounded-full border border-[#EAEAEA] bg-[#F7F7F7] px-2.5 py-0.5 text-[10px] font-medium text-[#777777]">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                  每小时自动更新
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                {activeAccount.usage && (
+                  <span className="text-[10px] text-[#999999]">
+                    {formatUsageSyncedAt(activeAccount.usage.syncedAt)}
                   </span>
-                </div>
-                <span className="text-[11px] font-medium text-[#888888] bg-[#F5F5F5] px-2 py-0.5 rounded-full border border-[#EAEAEA]">Mock Data</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleRefreshUsage()}
+                  disabled={!activeAccount.canRefreshUsage || usageRefreshing}
+                  title={activeAccount.canRefreshUsage ? '立即刷新额度' : '仅 Personal Access Token 账号支持额度刷新'}
+                  className="flex h-8 items-center gap-1.5 rounded-md border border-[#E0E0E0] bg-white px-3 text-[11px] font-medium text-[#555555] shadow-sm transition-all hover:border-[#C8C8C8] hover:text-black disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={usageRefreshing ? 'animate-spin' : ''}
+                  >
+                    <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+                    <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+                  </svg>
+                  {usageRefreshing ? '刷新中' : '刷新'}
+                </button>
               </div>
-              
-              <div className="bg-white border border-[#EAEAEA] rounded-xl p-6 shadow-sm flex flex-col gap-6">
-                <LinearProgress 
-                  percentage={66} 
-                  label="5h 限制" 
-                  disabled={activeAccount.planType === 'monthly'} 
-                />
-                <LinearProgress 
-                  percentage={62} 
-                  label="周限制" 
-                  disabled={activeAccount.planType === 'monthly'} 
-                />
-                <LinearProgress 
-                  percentage={20} 
-                  label="月限制" 
-                  disabled={activeAccount.planType === 'weekly'} 
-                />
-              </div>
-
-              {activeAccount.planType === 'weekly' && (
-                <div className="mt-6 flex items-center gap-3 bg-[#FAFAFA] px-4 py-3.5 rounded-xl border border-[#EAEAEA]">
-                  <div className="w-7 h-7 rounded-full bg-white border border-[#EAEAEA] flex items-center justify-center shadow-sm shrink-0">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#333]"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  </div>
-                  <div className="text-[13px] text-[#555555]">
-                    下一次额度重置：<span className="font-bold text-black">5h 限制</span> 将在 <span className="font-bold text-black bg-white px-2 py-1 rounded-md border border-[#EAEAEA] mx-1 shadow-sm">2小时 15分钟</span> 后刷新。
-                  </div>
-                </div>
-              )}
             </div>
+
+            {usageError && (
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-[#FFD0D0] bg-[#FFF5F5] px-3.5 py-2.5 text-[11px] text-[#C62828]">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                <span className="break-all">{usageError}</span>
+              </div>
+            )}
+
+            {usageWindows.length > 0 ? (
+              <div className="flex flex-col gap-6 rounded-xl border border-[#EAEAEA] bg-white p-6 shadow-sm">
+                {usageWindows.map(({ window, kind }) => (
+                  <LinearProgress key={kind} window={window} kind={kind} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-h-[126px] items-center justify-center rounded-xl border border-dashed border-[#D8D8D8] bg-[#FAFAFA] px-6 text-center">
+                <div>
+                  <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-[#EAEAEA] bg-white text-[#777777] shadow-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 4-7"/></svg>
+                  </div>
+                  <p className="text-[12px] font-semibold text-[#555555]">
+                    {activeAccount.canRefreshUsage
+                      ? activeAccount.usage
+                        ? '接口暂未返回额度窗口'
+                        : '尚未同步额度'
+                      : '当前认证格式暂不支持额度同步'}
+                  </p>
+                  <p className="mt-1 text-[11px] text-[#999999]">
+                    {activeAccount.canRefreshUsage
+                      ? '系统会自动更新，也可以点击右上角立即刷新'
+                      : '请使用 Personal Access Token 账号获取额度'}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
