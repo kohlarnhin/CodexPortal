@@ -443,7 +443,7 @@ async fn refresh_stale_account_usages(
 fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json FROM accounts ORDER BY created_at ASC").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
     let account_iter = stmt
         .query_map([], |row| {
             let auth_json_content: String = row.get(2)?;
