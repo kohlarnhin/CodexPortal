@@ -2,6 +2,7 @@ use rusqlite::{params, Connection, Result as SqlResult, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 use uuid::Uuid;
@@ -336,13 +337,64 @@ fn check_config_consistency(state: State<'_, AppState>, config_type: String) -> 
     })
 }
 
+#[cfg(target_os = "macos")]
+fn add_existing_cli_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.is_dir() && !paths.contains(&path) {
+        paths.push(path);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_cli_search_path() -> Option<std::ffi::OsString> {
+    // Apps launched by Finder inherit a minimal PATH from LaunchServices instead
+    // of the user's terminal PATH, so include common CLI installation locations.
+    let mut paths = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    for path in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        add_existing_cli_path(&mut paths, PathBuf::from(path));
+    }
+
+    if let Some(home_dir) = dirs::home_dir() {
+        for path in [
+            home_dir.join(".local/bin"),
+            home_dir.join(".npm-global/bin"),
+            home_dir.join(".volta/bin"),
+            home_dir.join(".asdf/shims"),
+            home_dir.join(".local/share/mise/shims"),
+            home_dir.join(".bun/bin"),
+        ] {
+            add_existing_cli_path(&mut paths, path);
+        }
+    }
+
+    std::env::join_paths(paths).ok()
+}
+
+fn codex_command() -> Command {
+    let mut command = Command::new("codex");
+
+    #[cfg(target_os = "macos")]
+    if let Some(path) = macos_cli_search_path() {
+        command.env("PATH", path);
+    }
+
+    command
+}
+
 #[tauri::command]
 async fn get_codex_version() -> Result<String, String> {
-    use std::process::Command;
-    let output = Command::new("codex")
-        .arg("--version")
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = codex_command().arg("--version").output().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "未找到 Codex CLI（{}）。请确认已安装 Codex，并可在终端执行 `codex --version`。",
+                error
+            )
+        } else {
+            format!("启动 Codex CLI 失败：{}", error)
+        }
+    })?;
     
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
