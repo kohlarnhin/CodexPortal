@@ -5,33 +5,47 @@
 <h1 align="center">Codex Portal</h1>
 
 <p align="center">
-  一个基于 Tauri 的 Codex 桌面管理工具，用于统一管理本机账号认证、核心配置与 MCP 服务器。
+  一个基于 Tauri 2 的 Codex 桌面管理工具，用于统一管理本机账号认证、实时额度、核心配置与 MCP 服务器。
 </p>
 
 ## 功能特性
 
-- **多账号管理**：添加、编辑、删除 Codex 账号，并为账号设置名称、备注与额度类型。
-- **快速切换账号**：切换活跃账号时，自动将对应认证内容写入 `~/.codex/auth.json`。
+- **多账号管理**：使用账号邮箱作为账号名称，支持 Personal Access Token 或自定义 `auth.json`，并可添加备注与额度类型。
+- **快速切换账号**：切换活跃账号时，自动将对应认证内容写入 `~/.codex/auth.json`；使用中的账号会始终排在列表首位。
+- **实时额度同步**：Personal Access Token 账号可读取最新额度，在当前账号和账号列表中展示，并同步缓存到 SQLite。
+- **自动与手动刷新**：额度默认每小时自动更新，也可以随时手动刷新；手动刷新后会重新计算下一次一小时刷新间隔。
+- **邮箱隐私保护**：全局邮箱脱敏默认开启，作用于当前账号和账号管理列表；编辑账号时仍显示完整邮箱，方便核对与修改。
 - **配置可视化**：管理模型、沙盒模式、审批策略、推理强度、功能开关和自定义模型服务。
 - **TOML 高级编辑**：直接查看并编辑 `~/.codex/config.toml`，保存前会校验 TOML 格式。
-- **MCP 管理**：新增、编辑、启用、停用或删除 STDIO / SSE 类型的 MCP 服务器。
-- **配置一致性检查**：比较应用数据库中的配置与本机 Codex 配置文件。
+- **配置一致性检查**：按 TOML 语义比较数据库与本机配置，忽略字段顺序、末尾换行以及 Codex 动态维护的项目记录，减少无变化时的误报。
+- **MCP 管理**：新增、编辑、启用、停用或删除 STDIO / SSE 类型的 MCP 服务器，并管理参数与环境变量。
+- **应用内更新**：生产版本启动后自动检查更新，也可在“关于”页面手动检查、下载、安装并重启应用。
 - **环境信息**：读取本机 `codex --version`，快速确认 Codex CLI 是否可用。
 - **本地原生体验**：使用 React 构建界面、Rust 处理本地数据，通过 Tauri 打包为桌面应用。
 
 > [!NOTE]
-> 当前版本的“使用情况与限制”数据为 **Mock Data**，仅用于界面展示，不代表账号的实时额度。
+> 额度同步目前仅支持包含 `personal_access_token` 的账号。自定义 JSON 账号仍可保存和切换，但在认证格式不受支持时不会请求额度。
 
 ## 界面模块
 
 | 模块 | 说明 |
 | --- | --- |
-| 当前账号 | 查看当前生效的账号、备注和额度类型 |
-| 账号管理 | 管理认证信息，并切换写入本机的活跃账号 |
+| 当前账号 | 查看当前生效的账号、备注、额度类型与数据库中的最新额度，并支持立即刷新 |
+| 账号管理 | 添加、编辑、删除和切换账号，展示各账号最新额度，使用中的账号自动置顶 |
 | 配置管理 | 可视化编辑 Codex 核心配置或直接编辑 TOML |
 | MCP 配置 | 管理 STDIO / SSE MCP 服务器及其参数、环境变量 |
+| Skill 管理 | Skill 管理入口，完整管理能力仍在开发中 |
 | Codex 信息 | 查询本机 Codex CLI 版本 |
-| 关于 | 查看应用、Tauri 版本等信息 |
+| 关于 | 查看应用与 Tauri 版本，检查并安装应用更新 |
+
+## 下载安装
+
+当前稳定版本为 `0.1.3`，可从 [GitHub Releases](https://github.com/kohlarnhin/CodexPortal/releases/tag/v0.1.3) 下载 macOS 安装包：
+
+| Mac 类型 | 安装包 |
+| --- | --- |
+| Apple Silicon（M 系列芯片） | [CodexPortal_0.1.3_arm64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.3/CodexPortal_0.1.3_arm64.dmg) |
+| Intel | [CodexPortal_0.1.3_x64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.3/CodexPortal_0.1.3_x64.dmg) |
 
 ## 技术栈
 
@@ -54,7 +68,7 @@
 - [Tauri 2 所需的系统依赖](https://v2.tauri.app/start/prerequisites/)
 - Codex CLI（推荐；“Codex 信息”和实际配置使用依赖系统中的 `codex` 命令）
 
-当前的 DMG 打包脚本仅适用于 macOS。
+当前的正式发布流程和 DMG 打包脚本仅适用于 macOS。
 
 ## 快速开始
 
@@ -106,15 +120,18 @@ src-tauri/target/release/bundle/macos/CodexPortal_Installer.dmg
 | `./start_dev.sh` | 安装前端依赖并启动 Tauri 开发环境 |
 | `./build_dmg.sh` | 在 macOS 上构建 `.app` 和 DMG |
 
-## 数据与配置
+## 数据、网络与隐私
 
-Codex Portal 只在本机处理账号和配置数据，不会主动上传这些内容。
+Codex Portal 在本机保存账号与配置数据，不会把完整账号库或 Codex 配置上传到项目服务器。实时额度和应用更新会按以下方式访问网络：
 
 | 数据 | 保存位置 / 行为 |
 | --- | --- |
-| 账号与配置快照 | Tauri 应用数据目录中的 `database.sqlite` |
+| 账号认证、配置快照与额度缓存 | Tauri 应用数据目录中的 `database.sqlite` |
 | 当前账号认证 | 切换账号时写入 `~/.codex/auth.json` |
 | Codex 核心配置 | 读取并写入 `~/.codex/config.toml` |
+| 邮箱脱敏偏好 | 保存在应用本地存储中，首次使用默认开启 |
+| 额度同步 | 自动或手动刷新时，使用对应账号 Token 通过 HTTPS 请求 OpenAI 认证与额度服务，结果写回本机 SQLite |
+| 应用更新 | 生产版本启动后查询 GitHub Releases，也可在“关于”页面手动检查 |
 
 > [!WARNING]
 > 账号认证内容会以明文保存在本机 SQLite 数据库中，切换账号还会覆盖 `~/.codex/auth.json`。请仅在可信设备上使用，操作前备份现有配置，并且不要把真实 Token、`auth.json` 或数据库文件提交到 Git。
@@ -125,7 +142,7 @@ Codex Portal 只在本机处理账号和配置数据，不会主动上传这些�
 CodexPortal/
 ├── src/                    # React 前端
 │   ├── components/         # 页面与通用组件
-│   ├── hooks/              # 账号、配置状态与 Tauri 调用
+│   ├── hooks/              # 账号、额度调度、更新、配置状态与 Tauri 调用
 │   └── types/              # TypeScript 类型
 ├── src-tauri/
 │   ├── src/                # Rust 命令、本地文件与 SQLite 逻辑
@@ -139,4 +156,6 @@ CodexPortal/
 
 ## 当前状态
 
-项目当前版本为 `0.1.0`，仍处于早期开发阶段。提交 Issue 或 Pull Request 前，请避免在日志、截图和示例中包含真实认证信息。
+项目当前版本为 `0.1.3`，仍处于早期开发阶段。本版本已加入默认开启的邮箱脱敏、真实额度缓存与定时刷新、使用中账号置顶，并修复配置一致性误报以及更新重启后主窗口未自动显示的问题。Skill 管理完整能力仍在开发中。
+
+提交 Issue 或 Pull Request 前，请避免在日志、截图和示例中包含真实认证信息。
