@@ -403,6 +403,18 @@ async fn get_codex_version() -> Result<String, String> {
     }
 }
 
+#[cfg(desktop)]
+fn show_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    #[cfg(target_os = "macos")]
+    let _ = app_handle.show();
+
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -435,6 +447,9 @@ pub fn run() {
                 db: Mutex::new(conn),
             });
 
+            #[cfg(desktop)]
+            show_main_window(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -455,11 +470,7 @@ pub fn run() {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { has_visible_windows, .. } => {
             if !has_visible_windows {
-                for window in app_handle.webview_windows().values() {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app_handle);
             }
         }
         _ => {}

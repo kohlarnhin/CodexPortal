@@ -109,7 +109,7 @@ export default function Settings() {
       setIsCheckingSync(true);
       const res = await checkConsistency('codex');
       if (res.is_consistent) {
-        setSaveMessage({ type: 'success', text: '数据库与本机配置完全一致' });
+        setSaveMessage({ type: 'success', text: '数据库与本机配置一致' });
         setTimeout(() => setSaveMessage(null), 3000);
       } else {
         setSyncCheckResult({

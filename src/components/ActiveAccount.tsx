@@ -1,7 +1,9 @@
 import React from 'react';
 import { useAccounts } from '../hooks/useAccounts';
+import { getDisplayedEmail } from '../utils/accountEmail';
 
 interface ActiveAccountProps {
+  isEmailMaskingEnabled: boolean;
   onNavigateToAccounts: () => void;
 }
 
@@ -41,7 +43,7 @@ const LinearProgress = ({
   );
 };
 
-const ActiveAccount: React.FC<ActiveAccountProps> = ({ onNavigateToAccounts }) => {
+const ActiveAccount: React.FC<ActiveAccountProps> = ({ isEmailMaskingEnabled, onNavigateToAccounts }) => {
   const { accounts, activeAccountId, isLoading } = useAccounts();
 
   if (isLoading) {
@@ -78,14 +80,16 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({ onNavigateToAccounts }) =
       <div className="bg-white border border-[#EAEAEA] rounded-2xl overflow-hidden shadow-sm relative shrink-0">
         <div className="p-8">
           <div className="flex items-center gap-5 mb-10">
-            <div className="w-16 h-16 bg-[#F9F9F9] rounded-full flex items-center justify-center border border-[#EAEAEA]">
+            <div className="w-16 h-16 shrink-0 bg-[#F9F9F9] rounded-full flex items-center justify-center border border-[#EAEAEA]">
               <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#111111" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             </div>
-            <div>
-              <div className="flex items-center gap-3 mb-1">
-                <h3 className="text-[28px] font-bold text-black tracking-tight">{activeAccount.name}</h3>
-                <span className="px-2 py-1 bg-black text-white text-[10px] font-bold rounded-md uppercase tracking-wider">Active</span>
-                <span className="px-2 py-1 bg-[#F5F5F5] text-[#666666] border border-[#EAEAEA] text-[10px] font-bold rounded-md uppercase tracking-wider">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-1 min-w-0">
+                <h3 className="min-w-0 truncate text-[28px] font-bold font-mono text-black tracking-tight select-text">
+                  {getDisplayedEmail(activeAccount.name, isEmailMaskingEnabled)}
+                </h3>
+                <span className="shrink-0 px-2 py-1 bg-black text-white text-[10px] font-bold rounded-md uppercase tracking-wider">Active</span>
+                <span className="shrink-0 px-2 py-1 bg-[#F5F5F5] text-[#666666] border border-[#EAEAEA] text-[10px] font-bold rounded-md uppercase tracking-wider">
                   {activeAccount.planType === 'monthly' ? '月限' : '周限'}
                 </span>
               </div>

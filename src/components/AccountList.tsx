@@ -5,7 +5,11 @@ import AccountModal from './AccountModal';
 import ConfirmModal from './ConfirmModal';
 import { Account, AccountFormData } from '../types/account';
 
-const AccountList: React.FC = () => {
+interface AccountListProps {
+  isEmailMaskingEnabled: boolean;
+}
+
+const AccountList: React.FC<AccountListProps> = ({ isEmailMaskingEnabled }) => {
   const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount } = useAccounts();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
@@ -92,6 +96,7 @@ const AccountList: React.FC = () => {
               <AccountCard
                 account={account}
                 isActive={account.id === activeAccountId}
+                isEmailMaskingEnabled={isEmailMaskingEnabled}
                 onSetActive={async (id) => {
                   try {
                     await setActiveAccount(id);

@@ -164,7 +164,7 @@ const AccountModal: React.FC<AccountModalProps> = ({ isOpen, onClose, onSubmit, 
           <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar">
             <div>
               <label htmlFor="name" className="block text-[12px] font-medium text-black mb-1.5">
-                环境别名 / 账号名称 <span className="text-[#D32F2F]">*</span>
+                账号邮箱 <span className="text-[#D32F2F]">*</span>
               </label>
               <input
                 type="text"
@@ -172,7 +172,11 @@ const AccountModal: React.FC<AccountModalProps> = ({ isOpen, onClose, onSubmit, 
                 name="name"
                 value={formData.name}
                 onChange={handleChange}
-                placeholder="例如：生产环境主账号"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="例如：name@example.com"
                 required
                 className="w-full px-3 py-2 bg-white border border-[#EAEAEA] rounded-md focus:border-black focus:ring-1 focus:ring-black outline-none transition-all text-black placeholder-[#A0A0A0] text-[13px]"
               />

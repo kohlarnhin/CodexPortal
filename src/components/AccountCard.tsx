@@ -1,25 +1,29 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Account } from '../types/account';
+import { getDisplayedEmail } from '../utils/accountEmail';
 
 interface AccountCardProps {
   account: Account;
   isActive: boolean;
+  isEmailMaskingEnabled: boolean;
   onSetActive: (id: string) => void;
   onEdit: (account: Account) => void;
   onDelete: (id: string) => void;
 }
 
-const AccountCard: React.FC<AccountCardProps> = ({ account, isActive, onSetActive, onEdit, onDelete }) => {
+const AccountCard: React.FC<AccountCardProps> = ({ account, isActive, isEmailMaskingEnabled, onSetActive, onEdit, onDelete }) => {
   return (
     <div className={`snap-start flex flex-col relative bg-white rounded-xl border-2 transition-all duration-200 ${
       isActive ? 'border-black' : 'border-[#EAEAEA] hover:border-[#D0D0D0]'
     }`}>
       <div className="p-5 flex-1 flex flex-col">
         <div className="flex items-start justify-between mb-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <h3 className="text-[16px] font-bold text-black leading-tight">{account.name}</h3>
-              <span className="px-1.5 py-0.5 bg-[#F5F5F5] text-[#666666] border border-[#EAEAEA] text-[9px] font-bold rounded uppercase tracking-wider">
+          <div className="flex-1 min-w-0 mr-4">
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className="min-w-0 truncate text-[16px] font-bold font-mono text-black leading-tight select-text">
+                {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
+              </h3>
+              <span className="shrink-0 px-1.5 py-0.5 bg-[#F5F5F5] text-[#666666] border border-[#EAEAEA] text-[9px] font-bold rounded uppercase tracking-wider">
                 {account.planType === 'monthly' ? '月限' : '周限'}
               </span>
             </div>

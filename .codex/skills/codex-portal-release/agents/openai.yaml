@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Portal Release"
+  short_description: "Develop and release Codex Portal safely"
+  default_prompt: "Use $codex-portal-release to implement this Codex Portal change and publish only when explicitly requested."

@@ -35,6 +35,48 @@ export interface ConsistencyCheckResult {
   local_content: string | null;
 }
 
+const IGNORED_CODEX_SYNC_ROOT_KEYS = new Set(['projects']);
+
+function normalizeConfigValue(value: unknown, isRoot = false): unknown {
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeConfigValue(item));
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record)
+      .filter(key => !isRoot || !IGNORED_CODEX_SYNC_ROOT_KEYS.has(key))
+      .sort();
+
+    return Object.fromEntries(
+      keys.map(key => [key, normalizeConfigValue(record[key])])
+    );
+  }
+
+  return value;
+}
+
+function normalizeConfigText(content: string) {
+  return content.replace(/\r\n?/g, '\n').trimEnd();
+}
+
+function areCodexConfigsEquivalent(dbContent: string | null, localContent: string | null) {
+  if (dbContent === localContent) return true;
+  if (dbContent === null || localContent === null) return false;
+
+  try {
+    const dbConfig = normalizeConfigValue(parse(dbContent), true);
+    const localConfig = normalizeConfigValue(parse(localContent), true);
+    return JSON.stringify(dbConfig) === JSON.stringify(localConfig);
+  } catch {
+    return normalizeConfigText(dbContent) === normalizeConfigText(localContent);
+  }
+}
+
 export function useConfig() {
   const [config, setConfig] = useState<CodexConfig | null>(null);
   const [rawToml, setRawToml] = useState<string>('');
@@ -94,7 +136,12 @@ export function useConfig() {
   const checkConsistency = async (configType: 'codex' | 'mcp' = 'codex'): Promise<ConsistencyCheckResult> => {
     try {
       const result = await invoke<ConsistencyCheckResult>('check_config_consistency', { configType });
-      return result;
+      if (configType !== 'codex') return result;
+
+      return {
+        ...result,
+        is_consistent: areCodexConfigsEquivalent(result.db_content, result.local_content),
+      };
     } catch (err: any) {
       console.error('Failed to check consistency:', err);
       throw err;
