@@ -3,6 +3,7 @@ import AccountList from './components/AccountList';
 import Settings from './components/Settings';
 import ActiveAccount from './components/ActiveAccount';
 import MCPManager from './components/MCPManager';
+import SkillManager from './components/SkillManager';
 import CodexInfo from './components/CodexInfo';
 import About from './components/About';
 import UpdateModal from './components/UpdateModal';
@@ -77,6 +78,18 @@ function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('skills')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
+              activeTab === 'skills'
+                ? 'bg-black/[0.06] text-black font-semibold'
+                : 'text-[#666666] hover:bg-black/[0.03] hover:text-black font-medium'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 4 5 5L7 22l-5-5Z"/><path d="m14 5 5 5"/><path d="M6 13l5 5"/><path d="M19 2v3"/><path d="M22 5h-3"/></svg>
+            Skill 管理
+          </button>
+
+          <button
             onClick={() => setActiveTab('codex-info')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
               activeTab === 'codex-info' 
@@ -125,6 +138,11 @@ function App() {
           {activeTab === 'mcp' && (
             <div className="flex-1 flex flex-col min-h-0">
               <MCPManager />
+            </div>
+          )}
+          {activeTab === 'skills' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <SkillManager />
             </div>
           )}
           {activeTab === 'codex-info' && (
