@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for Codex Portal",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "opener:default"
+  ]
+}
