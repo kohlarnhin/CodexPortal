@@ -1,6 +1,6 @@
 {
   "productName": "Codex Portal",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.codex.portal",
   "build": {
     "frontendDist": "../dist",
@@ -29,13 +29,24 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwRUU2OEJFOUI0Nzk3ODEKUldTQmwwZWJ2bWp1d05DcUZkTWlGaEpaKytPd1ZpZElTQnBKT28xUjNpRDl6ckVQc0o4cEdiWHEK",
+      "endpoints": [
+        "https://github.com/kohlarnhin/CodexPortal/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }
