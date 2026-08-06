@@ -5,13 +5,17 @@ import ActiveAccount from './components/ActiveAccount';
 import MCPManager from './components/MCPManager';
 import CodexInfo from './components/CodexInfo';
 import About from './components/About';
+import UpdateModal from './components/UpdateModal';
 import Logo from './components/Logo';
+import { useUpdater } from './hooks/useUpdater';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const updater = useUpdater();
 
   return (
-    <div className="flex h-screen bg-[#FAFAFA] text-[#111111] font-sans overflow-hidden cursor-default relative">
+    <>
+      <div className="flex h-screen bg-[#FAFAFA] text-[#111111] font-sans overflow-hidden cursor-default relative">
       {/* Sidebar */}
       <div className="w-[240px] flex-shrink-0 bg-[#F9F9F9] border-r border-[#EAEAEA] flex flex-col">
         {/* Sidebar Drag Header (Traffic Lights area) */}
@@ -130,12 +134,14 @@ function App() {
           )}
           {activeTab === 'about' && (
             <div className="flex-1 flex flex-col min-h-0">
-              <About />
+              <About updater={updater} />
             </div>
           )}
         </div>
       </div>
-    </div>
+      </div>
+      <UpdateModal updater={updater} />
+    </>
   );
 }
 

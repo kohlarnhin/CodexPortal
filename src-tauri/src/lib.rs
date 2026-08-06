@@ -407,6 +407,7 @@ async fn get_codex_version() -> Result<String, String> {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 let _ = window.hide();
@@ -415,6 +416,10 @@ pub fn run() {
             _ => {}
         })
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             let app_data_dir = app
                 .path()
                 .app_data_dir()
