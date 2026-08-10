@@ -10,45 +10,42 @@
 
 ## 功能特性
 
-- **多账号管理**：通过 Personal Access Token 添加账号，自动从接口解析邮箱作为账号名与订阅类型；额度刷新后自动判断周限/月限并更新本地数据。
-- **重置卡**：Team 账号可配置 Access Token 查看银行式重置额度（重置卡），账号卡片展示可用重置次数，点击可查看明细。
-- **快速切换账号**：切换活跃账号时，自动将对应认证内容写入 `~/.codex/auth.json`；使用中的账号会始终排在列表首位。
-- **实时额度同步**：Personal Access Token 账号可读取最新额度，在当前账号和账号列表中展示，并同步缓存到 SQLite。
-- **智能自动刷新**：后端按账号独立调度——额度未用完则 1 小时后刷新，额度用尽则在短周期额度重置时间后 1 分钟刷新；重启应用后沿用已保存的刷新计划，仅对到期账号逐个（间隔 1 分钟）刷新，避免频繁刷新，也可随时手动刷新。界面上展示每个账号的下次刷新时间。
-- **邮箱隐私保护**：全局邮箱脱敏默认开启，作用于当前账号和账号管理列表；编辑账号时仍显示完整邮箱，方便核对与修改。
-- **开机自启动**：默认开启，登录系统后自动启动 Codex Portal，可在“设置”页随时关闭。
-- **配置可视化**：管理模型、沙盒模式、审批策略、推理强度、功能开关和自定义模型服务。
-- **TOML 高级编辑**：直接查看并编辑 `~/.codex/config.toml`，保存前会校验 TOML 格式。
-- **配置一致性检查**：按 TOML 语义比较数据库与本机配置，忽略字段顺序、末尾换行以及 Codex 动态维护的项目记录，减少无变化时的误报。
-- **MCP 管理**：新增、编辑、启用、停用或删除 STDIO / SSE 类型的 MCP 服务器，并管理参数与环境变量。
+- **多账号管理**：支持 **Personal Access Token、Refresh Token、OAuth 登录**三种方式添加账号；邮箱与订阅类型（Team / Plus / Pro / Free）自动解析并作为账号铭牌展示。
+- **额度测试**：账号卡片一键调用 Codex 模型接口，流式展示回复，测试即消耗该账号额度并自动刷新。
+- **重置卡**：Team 账号配置 Access Token 后查看银行式重置额度（可用重置次数与明细）。
+- **订阅筛选**：账号列表按订阅类型筛选，并显示各类型数量。
+- **快速切换账号**：切换活跃账号时自动将认证内容写入 `~/.codex/auth.json`；使用中的账号始终排在列表首位。
+- **实时额度同步**：可刷新账号读取最新额度，在当前账号与账号列表展示，并缓存到 SQLite。
+- **智能自动刷新**：后端按账号独立调度——额度未用完则 1 小时后刷新，额度用尽则在短周期额度重置时间后 1 分钟刷新；重启后沿用已保存计划，仅对到期账号逐个（间隔 1 分钟）刷新。展示每个账号的下次刷新时间。
+- **邮箱隐私保护**：全局邮箱脱敏默认开启，作用于当前账号与账号管理列表。
+- **开机自启动**：默认开启，可在“设置”页随时关闭。
+- **配置管理**：可视化编辑模型、沙盒模式、审批策略、推理强度、功能开关与自定义模型服务，并支持 TOML 高级编辑与一致性检查。
+- **MCP 管理**：新增、编辑、启用、停用或删除 STDIO / SSE 类型 MCP 服务器，并管理参数与环境变量。
 - **应用内更新**：生产版本启动后自动检查更新，也可在“关于”页面手动检查、下载、安装并重启应用。
-- **环境信息**：读取本机 `codex --version`，快速确认 Codex CLI 是否可用。
-- **本地原生体验**：使用 React 构建界面、Rust 处理本地数据，通过 Tauri 打包为桌面应用。
-
-> [!NOTE]
-> 额度同步目前仅支持包含 `personal_access_token` 的账号。自定义 JSON 账号仍可保存和切换，但在认证格式不受支持时不会请求额度。
+- **环境信息**：展示应用启动时检测并保存的 Codex CLI 版本。
+- **本地原生体验**：React 界面 + Rust 本地数据，通过 Tauri 打包为桌面应用。
 
 ## 界面模块
 
 | 模块 | 说明 |
 | --- | --- |
-| 当前账号 | 查看当前生效的账号、备注、额度类型与数据库中的最新额度，并支持立即刷新 |
-| 账号管理 | 添加、编辑、删除和切换账号，展示各账号最新额度，使用中的账号自动置顶 |
+| 当前账号 | 查看当前生效的账号、备注、额度、订阅铭牌与下次刷新时间，并支持立即刷新 |
+| 账号管理 | 通过 PAT / Refresh Token / OAuth 添加账号，编辑、删除、切换，按订阅筛选，展示额度、重置次数与下次刷新时间 |
 | 配置管理 | 可视化编辑 Codex 核心配置或直接编辑 TOML |
 | MCP 配置 | 管理 STDIO / SSE MCP 服务器及其参数、环境变量 |
 | Skill 管理 | Skill 管理入口，完整管理能力仍在开发中 |
-| Codex 信息 | 查询本机 Codex CLI 版本 |
+| Codex 信息 | 查看应用启动时检测并保存的 Codex CLI 版本 |
 | 设置 | 本程序应用级设置：邮箱脱敏、开机自启动 |
 | 关于 | 查看应用与 Tauri 版本，检查并安装应用更新 |
 
 ## 下载安装
 
-当前稳定版本为 `0.1.3`，可从 [GitHub Releases](https://github.com/kohlarnhin/CodexPortal/releases/tag/v0.1.3) 下载 macOS 安装包：
+当前稳定版本为 `0.1.7`，可从 [GitHub Releases](https://github.com/kohlarnhin/CodexPortal/releases/tag/v0.1.7) 下载 macOS 安装包：
 
 | Mac 类型 | 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列芯片） | [CodexPortal_0.1.3_arm64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.3/CodexPortal_0.1.3_arm64.dmg) |
-| Intel | [CodexPortal_0.1.3_x64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.3/CodexPortal_0.1.3_x64.dmg) |
+| Apple Silicon（M 系列芯片） | [CodexPortal_0.1.7_arm64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.7/CodexPortal_0.1.7_arm64.dmg) |
+| Intel | [CodexPortal_0.1.7_x64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.7/CodexPortal_0.1.7_x64.dmg) |
 
 ## 技术栈
 
@@ -159,6 +156,6 @@ CodexPortal/
 
 ## 当前状态
 
-项目当前版本为 `0.1.3`，仍处于早期开发阶段。本版本已加入默认开启的邮箱脱敏、真实额度缓存与定时刷新、使用中账号置顶，并修复配置一致性误报以及更新重启后主窗口未自动显示的问题。Skill 管理完整能力仍在开发中。
+项目当前版本为 `0.1.7`。支持 Personal Access Token、Refresh Token、OAuth 三种账号接入方式，提供实时额度、智能自动刷新、额度测试、重置卡与订阅筛选等功能。Skill 管理完整能力仍在开发中。
 
 提交 Issue 或 Pull Request 前，请避免在日志、截图和示例中包含真实认证信息。
