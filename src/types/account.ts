@@ -56,6 +56,30 @@ export interface TokenInfo {
   chatgptPlanType: string;
 }
 
+export interface RtTokenInfo {
+  email: string;
+  chatgptPlanType?: string | null;
+  chatgptAccountId?: string | null;
+  accessToken: string;
+  refreshToken: string;
+  atExpiresAt: number;
+}
+
+export interface SaveRtAccountParams {
+  email: string;
+  chatgptPlanType?: string | null;
+  chatgptAccountId?: string | null;
+  accessToken: string;
+  refreshToken: string;
+  atExpiresAt: number;
+  notes?: string;
+}
+
+export interface OAuthLoginInfo {
+  url: string;
+  redirectUri: string;
+}
+
 export interface TestMessageResult {
   model: string;
   input: string;

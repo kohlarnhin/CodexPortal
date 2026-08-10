@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Account, AccountStore, AccountFormData, ResetCreditsInfo, TokenInfo } from '../types/account';
+import { Account, AccountStore, AccountFormData, OAuthLoginInfo, ResetCreditsInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
 
 export function useAccounts() {
   const [store, setStore] = useState<AccountStore>({ activeAccountId: null, accounts: [] });
@@ -58,6 +58,36 @@ export function useAccounts() {
     return await invoke<TokenInfo>('validate_personal_token', { token });
   };
 
+  const exchangeRefreshToken = async (input: string): Promise<RtTokenInfo> => {
+    return await invoke<RtTokenInfo>('exchange_refresh_token', { input });
+  };
+
+  const startOauthLogin = async (): Promise<OAuthLoginInfo> => {
+    return await invoke<OAuthLoginInfo>('start_oauth_login');
+  };
+
+  const checkOauthCallback = async (): Promise<RtTokenInfo | null> => {
+    return await invoke<RtTokenInfo | null>('check_oauth_callback');
+  };
+
+  const completeOauthLogin = async (redirectUrl: string): Promise<RtTokenInfo> => {
+    return await invoke<RtTokenInfo>('complete_oauth_login', { redirectUrl });
+  };
+
+  const saveRtAccount = async (params: SaveRtAccountParams): Promise<Account> => {
+    const account = await invoke<Account>('save_rt_account', {
+      email: params.email,
+      chatgptPlanType: params.chatgptPlanType ?? null,
+      chatgptAccountId: params.chatgptAccountId ?? null,
+      accessToken: params.accessToken,
+      refreshToken: params.refreshToken,
+      atExpiresAt: params.atExpiresAt,
+      notes: params.notes ?? null,
+    });
+    await loadAccounts(false);
+    return account;
+  };
+
   const setAccountAccessToken = async (id: string, accessToken: string) => {
     try {
       await invoke('set_account_access_token', { id, accessToken });
@@ -102,6 +132,11 @@ export function useAccounts() {
     deleteAccount,
     setActiveAccount,
     validatePersonalToken,
+    exchangeRefreshToken,
+    saveRtAccount,
+    startOauthLogin,
+    checkOauthCallback,
+    completeOauthLogin,
     setAccountAccessToken,
     getResetCredits,
     refresh: loadAccounts

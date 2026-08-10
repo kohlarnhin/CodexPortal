@@ -1,11 +1,16 @@
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use chrono::{DateTime, Utc};
+use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -19,6 +24,9 @@ const PERSONAL_ACCESS_TOKEN_METADATA_URL: &str =
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const RESET_CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+const OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+/// Codex CLI 登录使用的 OAuth client_id（/oauth/token 必需）。
+const OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const TEST_MESSAGE_CONTENT: &str = "Introduce yourself.";
 
 /// 启动时获取并缓存的 Codex CLI 版本号（用于 User-Agent）。
@@ -55,6 +63,9 @@ pub struct AccountUsage {
     pub secondary: Option<AccountUsageWindow>,
     #[serde(rename = "syncedAt")]
     pub synced_at: String,
+    /// 额度接口返回的订阅类型，仅内部用于更新账号 chatgpt_plan_type，不序列化。
+    #[serde(skip)]
+    pub plan_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +123,10 @@ pub struct Account {
     pub chatgpt_account_id: Option<String>,
     #[serde(skip)]
     pub chatgpt_account_is_fedramp: bool,
+    #[serde(skip)]
+    pub refresh_token: Option<String>,
+    #[serde(skip)]
+    pub at_expires_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +144,9 @@ struct PersonalAccessTokenMetadata {
 struct UsageApiResponse {
     #[serde(default)]
     rate_limit: Option<UsageRateLimitDetails>,
+    /// 额度接口返回的订阅类型（如 plus/pro/team）。
+    #[serde(default)]
+    plan_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,10 +173,21 @@ pub struct AccountStore {
     pub accounts: Vec<Account>,
 }
 
+/// 一次 OAuth 登录的临时会话状态（本地回调 + 待兑换的 code）。
+#[derive(Default)]
+pub struct OAuthSession {
+    pub code_verifier: Option<String>,
+    pub state: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub callback_code: Option<String>,
+}
+
 pub struct AppState {
     pub db: Mutex<Connection>,
     /// 正在被手动刷新的账号 id，调度器跳过它们避免撞车。
     pub refreshing: Mutex<HashSet<String>>,
+    /// OAuth 登录会话。
+    pub oauth: Mutex<OAuthSession>,
 }
 
 impl AppState {
@@ -180,7 +209,9 @@ impl AppState {
                 access_token TEXT,
                 chatgpt_account_id TEXT,
                 chatgpt_account_is_fedramp INTEGER NOT NULL DEFAULT 0,
-                reset_credits_json TEXT
+                reset_credits_json TEXT,
+                refresh_token TEXT,
+                at_expires_at TEXT
             )",
             [],
         )?;
@@ -200,6 +231,8 @@ impl AppState {
             [],
         );
         let _ = conn.execute("ALTER TABLE accounts ADD COLUMN reset_credits_json TEXT", []);
+        let _ = conn.execute("ALTER TABLE accounts ADD COLUMN refresh_token TEXT", []);
+        let _ = conn.execute("ALTER TABLE accounts ADD COLUMN at_expires_at TEXT", []);
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS configs (
@@ -640,20 +673,57 @@ fn normalize_usage_window(window: UsageApiWindow) -> AccountUsageWindow {
     }
 }
 
-fn fetch_account_usage(token: &str) -> Result<AccountUsage, String> {
-    let metadata = curl_get_json::<PersonalAccessTokenMetadata>(
-        PERSONAL_ACCESS_TOKEN_METADATA_URL,
-        token,
-        None,
-        false,
-    )
-    .map_err(|error| format!("Token 校验失败：{error}"))?;
+/// 解析账号额度请求用的 bearer、账号 ID、FedRAMP 与是否允许 whoami：
+/// - rt 账号（有 refresh_token）：用 at + 存库 account_id（跳过 whoami，whoami 拒绝 at）；
+/// - PAT 账号：用 PAT，account_id 运行时经 whoami 获取。
+fn account_usage_context(
+    auth_json_content: &str,
+    access_token: Option<&str>,
+    refresh_token: Option<&str>,
+    chatgpt_account_id: Option<&str>,
+    chatgpt_account_is_fedramp: bool,
+) -> (Option<String>, Option<String>, bool, bool) {
+    if access_token.is_some() && refresh_token.is_some() {
+        return (
+            access_token.map(str::to_string),
+            chatgpt_account_id.map(str::to_string),
+            chatgpt_account_is_fedramp,
+            false,
+        );
+    }
+    (extract_personal_access_token(auth_json_content), None, false, true)
+}
+
+fn fetch_account_usage(
+    bearer: &str,
+    account_id: Option<&str>,
+    is_fedramp: bool,
+    needs_whoami: bool,
+) -> Result<AccountUsage, String> {
+    let (account_id, is_fedramp) = if let Some(id) = account_id {
+        (Some(id.to_string()), is_fedramp)
+    } else if needs_whoami {
+        let metadata = curl_get_json::<PersonalAccessTokenMetadata>(
+            PERSONAL_ACCESS_TOKEN_METADATA_URL,
+            bearer,
+            None,
+            false,
+        )
+        .map_err(|error| format!("Token 校验失败：{error}"))?;
+        (
+            Some(metadata.chatgpt_account_id),
+            metadata.chatgpt_account_is_fedramp,
+        )
+    } else {
+        // rt 账号且无存库 account_id：不带 ChatGPT-Account-ID 头。
+        (None, is_fedramp)
+    };
 
     let response = curl_get_json::<UsageApiResponse>(
         CODEX_USAGE_URL,
-        token,
-        Some(&metadata.chatgpt_account_id),
-        metadata.chatgpt_account_is_fedramp,
+        bearer,
+        account_id.as_deref(),
+        is_fedramp,
     )
     .map_err(|error| format!("额度刷新失败：{error}"))?;
 
@@ -668,6 +738,7 @@ fn fetch_account_usage(token: &str) -> Result<AccountUsage, String> {
         primary,
         secondary,
         synced_at: Utc::now().to_rfc3339(),
+        plan_type: response.plan_type,
     })
 }
 
@@ -723,14 +794,25 @@ fn persist_account_usage(
     expected_token: &str,
     usage: &AccountUsage,
 ) -> Result<(), String> {
-    let (auth_json_content, existing_plan_type) = db
+    let (auth_json_content, existing_plan_type, stored_access_token, existing_chatgpt_plan_type) = db
         .query_row(
-            "SELECT auth_json_content, plan_type FROM accounts WHERE id = ?1",
+            "SELECT auth_json_content, plan_type, access_token, chatgpt_plan_type FROM accounts WHERE id = ?1",
             params![account_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            )),
         )
         .map_err(|_| "Account not found".to_string())?;
-    if extract_personal_access_token(&auth_json_content).as_deref() != Some(expected_token) {
+    // PAT 账号按 PAT 校验；rt 账号（无 PAT）按 access_token（at）校验。
+    let auth_ok = if extract_personal_access_token(&auth_json_content).is_some() {
+        extract_personal_access_token(&auth_json_content).as_deref() == Some(expected_token)
+    } else {
+        stored_access_token.as_deref() == Some(expected_token)
+    };
+    if !auth_ok {
         return Err("账号认证已变更，请重新刷新额度".to_string());
     }
 
@@ -740,10 +822,18 @@ fn persist_account_usage(
         Some(plan) => plan.to_string(),
         None => existing_plan_type,
     };
+    // 额度接口返回的订阅类型可补全账号的 chatgpt_plan_type（如 rt 账号首次刷新后）。
+    let chatgpt_plan_type = usage
+        .plan_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|plan| !plan.is_empty())
+        .map(str::to_string)
+        .or(existing_chatgpt_plan_type);
     let rows_affected = db
         .execute(
-            "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?3, plan_type = ?4 WHERE id = ?5",
-            params![usage_json, usage.synced_at, next_refresh_at, plan_type, account_id],
+            "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?3, plan_type = ?4, chatgpt_plan_type = ?5 WHERE id = ?6",
+            params![usage_json, usage.synced_at, next_refresh_at, plan_type, chatgpt_plan_type, account_id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -759,24 +849,71 @@ pub struct AccountRefreshEvent {
     pub account_id: String,
 }
 
+/// at 是否临近/已过期（需用 rt 刷新）。
+fn at_is_due(at_expires_at: &Option<String>) -> bool {
+    let Some(value) = at_expires_at else {
+        return false;
+    };
+    let Ok(expires) = DateTime::parse_from_rfc3339(value) else {
+        return false;
+    };
+    expires.with_timezone(&Utc) <= Utc::now() + chrono::Duration::minutes(5)
+}
+
 #[tauri::command]
 async fn refresh_account_usage(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
 ) -> Result<AccountUsage, String> {
-    let token = {
+    // 读取账号认证上下文。
+    let (auth_json_content, access_token, refresh_token, chatgpt_account_id, fedramp, at_expires_at) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        let auth_json_content = db
-            .query_row(
-                "SELECT auth_json_content FROM accounts WHERE id = ?1",
-                params![id],
-                |row| row.get::<_, String>(0),
-            )
-            .map_err(|_| "Account not found".to_string())?;
-        extract_personal_access_token(&auth_json_content)
-            .ok_or_else(|| "仅 Personal Access Token 账号支持额度刷新".to_string())?
+        db.query_row(
+            "SELECT auth_json_content, access_token, refresh_token, chatgpt_account_id, chatgpt_account_is_fedramp, at_expires_at FROM accounts WHERE id = ?1",
+            params![id],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i32>(4)? == 1,
+                row.get::<_, Option<String>>(5)?,
+            )),
+        )
+        .map_err(|_| "Account not found".to_string())?
     };
+
+    let (mut bearer, mut account_id, mut fedramp, needs_whoami) = account_usage_context(
+        &auth_json_content,
+        access_token.as_deref(),
+        refresh_token.as_deref(),
+        chatgpt_account_id.as_deref(),
+        fedramp,
+    );
+
+    // rt 账号且 at 临近过期：先用 rt 兑换新 at（rt 一次性使用，保存新 rt）。
+    if refresh_token.is_some() && at_is_due(&at_expires_at) {
+        if let Some(rt) = refresh_token {
+            let info = tauri::async_runtime::spawn_blocking(move || exchange_rt_for_at(&rt))
+                .await
+                .map_err(|e| format!("刷新 Access Token 任务失败：{e}"))??;
+            let new_expiry =
+                DateTime::from_timestamp(info.at_expires_at, 0).map(|time| time.to_rfc3339());
+            {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let _ = db.execute(
+                    "UPDATE accounts SET access_token = ?1, refresh_token = ?2, at_expires_at = ?3, reset_credits_json = NULL WHERE id = ?4",
+                    params![info.access_token, info.refresh_token, new_expiry, id],
+                );
+            }
+            bearer = Some(info.access_token);
+            account_id = info.chatgpt_account_id;
+            fedramp = false;
+        }
+    }
+
+    let bearer = bearer.ok_or_else(|| "无可用认证信息".to_string())?;
 
     {
         let mut refreshing = state.refreshing.lock().map_err(|e| e.to_string())?;
@@ -784,8 +921,9 @@ async fn refresh_account_usage(
     }
 
     let fetch_result = tauri::async_runtime::spawn_blocking({
-        let token = token.clone();
-        move || fetch_account_usage(&token)
+        let bearer = bearer.clone();
+        let account_id = account_id.clone();
+        move || fetch_account_usage(&bearer, account_id.as_deref(), fedramp, needs_whoami)
     })
     .await
     .map_err(|e| format!("额度刷新任务失败：{e}"));
@@ -804,7 +942,7 @@ async fn refresh_account_usage(
 
     let persist_result = (|| {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        persist_account_usage(&db, &id, &token, &usage)
+        persist_account_usage(&db, &id, &bearer, &usage)
     })();
     remove_from_refreshing(&*state, &id);
 
@@ -887,8 +1025,48 @@ fn backfill_account_metadata(state: &AppState) {
     }
 }
 
+/// 刷新所有 at 临近过期的 rt 账号的 access token（rt 一次性使用，保存新 rt）。
+fn refresh_due_access_tokens(state: &AppState) {
+    let targets: Vec<(String, String)> = {
+        let Ok(db) = state.db.lock() else {
+            return;
+        };
+        let cutoff = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let Ok(mut stmt) = db.prepare(
+            "SELECT id, refresh_token FROM accounts WHERE refresh_token IS NOT NULL AND at_expires_at IS NOT NULL AND at_expires_at <= ?1",
+        ) else {
+            return;
+        };
+        let Ok(rows) = stmt.query_map(params![cutoff], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) else {
+            return;
+        };
+        rows.flatten().collect()
+    };
+
+    for (id, rt) in targets {
+        match exchange_rt_for_at(&rt) {
+            Ok(info) => {
+                let new_expiry =
+                    DateTime::from_timestamp(info.at_expires_at, 0).map(|time| time.to_rfc3339());
+                if let Ok(db) = state.db.lock() {
+                    let _ = db.execute(
+                        "UPDATE accounts SET access_token = ?1, refresh_token = ?2, at_expires_at = ?3, reset_credits_json = NULL WHERE id = ?4",
+                        params![info.access_token, info.refresh_token, new_expiry, id],
+                    );
+                }
+                eprintln!("[at-refresh] {id} 已刷新");
+            }
+            Err(error) => {
+                eprintln!("[at-refresh] {id} 刷新失败: {error}");
+            }
+        }
+    }
+}
+
 /// 后台额度调度器：重启后沿用持久化的 next_refresh_at 计划，仅刷新已到期的账号
-/// （逐个、间隔 1 分钟），避免重启触发不必要的频繁刷新。
+/// （逐个、间隔 1 分钟），避免重启触发不必要的频繁刷新；同时管理 rt 账号的 at 自动刷新。
 fn start_usage_scheduler(app: tauri::AppHandle) {
     thread::spawn(move || {
         // 启动时获取 Codex CLI 版本（供 User-Agent），并回填历史账号的 whoami 元数据。
@@ -899,37 +1077,41 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
         }
 
         loop {
-            let due: Vec<(String, String)> = {
+            // 先刷新 at 临近过期的 rt 账号。
+            {
+                let state = app.state::<AppState>();
+                refresh_due_access_tokens(&*state);
+            }
+
+            let due: Vec<(String, String, Option<String>, Option<String>, Option<String>, bool, Option<String>)> = {
                 let state = app.state::<AppState>();
                 let Ok(db) = state.db.lock() else {
                     thread::sleep(Duration::from_secs(30));
                     continue;
                 };
                 let now = Utc::now().to_rfc3339();
-                let mut stmt = match db.prepare(
-                    "SELECT id, auth_json_content FROM accounts WHERE next_refresh_at IS NULL OR next_refresh_at <= ?1 ORDER BY created_at ASC",
-                ) {
-                    Ok(stmt) => stmt,
-                    Err(_) => {
-                        thread::sleep(Duration::from_secs(30));
-                        continue;
-                    }
+                let Ok(mut stmt) = db.prepare(
+                    "SELECT id, auth_json_content, access_token, refresh_token, chatgpt_account_id, chatgpt_account_is_fedramp, at_expires_at FROM accounts WHERE next_refresh_at IS NULL OR next_refresh_at <= ?1 ORDER BY created_at ASC",
+                ) else {
+                    thread::sleep(Duration::from_secs(30));
+                    continue;
                 };
-                let mut due = Vec::new();
-                let rows = stmt.query_map(params![now], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                });
-                if let Ok(rows) = rows {
-                    for (id, auth_json_content) in rows.flatten() {
-                        if let Some(token) = extract_personal_access_token(&auth_json_content) {
-                            due.push((id, token));
-                        }
-                    }
-                }
-                due
+                let Ok(rows) = stmt.query_map(params![now], |row| Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i32>(5)? == 1,
+                    row.get::<_, Option<String>>(6)?,
+                ))) else {
+                    thread::sleep(Duration::from_secs(30));
+                    continue;
+                };
+                rows.flatten().collect()
             };
 
-            for (id, token) in due {
+            for (id, auth_json_content, access_token, refresh_token, chatgpt_account_id, fedramp, at_expires_at) in due {
                 let state = app.state::<AppState>();
                 let refreshing = state
                     .refreshing
@@ -947,14 +1129,53 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
                     },
                 );
 
-                let result = fetch_account_usage(&token);
+                // 账号类型感知：rt 账号用 at（临近过期先刷新），PAT 账号用 PAT + whoami。
+                let (mut bearer, mut account_id, fedramp, needs_whoami) = account_usage_context(
+                    &auth_json_content,
+                    access_token.as_deref(),
+                    refresh_token.as_deref(),
+                    chatgpt_account_id.as_deref(),
+                    fedramp,
+                );
+                if refresh_token.is_some() && at_is_due(&at_expires_at) {
+                    if let Some(rt) = refresh_token {
+                        match exchange_rt_for_at(&rt) {
+                            Ok(info) => {
+                                let new_expiry = DateTime::from_timestamp(info.at_expires_at, 0)
+                                    .map(|time| time.to_rfc3339());
+                                if let Ok(db) = state.db.lock() {
+                                    let _ = db.execute(
+                                        "UPDATE accounts SET access_token = ?1, refresh_token = ?2, at_expires_at = ?3, reset_credits_json = NULL WHERE id = ?4",
+                                        params![info.access_token, info.refresh_token, new_expiry, id],
+                                    );
+                                }
+                                bearer = Some(info.access_token);
+                                account_id = info.chatgpt_account_id;
+                            }
+                            Err(error) => {
+                                eprintln!("[usage-scheduler] {id} at 刷新失败: {error}");
+                            }
+                        }
+                    }
+                }
+
+                let Some(bearer) = bearer else {
+                    eprintln!("[usage-scheduler] {id} 无可用认证，跳过");
+                    let _ = app.emit(
+                        "usage-refresh-finished",
+                        AccountRefreshEvent { account_id: id.clone() },
+                    );
+                    continue;
+                };
+
+                let result = fetch_account_usage(&bearer, account_id.as_deref(), fedramp, needs_whoami);
 
                 match result {
                     Ok(usage) => {
                         let ok = {
                             let state = app.state::<AppState>();
                             let persisted = match state.db.lock() {
-                                Ok(db) => persist_account_usage(&db, &id, &token, &usage).is_ok(),
+                                Ok(db) => persist_account_usage(&db, &id, &bearer, &usage).is_ok(),
                                 Err(_) => false,
                             };
                             persisted
@@ -1216,7 +1437,7 @@ async fn send_test_message(
 fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
     let account_iter = stmt
         .query_map([], |row| {
             let auth_json_content: String = row.get(2)?;
@@ -1224,7 +1445,8 @@ fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
             Ok(Account {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                can_refresh_usage: extract_personal_access_token(&auth_json_content).is_some(),
+                can_refresh_usage: extract_personal_access_token(&auth_json_content).is_some()
+                    || access_token.is_some(),
                 auth_json_content,
                 notes: row.get(3)?,
                 created_at: row.get(4)?,
@@ -1239,6 +1461,8 @@ fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
                 access_token,
                 chatgpt_account_id: row.get(12)?,
                 chatgpt_account_is_fedramp: row.get::<_, i32>(13)? == 1,
+                refresh_token: row.get(15)?,
+                at_expires_at: row.get(16)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1275,12 +1499,518 @@ fn build_auth_json(token: &str) -> String {
     .to_string()
 }
 
+/// rt 兑换后的账号信息与令牌（供前端确认与保存）。
+#[derive(Debug, Clone, Serialize)]
+pub struct RtTokenInfo {
+    pub email: String,
+    #[serde(rename = "chatgptPlanType")]
+    pub chatgpt_plan_type: Option<String>,
+    #[serde(rename = "chatgptAccountId")]
+    pub chatgpt_account_id: Option<String>,
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "refreshToken")]
+    pub refresh_token: String,
+    #[serde(rename = "atExpiresAt")]
+    pub at_expires_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct OAuthTokenResponse {
+    access_token: String,
+    refresh_token: String,
+}
+
+/// 在任意层级的 JSON 中递归查找 `refresh_token` 字符串字段。
+fn find_refresh_token(value: &Value) -> Option<&str> {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(rt)) = map.get("refresh_token") {
+                return Some(rt);
+            }
+            map.values().find_map(find_refresh_token)
+        }
+        Value::Array(items) => items.iter().find_map(find_refresh_token),
+        _ => None,
+    }
+}
+
+/// 从用户输入中提取 Refresh Token：输入为 JSON 时递归查找 `refresh_token` 字段（任意层级），否则视为原始 rt。
+fn extract_refresh_token(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("请输入 Refresh Token".to_string());
+    }
+    if input.starts_with('{') {
+        let json: Value = serde_json::from_str(input).map_err(|_| "JSON 解析失败".to_string())?;
+        if let Some(rt) = find_refresh_token(&json) {
+            let rt = rt.trim();
+            if rt.is_empty() {
+                return Err("JSON 中 refresh_token 为空".to_string());
+            }
+            return Ok(rt.to_string());
+        }
+        return Err("JSON 中未找到 refresh_token 字段".to_string());
+    }
+    Ok(input.to_string())
+}
+
+/// 解码 access_token（JWT）payload，提取邮箱/订阅/账号 ID/FedRAMP 与过期时间 exp。
+/// 返回 (TokenMetadata, exp)。
+fn decode_access_token(at: &str) -> Option<(TokenMetadata, i64)> {
+    let payload = at.split('.').nth(1)?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+
+    let profile = value.get("https://api.openai.com/profile");
+    let email = value
+        .get("email")
+        .and_then(|v| v.as_str())
+        .or_else(|| profile.and_then(|p| p.get("email")).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(str::to_string);
+
+    let auth = value.get("https://api.openai.com/auth");
+    let plan = auth
+        .and_then(|a| a.get("chatgpt_plan_type"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string);
+    let user_id = auth
+        .and_then(|a| a.get("chatgpt_user_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(str::to_string);
+    let account_id = auth
+        .and_then(|a| a.get("chatgpt_account_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map(str::to_string)
+        // 部分 token 无 chatgpt_account_id，回退用 user_id / poid。
+        .or_else(|| {
+            auth.and_then(|a| a.get("user_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            auth.and_then(|a| a.get("poid"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string)
+        });
+    let is_fedramp = auth
+        .and_then(|a| a.get("chatgpt_account_is_fedramp"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let exp = value.get("exp").and_then(|v| v.as_i64())?;
+
+    // 账号名优先邮箱，缺失时用 user_id。
+    let email = email.or(user_id).unwrap_or_default();
+    if email.is_empty() {
+        return None;
+    }
+
+    Some((
+        TokenMetadata {
+            email,
+            chatgpt_plan_type: plan,
+            chatgpt_account_id: account_id,
+            chatgpt_account_is_fedramp: is_fedramp,
+        },
+        exp,
+    ))
+}
+
+/// 对表单值做 URL 编码（OAuth2 token 端点需要）。
+fn urlencode(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// 用 rt 兑换 access_token（at）+ 新的 rt（rt 一次性使用），并解码 at 获取账号信息。
+fn exchange_rt_for_at(rt: &str) -> Result<RtTokenInfo, String> {
+    // 标准 OAuth2 token 端点使用表单格式；需带 Codex 的 client_id；rt 可能含特殊字符需 URL 编码。
+    let body = format!(
+        "grant_type=refresh_token&refresh_token={}&client_id={}",
+        urlencode(rt),
+        OAUTH_CLIENT_ID
+    );
+
+    let mut config = String::from(
+        "silent\nshow-error\nrequest = \"POST\"\nconnect-timeout = 10\nmax-time = 25\nproto = \"=https\"\n",
+    );
+    config.push_str("url = ");
+    config.push_str(&curl_config_quote(OAUTH_TOKEN_URL));
+    config.push('\n');
+    append_curl_header(&mut config, "Accept", "application/json")?;
+    append_curl_header(&mut config, "Content-Type", "application/x-www-form-urlencoded")?;
+    append_curl_header(&mut config, "User-Agent", &codex_cli_user_agent())?;
+    config.push_str("data-raw = ");
+    config.push_str(&curl_config_quote(&body));
+    config.push('\n');
+    config.push_str("write-out = \"\\n%{http_code}\"\n");
+
+    let (response_body, status) = run_curl(&config)?;
+    if !(200..300).contains(&status) {
+        let detail: String = response_body.chars().take(300).collect();
+        return Err(format!("兑换 Access Token 失败（HTTP {status}）：{detail}"));
+    }
+
+    let response: OAuthTokenResponse = serde_json::from_str(&response_body)
+        .map_err(|_| "兑换接口返回的数据格式异常".to_string())?;
+
+    let (meta, exp) = decode_access_token(&response.access_token)
+        .ok_or_else(|| "无法从 Access Token 解析账号信息".to_string())?;
+
+    Ok(RtTokenInfo {
+        email: meta.email,
+        chatgpt_plan_type: meta.chatgpt_plan_type,
+        chatgpt_account_id: meta.chatgpt_account_id,
+        access_token: response.access_token,
+        refresh_token: response.refresh_token,
+        at_expires_at: exp,
+    })
+}
+
 /// 通过 whoami 解析 token 对应的邮箱、订阅类型、账号 ID 与 FedRAMP 标记。
 struct TokenMetadata {
     email: String,
     chatgpt_plan_type: Option<String>,
     chatgpt_account_id: Option<String>,
     chatgpt_account_is_fedramp: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OAuthLoginInfo {
+    pub url: String,
+    #[serde(rename = "redirectUri")]
+    pub redirect_uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OAuthCodeTokenResponse {
+    id_token: String,
+    access_token: String,
+    refresh_token: String,
+}
+
+/// URL 解码（用于解析回调地址参数）。
+fn urldecode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = u8::from_str_radix(&value[i + 1..i + 3], 16) {
+                out.push(hex);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// 生成 PKCE（code_verifier, code_challenge）。
+fn generate_pkce() -> (String, String) {
+    let mut bytes = [0u8; 64];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let verifier = URL_SAFE_NO_PAD.encode(bytes);
+    let digest = Sha256::digest(verifier.as_bytes());
+    let challenge = URL_SAFE_NO_PAD.encode(digest);
+    (verifier, challenge)
+}
+
+fn generate_oauth_state() -> String {
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn build_oauth_authorize_url(
+    client_id: &str,
+    redirect_uri: &str,
+    challenge: &str,
+    state: &str,
+) -> String {
+    let query = [
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", redirect_uri),
+        // 与 Codex CLI 完全一致的 scope。
+        ("scope", "openid profile email offline_access api.connectors.read api.connectors.invoke"),
+        ("code_challenge", challenge),
+        ("code_challenge_method", "S256"),
+        ("id_token_add_organizations", "true"),
+        ("codex_cli_simplified_flow", "true"),
+        ("state", state),
+        ("originator", "codex_cli_rs"),
+    ];
+    let qs = query
+        .iter()
+        .map(|(key, value)| format!("{key}={}", urlencode(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("https://auth.openai.com/oauth/authorize?{qs}")
+}
+
+/// 读取一次 HTTP 请求的请求行与请求头（回调只需请求行）。
+fn read_http_request(stream: &mut TcpStream) -> std::io::Result<String> {
+    let mut reader = BufReader::new(stream);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+    // 消费剩余请求头（到空行为止）
+    loop {
+        let mut header = String::new();
+        if reader.read_line(&mut header)? == 0 || header.trim().is_empty() {
+            break;
+        }
+    }
+    Ok(request_line)
+}
+
+fn write_http_response(stream: &mut TcpStream, message: &str) -> std::io::Result<()> {
+    let html = format!(
+        "<html><body style=\"font-family:sans-serif;padding:40px;text-align:center\"><h2>Codex Portal 登录成功</h2><p>{message}</p><p>可以关闭此窗口返回应用。</p></body></html>"
+    );
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        html.len(),
+        html
+    );
+    stream.write_all(response.as_bytes())
+}
+
+/// 从请求行或回调 URL 中解析 `code` 与 `state`。
+/// 请求行形如 `GET /auth/callback?code=..&state=.. HTTP/1.1`，query 末尾带 HTTP 版本需去掉。
+fn parse_callback_query(url_or_path: &str) -> Option<(String, String)> {
+    let query = url_or_path.split('?').nth(1)?.split_whitespace().next()?;
+    let mut code = None;
+    let mut state = None;
+    for pair in query.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next()?;
+        let value = urldecode(parts.next().unwrap_or(""));
+        match key {
+            "code" => code = Some(value),
+            "state" => state = Some(value),
+            _ => {}
+        }
+    }
+    Some((code?, state?))
+}
+
+/// 用授权码（authorization_code）兑换 id_token / access_token / refresh_token。
+fn exchange_oauth_code(
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+) -> Result<RtTokenInfo, String> {
+    let body = format!(
+        "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
+        urlencode(code),
+        urlencode(redirect_uri),
+        OAUTH_CLIENT_ID,
+        urlencode(code_verifier),
+    );
+
+    let mut config = String::from(
+        "silent\nshow-error\nrequest = \"POST\"\nconnect-timeout = 10\nmax-time = 25\nproto = \"=https\"\n",
+    );
+    config.push_str("url = ");
+    config.push_str(&curl_config_quote(OAUTH_TOKEN_URL));
+    config.push('\n');
+    append_curl_header(&mut config, "Accept", "application/json")?;
+    append_curl_header(&mut config, "Content-Type", "application/x-www-form-urlencoded")?;
+    append_curl_header(&mut config, "User-Agent", &codex_cli_user_agent())?;
+    config.push_str("data-raw = ");
+    config.push_str(&curl_config_quote(&body));
+    config.push('\n');
+    config.push_str("write-out = \"\\n%{http_code}\"\n");
+
+    let (response_body, status) = run_curl(&config)?;
+    if !(200..300).contains(&status) {
+        let detail: String = response_body.chars().take(300).collect();
+        return Err(format!("OAuth 兑换失败（HTTP {status}）：{detail}"));
+    }
+
+    let response: OAuthCodeTokenResponse = serde_json::from_str(&response_body)
+        .map_err(|_| "OAuth 兑换接口返回的数据格式异常".to_string())?;
+
+    let (at_meta, exp) = decode_access_token(&response.access_token)
+        .ok_or_else(|| "无法从 Access Token 解析账号信息".to_string())?;
+    // id_token 更可能带邮箱/订阅，优先使用。
+    let id_meta = decode_access_token(&response.id_token);
+
+    let email = id_meta
+        .as_ref()
+        .and_then(|(meta, _)| (!meta.email.is_empty()).then(|| meta.email.clone()))
+        .unwrap_or(at_meta.email);
+    let chatgpt_plan_type = id_meta
+        .as_ref()
+        .and_then(|(meta, _)| meta.chatgpt_plan_type.clone())
+        .or(at_meta.chatgpt_plan_type);
+    let chatgpt_account_id = id_meta
+        .as_ref()
+        .and_then(|(meta, _)| meta.chatgpt_account_id.clone())
+        .or(at_meta.chatgpt_account_id);
+
+    Ok(RtTokenInfo {
+        email,
+        chatgpt_plan_type,
+        chatgpt_account_id,
+        access_token: response.access_token,
+        refresh_token: response.refresh_token,
+        at_expires_at: exp,
+    })
+}
+
+/// 启动一次 OAuth 登录：生成授权链接，并在本地启动一次回调监听（浏览器登录后回跳 localhost）。
+/// 回调端口固定 1455（与 Codex CLI 一致），被占用时回退 1457，最后才用随机端口。
+fn bind_oauth_listener() -> std::io::Result<TcpListener> {
+    for port in [1455, 1457] {
+        if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
+            return Ok(listener);
+        }
+    }
+    TcpListener::bind("127.0.0.1:0")
+}
+
+#[tauri::command]
+async fn start_oauth_login(app: tauri::AppHandle) -> Result<OAuthLoginInfo, String> {
+    let (verifier, challenge) = generate_pkce();
+    let state = generate_oauth_state();
+
+    let listener = bind_oauth_listener()
+        .map_err(|e| format!("无法启动本地回调服务器：{e}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| e.to_string())?
+        .port();
+    let redirect_uri = format!("http://localhost:{port}/auth/callback");
+
+    {
+        let app_state = app.state::<AppState>();
+        let mut oauth = app_state.oauth.lock().map_err(|e| e.to_string())?;
+        oauth.code_verifier = Some(verifier.clone());
+        oauth.state = Some(state.clone());
+        oauth.redirect_uri = Some(redirect_uri.clone());
+        oauth.callback_code = None;
+    }
+
+    // 后台线程监听一次回调。
+    let thread_app = app.clone();
+    let expected_state = state.clone();
+    thread::spawn(move || {
+        if let Ok((mut stream, _addr)) = listener.accept() {
+            let message = match read_http_request(&mut stream) {
+                Ok(request_line) => match parse_callback_query(&request_line) {
+                    Some((code, callback_state)) if callback_state == expected_state => {
+                        let app_state = thread_app.state::<AppState>();
+                        if let Ok(mut oauth) = app_state.oauth.lock() {
+                            oauth.callback_code = Some(code);
+                        }
+                        "登录成功，可以关闭此窗口"
+                    }
+                    _ => "回调参数无效",
+                },
+                Err(_) => "回调请求读取失败",
+            };
+            let _ = write_http_response(&mut stream, message);
+        }
+    });
+
+    let url = build_oauth_authorize_url(OAUTH_CLIENT_ID, &redirect_uri, &challenge, &state);
+    Ok(OAuthLoginInfo { url, redirect_uri })
+}
+
+/// 检查本地是否已捕获回调；若已捕获则兑换 token 并返回账号信息。
+#[tauri::command]
+async fn check_oauth_callback(state: State<'_, AppState>) -> Result<Option<RtTokenInfo>, String> {
+    let (code, verifier, redirect_uri) = {
+        let oauth = state.oauth.lock().map_err(|e| e.to_string())?;
+        (
+            oauth.callback_code.clone(),
+            oauth.code_verifier.clone(),
+            oauth.redirect_uri.clone(),
+        )
+    };
+
+    let Some(code) = code else {
+        return Ok(None);
+    };
+
+    let info = tauri::async_runtime::spawn_blocking(move || {
+        exchange_oauth_code(
+            &code,
+            &redirect_uri.unwrap_or_default(),
+            &verifier.unwrap_or_default(),
+        )
+    })
+    .await
+    .map_err(|e| format!("OAuth 兑换任务失败：{e}"))??;
+
+    clear_oauth_session(&state);
+    Ok(Some(info))
+}
+
+/// 用户手动粘贴本地回调地址（在其它设备/浏览器登录后）完成认证。
+#[tauri::command]
+async fn complete_oauth_login(
+    state: State<'_, AppState>,
+    redirect_url: String,
+) -> Result<RtTokenInfo, String> {
+    let (code, callback_state) =
+        parse_callback_query(&redirect_url).ok_or_else(|| "无法从回调地址解析 code".to_string())?;
+
+    let (expected_state, verifier, redirect_uri) = {
+        let oauth = state.oauth.lock().map_err(|e| e.to_string())?;
+        (
+            oauth.state.clone(),
+            oauth.code_verifier.clone(),
+            oauth.redirect_uri.clone(),
+        )
+    };
+    if let Some(expected) = expected_state {
+        if callback_state != expected {
+            return Err("回调地址的 state 不匹配，请确认是本次登录生成的地址".to_string());
+        }
+    }
+
+    let info = tauri::async_runtime::spawn_blocking(move || {
+        exchange_oauth_code(&code, &redirect_uri.unwrap_or_default(), &verifier.unwrap_or_default())
+    })
+    .await
+    .map_err(|e| format!("OAuth 兑换任务失败：{e}"))??;
+
+    clear_oauth_session(&state);
+    Ok(info)
+}
+
+fn clear_oauth_session(state: &AppState) {
+    if let Ok(mut oauth) = state.oauth.lock() {
+        oauth.code_verifier = None;
+        oauth.state = None;
+        oauth.redirect_uri = None;
+        oauth.callback_code = None;
+    }
 }
 
 fn resolve_token_metadata(token: &str) -> Result<TokenMetadata, String> {
@@ -1324,6 +2054,96 @@ async fn validate_personal_token(token: String) -> Result<TokenInfo, String> {
     })
 }
 
+/// 用 Refresh Token（rt）兑换 access_token（at）并解码账号信息。
+/// 输入可为 JSON（自动提取 refresh_token）或原始 rt；rt 一次性使用，兑换后返回新的 rt。
+#[tauri::command]
+async fn exchange_refresh_token(input: String) -> Result<RtTokenInfo, String> {
+    let rt = extract_refresh_token(&input)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut info = exchange_rt_for_at(&rt)?;
+        // at 的 JWT 里可能没有订阅类型，尽力从额度接口（只读）补全。
+        if let Ok(usage) = fetch_account_usage(
+            &info.access_token,
+            info.chatgpt_account_id.as_deref(),
+            false,
+            false,
+        ) {
+            if let Some(plan) = usage.plan_type {
+                info.chatgpt_plan_type = Some(plan);
+            }
+        }
+        Ok::<RtTokenInfo, String>(info)
+    })
+    .await
+    .map_err(|e| format!("兑换任务失败：{e}"))?
+}
+
+/// 保存通过 rt 兑换的账号（at + 新 rt + at 过期时间）。
+#[tauri::command]
+async fn save_rt_account(
+    state: State<'_, AppState>,
+    email: String,
+    chatgpt_plan_type: Option<String>,
+    chatgpt_account_id: Option<String>,
+    access_token: String,
+    refresh_token: String,
+    at_expires_at: i64,
+    notes: Option<String>,
+) -> Result<Account, String> {
+    let access_token = access_token.trim().to_string();
+    let refresh_token = refresh_token.trim().to_string();
+    if access_token.is_empty() || refresh_token.is_empty() {
+        return Err("Token 信息不完整，请重新兑换".to_string());
+    }
+
+    let auth_json_content = serde_json::json!({ "personal_access_token": null }).to_string();
+    let now = Utc::now().to_rfc3339();
+    let at_expires = DateTime::from_timestamp(at_expires_at, 0)
+        .map(|time| time.to_rfc3339())
+        .unwrap_or_else(|| now.clone());
+
+    let account = Account {
+        id: Uuid::new_v4().to_string(),
+        name: email,
+        auth_json_content,
+        notes,
+        created_at: now.clone(),
+        updated_at: now,
+        // 限额类型由额度接口自动推导。
+        plan_type: "weekly".to_string(),
+        usage: None,
+        can_refresh_usage: true,
+        next_refresh_at: None,
+        chatgpt_plan_type,
+        has_access_token: true,
+        reset_credits: None,
+        is_active: false,
+        access_token: Some(access_token),
+        chatgpt_account_id,
+        chatgpt_account_is_fedramp: false,
+        refresh_token: Some(refresh_token),
+        at_expires_at: Some(at_expires),
+    };
+
+    let mut db = state.db.lock().map_err(|e| e.to_string())?;
+    let count: i32 = db
+        .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+        .unwrap_or(0);
+    let mut account_to_return = account.clone();
+    account_to_return.is_active = count == 0;
+
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO accounts (id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, chatgpt_plan_type, chatgpt_account_id, chatgpt_account_is_fedramp, access_token, refresh_token, at_expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        params![account.id, account.name, account.auth_json_content, account.notes, account.created_at, account.updated_at, if count == 0 { 1 } else { 0 }, account.plan_type, account.chatgpt_plan_type, account.chatgpt_account_id, account.chatgpt_account_is_fedramp as i32, account.access_token, account.refresh_token, account.at_expires_at],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    // rt 账号无法生成 codex 可用的 auth.json，不写入 ~/.codex/auth.json。
+    Ok(account_to_return)
+}
+
 #[tauri::command]
 async fn add_account(
     state: State<'_, AppState>,
@@ -1364,6 +2184,8 @@ async fn add_account(
         access_token: None,
         chatgpt_account_id: meta.chatgpt_account_id,
         chatgpt_account_is_fedramp: meta.chatgpt_account_is_fedramp,
+        refresh_token: None,
+        at_expires_at: None,
     };
 
     let mut db = state.db.lock().map_err(|e| e.to_string())?;
@@ -1382,7 +2204,7 @@ async fn add_account(
     tx.commit().map_err(|e| e.to_string())?;
 
     if count == 0 {
-        let _ = apply_auth_json(&account.auth_json_content);
+        apply_auth_json_if_pat(&account.auth_json_content);
     }
 
     Ok(account_to_return)
@@ -1415,11 +2237,13 @@ async fn update_account(
         existing_chatgpt_account_id,
         existing_is_fedramp,
         existing_reset_credits_json,
+        existing_refresh_token,
+        existing_at_expires_at,
         is_active,
     ) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.query_row(
-            "SELECT auth_json_content, name, plan_type, usage_json, usage_updated_at, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, is_active FROM accounts WHERE id = ?1",
+            "SELECT auth_json_content, name, plan_type, usage_json, usage_updated_at, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, is_active FROM accounts WHERE id = ?1",
             params![id],
             |row| Ok((
                 row.get::<_, String>(0)?,
@@ -1433,7 +2257,9 @@ async fn update_account(
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, i32>(9)? == 1,
                 row.get::<_, Option<String>>(10)?,
-                row.get::<_, i32>(11)? == 1,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, i32>(13)? == 1,
             )),
         )
         .map_err(|_| "Account not found".to_string())?
@@ -1473,6 +2299,8 @@ async fn update_account(
             access_token: existing_access_token,
             chatgpt_account_id: existing_chatgpt_account_id,
             chatgpt_account_is_fedramp: existing_is_fedramp,
+            refresh_token: existing_refresh_token,
+            at_expires_at: existing_at_expires_at,
         });
     }
 
@@ -1500,7 +2328,7 @@ async fn update_account(
     tx.commit().map_err(|e| e.to_string())?;
 
     if is_active {
-        let _ = apply_auth_json(&auth_json_content);
+        apply_auth_json_if_pat(&auth_json_content);
     }
 
     Ok(Account {
@@ -1521,6 +2349,8 @@ async fn update_account(
         access_token: None,
         chatgpt_account_id: meta.chatgpt_account_id,
         chatgpt_account_is_fedramp: meta.chatgpt_account_is_fedramp,
+        refresh_token: None,
+        at_expires_at: None,
     })
 }
 
@@ -1630,7 +2460,7 @@ fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), String> 
                 params![nid],
                 |row| row.get::<_, String>(0),
             ) {
-                let _ = apply_auth_json(&content);
+                apply_auth_json_if_pat(&content);
             }
         }
     }
@@ -1661,8 +2491,16 @@ fn set_active_account(state: State<'_, AppState>, id: String) -> Result<(), Stri
 
     tx.commit().map_err(|e| e.to_string())?;
 
-    apply_auth_json(&content)?;
+    apply_auth_json_if_pat(&content);
     Ok(())
+}
+
+/// 仅当认证内容含 Personal Access Token（codex 可用的认证格式）时才写入 ~/.codex/auth.json。
+/// rt 账号（无 PAT）不会覆盖本地 auth.json。
+fn apply_auth_json_if_pat(content: &str) {
+    if extract_personal_access_token(content).is_some() {
+        let _ = apply_auth_json(content);
+    }
 }
 
 fn apply_auth_json(content: &str) -> Result<(), String> {
@@ -1840,14 +2678,20 @@ fn codex_command() -> Command {
 }
 
 /// 读取本机 Codex CLI 版本号（失败返回 None）。
+/// `codex --version` 输出形如 "codex-cli 0.147.0"，这里只提取版本号。
 fn local_codex_version() -> Option<String> {
     let output = codex_command().arg("--version").output().ok()?;
     if output.status.success() {
-        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if version.is_empty() {
+        let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if raw.is_empty() {
             None
         } else {
-            Some(version)
+            Some(
+                raw.split_whitespace()
+                    .last()
+                    .map(str::to_string)
+                    .unwrap_or(raw),
+            )
         }
     } else {
         None
@@ -1947,6 +2791,7 @@ pub fn run() {
             app.manage(AppState {
                 db: Mutex::new(conn),
                 refreshing: Mutex::new(HashSet::new()),
+                oauth: Mutex::new(OAuthSession::default()),
             });
 
             start_usage_scheduler(app.handle().clone());
@@ -1959,6 +2804,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_accounts,
             validate_personal_token,
+            exchange_refresh_token,
+            save_rt_account,
+            start_oauth_login,
+            check_oauth_callback,
+            complete_oauth_login,
             add_account,
             update_account,
             delete_account,
@@ -2008,6 +2858,7 @@ mod tests {
             }),
             secondary: None,
             synced_at: "2026-08-07T10:00:00Z".to_string(),
+            plan_type: None,
         }
     }
 
@@ -2048,6 +2899,7 @@ mod tests {
             primary: None,
             secondary: None,
             synced_at: "2026-08-07T10:00:00Z".to_string(),
+            plan_type: None,
         };
         let next = compute_next_refresh_at(&usage, now);
         assert_eq!(next, utc_ts("2026-08-07T11:00:00Z"));
@@ -2067,6 +2919,7 @@ mod tests {
                 resets_at: None,
             }),
             synced_at: "2026-08-07T10:00:00Z".to_string(),
+            plan_type: None,
         };
         assert_eq!(derive_plan_type_from_usage(&usage), Some("weekly"));
     }
@@ -2081,6 +2934,7 @@ mod tests {
                 resets_at: None,
             }),
             synced_at: "2026-08-07T10:00:00Z".to_string(),
+            plan_type: None,
         };
         assert_eq!(derive_plan_type_from_usage(&usage), Some("monthly"));
     }
@@ -2095,8 +2949,71 @@ mod tests {
                 resets_at: None,
             }),
             synced_at: "2026-08-07T10:00:00Z".to_string(),
+            plan_type: None,
         };
         assert_eq!(derive_plan_type_from_usage(&usage), None);
+    }
+
+    #[test]
+    fn extract_rt_from_json() {
+        let input = r#"{"access_token":"x","refresh_token":"rt-abc"}"#;
+        assert_eq!(extract_refresh_token(input).unwrap(), "rt-abc");
+    }
+
+    #[test]
+    fn extract_rt_from_raw() {
+        assert_eq!(extract_refresh_token("rt-raw-token").unwrap(), "rt-raw-token");
+    }
+
+    #[test]
+    fn extract_rt_json_missing_field_errors() {
+        let input = r#"{"access_token":"x"}"#;
+        assert!(extract_refresh_token(input).is_err());
+    }
+
+    #[test]
+    fn extract_rt_from_nested_json() {
+        let input = r#"{"tokens":{"session":{"refresh_token":"rt-nested"}}}"#;
+        assert_eq!(extract_refresh_token(input).unwrap(), "rt-nested");
+    }
+
+    #[test]
+    fn parse_callback_query_strips_http_version() {
+        let line = "GET /auth/callback?code=abc123&state=xyz789 HTTP/1.1";
+        let (code, state) = parse_callback_query(line).unwrap();
+        assert_eq!(code, "abc123");
+        assert_eq!(state, "xyz789");
+    }
+
+    #[test]
+    fn parse_callback_query_full_url() {
+        let url = "http://localhost:1455/auth/callback?code=abc123&state=xyz789";
+        let (code, state) = parse_callback_query(url).unwrap();
+        assert_eq!(code, "abc123");
+        assert_eq!(state, "xyz789");
+    }
+
+    #[test]
+    fn decode_access_token_jwt() {
+        let payload = serde_json::json!({
+            "email": "user@example.com",
+            "exp": 1_800_000_000_i64,
+            "https://api.openai.com/auth": {
+                "chatgpt_plan_type": "team",
+                "chatgpt_account_id": "acc_123",
+                "chatgpt_user_id": "user_456"
+            }
+        })
+        .to_string();
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+        let body = URL_SAFE_NO_PAD.encode(payload.as_bytes());
+        let token = format!("{header}.{body}.sig");
+
+        let (meta, exp) = decode_access_token(&token).unwrap();
+        assert_eq!(meta.email, "user@example.com");
+        assert_eq!(meta.chatgpt_plan_type.as_deref(), Some("team"));
+        assert_eq!(meta.chatgpt_account_id.as_deref(), Some("acc_123"));
+        assert_eq!(exp, 1_800_000_000);
     }
 
     #[test]
@@ -2110,7 +3027,8 @@ mod tests {
                 usage_updated_at TEXT,
                 next_refresh_at TEXT,
                 plan_type TEXT NOT NULL DEFAULT 'weekly',
-                chatgpt_plan_type TEXT
+                chatgpt_plan_type TEXT,
+                access_token TEXT
             )",
         )
         .unwrap();
@@ -2131,6 +3049,7 @@ mod tests {
             }),
             secondary: None,
             synced_at: now.to_rfc3339(),
+            plan_type: None,
         };
 
         persist_account_usage(&conn, "a1", "sk-test-token", &usage).unwrap();

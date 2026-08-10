@@ -1,11 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
 import AccountCard from './AccountCard';
 import AccountModal from './AccountModal';
 import ConfirmModal from './ConfirmModal';
 import TestAccountModal from './TestAccountModal';
 import ResetInfoModal from './ResetInfoModal';
-import { Account, AccountFormData, AccountUsage } from '../types/account';
+import { Account, AccountFormData, AccountUsage, SaveRtAccountParams } from '../types/account';
+
+const PLAN_FILTER_STYLES: Record<string, { label: string; activeClass: string }> = {
+  team: { label: 'Team', activeClass: 'bg-black text-white border-black' },
+  business: { label: 'Business', activeClass: 'bg-black text-white border-black' },
+  enterprise: { label: 'Enterprise', activeClass: 'bg-black text-white border-black' },
+  pro: { label: 'Pro', activeClass: 'bg-[#B45309] text-white border-[#B45309]' },
+  plus: { label: 'Plus', activeClass: 'bg-[#2563EB] text-white border-[#2563EB]' },
+  free: { label: 'Free', activeClass: 'bg-[#888888] text-white border-[#888888]' },
+  edu: { label: 'Edu', activeClass: 'bg-emerald-600 text-white border-emerald-600' },
+};
 
 interface AccountListProps {
   isEmailMaskingEnabled: boolean;
@@ -20,12 +30,28 @@ const AccountList: React.FC<AccountListProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, validatePersonalToken, setAccountAccessToken, getResetCredits, refresh } = useAccounts();
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, refresh } = useAccounts();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [testingAccount, setTestingAccount] = useState<Account | null>(null);
   const [resetAccount, setResetAccount] = useState<Account | null>(null);
+  const [planFilter, setPlanFilter] = useState<string | null>(null);
+
+  // 各订阅类型的账号数量（用于筛选 chip）
+  const planCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const account of accounts) {
+      const plan = (account.chatgptPlanType || '').toLowerCase();
+      if (plan) counts[plan] = (counts[plan] || 0) + 1;
+    }
+    return counts;
+  }, [accounts]);
+
+  const filteredAccounts = useMemo(
+    () => (planFilter ? accounts.filter(a => (a.chatgptPlanType || '').toLowerCase() === planFilter) : accounts),
+    [accounts, planFilter],
+  );
 
   useEffect(() => {
     if (usageRevision > 0) {
@@ -56,6 +82,15 @@ const AccountList: React.FC<AccountListProps> = ({
     if (savedAccount.canRefreshUsage && shouldRefreshUsage) {
       void handleRefreshUsage(savedAccount.id, true);
     }
+  };
+
+  const handleSaveRt = async (params: SaveRtAccountParams): Promise<Account> => {
+    const savedAccount = await saveRtAccount(params);
+    setIsModalOpen(false);
+    if (savedAccount.canRefreshUsage) {
+      void handleRefreshUsage(savedAccount.id, true);
+    }
+    return savedAccount;
   };
 
   const handleRefreshUsage = async (accountId: string, accountWasJustSaved = false) => {
@@ -102,6 +137,43 @@ const AccountList: React.FC<AccountListProps> = ({
         </button>
       </div>
 
+      {accounts.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 flex-wrap shrink-0">
+          <button
+            type="button"
+            onClick={() => setPlanFilter(null)}
+            className={`px-3 py-1 rounded-full border text-[12px] font-medium transition-colors ${
+              planFilter === null
+                ? 'bg-black text-white border-black'
+                : 'bg-white text-[#666666] border-[#EAEAEA] hover:border-[#C8C8C8] hover:text-black'
+            }`}
+          >
+            全部
+          </button>
+          {Object.keys(planCounts)
+            .sort()
+            .map(plan => {
+              const meta = PLAN_FILTER_STYLES[plan];
+              const label = meta?.label || plan;
+              return (
+                <button
+                  key={plan}
+                  type="button"
+                  onClick={() => setPlanFilter(planFilter === plan ? null : plan)}
+                  className={`px-3 py-1 rounded-full border text-[12px] font-medium transition-colors ${
+                    planFilter === plan
+                      ? meta?.activeClass || 'bg-black text-white border-black'
+                      : 'bg-white text-[#666666] border-[#EAEAEA] hover:border-[#C8C8C8] hover:text-black'
+                  }`}
+                >
+                  {label}
+                  <span className="ml-1 opacity-60">{planCounts[plan]}</span>
+                </button>
+              );
+            })}
+        </div>
+      )}
+
       {accounts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 px-8 text-center animate-fade-in bg-gradient-to-b from-white to-[#F8F9FA] border border-[#EAEAEA] rounded-2xl shadow-sm relative overflow-hidden">
           <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none"></div>
@@ -121,10 +193,20 @@ const AccountList: React.FC<AccountListProps> = ({
             立即创建
           </button>
         </div>
+      ) : filteredAccounts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[#DADADA] bg-white rounded-2xl">
+          <p className="text-[14px] text-[#666666] mb-2">该筛选下暂无账号</p>
+          <button
+            onClick={() => setPlanFilter(null)}
+            className="text-[13px] font-medium text-black hover:underline"
+          >
+            查看全部账号
+          </button>
+        </div>
       ) : (
         <div className="h-[464px] overflow-y-auto pr-4 -mr-4 snap-y snap-mandatory">
           <div className="flex flex-col gap-4">
-          {accounts.map((account, index) => (
+          {filteredAccounts.map((account, index) => (
             <div key={account.id} style={{ animationDelay: `${index * 30}ms` }} className="animate-card-in">
               <AccountCard
                 account={account}
@@ -155,6 +237,11 @@ const AccountList: React.FC<AccountListProps> = ({
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleSubmit}
         onValidate={validatePersonalToken}
+        onExchangeRt={exchangeRefreshToken}
+        onSaveRt={handleSaveRt}
+        onStartOauth={startOauthLogin}
+        onCheckOauth={checkOauthCallback}
+        onCompleteOauth={completeOauthLogin}
         editingAccount={editingAccount}
       />
 
