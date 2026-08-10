@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Account, AccountStore, AccountFormData } from '../types/account';
+import { Account, AccountStore, AccountFormData, ResetCreditsInfo, TokenInfo } from '../types/account';
 
 export function useAccounts() {
   const [store, setStore] = useState<AccountStore>({ activeAccountId: null, accounts: [] });
@@ -27,11 +27,9 @@ export function useAccounts() {
 
   const addAccount = async (data: AccountFormData) => {
     try {
-      const newAccount = await invoke<Account>('add_account', { 
-        name: data.name, 
-        authJsonContent: data.authJsonContent, 
-        notes: data.notes || null,
-        planType: data.planType
+      const newAccount = await invoke<Account>('add_account', {
+        token: data.token,
+        notes: data.notes || null
       });
       await loadAccounts(false);
       return newAccount;
@@ -43,12 +41,10 @@ export function useAccounts() {
 
   const updateAccount = async (id: string, data: AccountFormData) => {
     try {
-      const updatedAccount = await invoke<Account>('update_account', { 
-        id, 
-        name: data.name, 
-        authJsonContent: data.authJsonContent, 
-        notes: data.notes || null,
-        planType: data.planType
+      const updatedAccount = await invoke<Account>('update_account', {
+        id,
+        token: data.token,
+        notes: data.notes || null
       });
       await loadAccounts(false);
       return updatedAccount;
@@ -56,6 +52,24 @@ export function useAccounts() {
       console.error('Failed to update account:', err);
       throw err;
     }
+  };
+
+  const validatePersonalToken = async (token: string): Promise<TokenInfo> => {
+    return await invoke<TokenInfo>('validate_personal_token', { token });
+  };
+
+  const setAccountAccessToken = async (id: string, accessToken: string) => {
+    try {
+      await invoke('set_account_access_token', { id, accessToken });
+      await loadAccounts(false);
+    } catch (err: any) {
+      console.error('Failed to save access token:', err);
+      throw err;
+    }
+  };
+
+  const getResetCredits = async (id: string, force = false): Promise<ResetCreditsInfo> => {
+    return await invoke<ResetCreditsInfo>('get_reset_credits', { id, force });
   };
 
   const deleteAccount = async (id: string) => {
@@ -87,6 +101,9 @@ export function useAccounts() {
     updateAccount,
     deleteAccount,
     setActiveAccount,
+    validatePersonalToken,
+    setAccountAccessToken,
+    getResetCredits,
     refresh: loadAccounts
   };
 }

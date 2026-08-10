@@ -1,7 +1,7 @@
 {
   "name": "codex-portal",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite --host localhost --port 1421 --strictPort",

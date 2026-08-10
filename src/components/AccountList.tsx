@@ -3,6 +3,8 @@ import { useAccounts } from '../hooks/useAccounts';
 import AccountCard from './AccountCard';
 import AccountModal from './AccountModal';
 import ConfirmModal from './ConfirmModal';
+import TestAccountModal from './TestAccountModal';
+import ResetInfoModal from './ResetInfoModal';
 import { Account, AccountFormData, AccountUsage } from '../types/account';
 
 interface AccountListProps {
@@ -18,10 +20,12 @@ const AccountList: React.FC<AccountListProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, refresh } = useAccounts();
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, validatePersonalToken, setAccountAccessToken, getResetCredits, refresh } = useAccounts();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [testingAccount, setTestingAccount] = useState<Account | null>(null);
+  const [resetAccount, setResetAccount] = useState<Account | null>(null);
 
   useEffect(() => {
     if (usageRevision > 0) {
@@ -39,7 +43,7 @@ const AccountList: React.FC<AccountListProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleSubmit = async (data: AccountFormData) => {
+  const handleSubmit = async (data: AccountFormData, shouldRefreshUsage = true) => {
     let savedAccount: Account;
     if (editingAccount) {
       savedAccount = await updateAccount(editingAccount.id, data);
@@ -48,7 +52,8 @@ const AccountList: React.FC<AccountListProps> = ({
     }
     setIsModalOpen(false);
 
-    if (savedAccount.canRefreshUsage) {
+    // PAT 未变化时无需重新获取额度
+    if (savedAccount.canRefreshUsage && shouldRefreshUsage) {
       void handleRefreshUsage(savedAccount.id, true);
     }
   };
@@ -135,6 +140,8 @@ const AccountList: React.FC<AccountListProps> = ({
                 onEdit={handleEdit}
                 onDelete={(id) => setDeleteConfirmId(id)}
                 onRefreshUsage={(id) => void handleRefreshUsage(id)}
+                onTest={(target) => setTestingAccount(target)}
+                onShowReset={(target) => setResetAccount(target)}
                 isUsageRefreshing={account.canRefreshUsage && isUsageRefreshing(account.id)}
               />
             </div>
@@ -147,6 +154,7 @@ const AccountList: React.FC<AccountListProps> = ({
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleSubmit}
+        onValidate={validatePersonalToken}
         editingAccount={editingAccount}
       />
 
@@ -166,6 +174,23 @@ const AccountList: React.FC<AccountListProps> = ({
         }}
         onCancel={() => setDeleteConfirmId(null)}
       />
+
+      {testingAccount && (
+        <TestAccountModal
+          account={testingAccount}
+          onClose={() => setTestingAccount(null)}
+          onRefreshUsage={onRefreshUsage}
+        />
+      )}
+
+      {resetAccount && (
+        <ResetInfoModal
+          account={resetAccount}
+          onClose={() => setResetAccount(null)}
+          getResetCredits={getResetCredits}
+          setAccountAccessToken={setAccountAccessToken}
+        />
+      )}
     </div>
   );
 };

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Account, AccountUsageWindow } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import PlanBadge from './PlanBadge';
 import {
   formatNextRefreshAt,
   formatUsageResetAt,
@@ -17,6 +18,8 @@ interface AccountCardProps {
   onEdit: (account: Account) => void;
   onDelete: (id: string) => void;
   onRefreshUsage: (id: string) => void;
+  onTest: (account: Account) => void;
+  onShowReset: (account: Account) => void;
   isUsageRefreshing: boolean;
 }
 
@@ -65,6 +68,8 @@ const AccountCard: React.FC<AccountCardProps> = ({
   onEdit,
   onDelete,
   onRefreshUsage,
+  onTest,
+  onShowReset,
   isUsageRefreshing,
 }) => {
   const usageWindows: Array<{
@@ -89,14 +94,28 @@ const AccountCard: React.FC<AccountCardProps> = ({
               <h3 className="min-w-0 truncate text-[16px] font-bold font-mono text-black leading-tight select-text">
                 {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
               </h3>
-              <span className="shrink-0 px-1.5 py-0.5 bg-[#F5F5F5] text-[#666666] border border-[#EAEAEA] text-[9px] font-bold rounded uppercase tracking-wider">
-                {account.planType === 'monthly' ? '月限' : '周限'}
-              </span>
+              <PlanBadge planType={account.chatgptPlanType} />
+              <button
+                onClick={() => onShowReset(account)}
+                title="查看重置卡"
+                className="shrink-0 px-1.5 py-0.5 bg-[#F5F5F5] text-[#666666] border border-[#EAEAEA] text-[9px] font-bold rounded uppercase tracking-wider hover:border-black hover:text-black transition-colors"
+              >
+                重置{account.resetCredits ? ` ×${account.resetCredits.availableCount}` : ''}
+              </button>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => onTest(account)}
+                disabled={!account.canRefreshUsage}
+                title={account.canRefreshUsage ? '测试额度（调用模型接口）' : '仅 Personal Access Token 账号支持额度测试'}
+                aria-label="测试额度"
+                className="w-7 h-7 flex items-center justify-center rounded text-[#888888] hover:bg-[#F5F5F5] hover:text-black transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              </button>
               <button
                 onClick={() => onRefreshUsage(account.id)}
                 disabled={!account.canRefreshUsage || isUsageRefreshing}

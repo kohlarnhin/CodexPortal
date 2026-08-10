@@ -21,6 +21,24 @@ export interface Account {
   usage: AccountUsage | null;
   canRefreshUsage: boolean;
   nextRefreshAt?: string | null;
+  chatgptPlanType?: string | null;
+  hasAccessToken: boolean;
+  resetCredits: ResetCreditsInfo | null;
+}
+
+export interface ResetCredit {
+  id?: string | null;
+  status?: string | null;
+  resetType?: string | null;
+  expiresAt?: number | null;
+  grantedAt?: number | null;
+  redeemedAt?: number | null;
+}
+
+export interface ResetCreditsInfo {
+  availableCount: number;
+  credits: ResetCredit[];
+  syncedAt: string;
 }
 
 export interface AccountStore {
@@ -29,8 +47,17 @@ export interface AccountStore {
 }
 
 export interface AccountFormData {
-  name: string;
-  authJsonContent: string;
+  token: string;
   notes: string;
-  planType: 'weekly' | 'monthly';
+}
+
+export interface TokenInfo {
+  email: string;
+  chatgptPlanType: string;
+}
+
+export interface TestMessageResult {
+  model: string;
+  input: string;
+  output: string;
 }

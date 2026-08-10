@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import PlanBadge from './PlanBadge';
 import { AccountUsage, AccountUsageWindow } from '../types/account';
 import {
   formatNextRefreshAt,
@@ -147,9 +148,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                   {getDisplayedEmail(activeAccount.name, isEmailMaskingEnabled)}
                 </h3>
                 <span className="shrink-0 px-2 py-1 bg-black text-white text-[10px] font-bold rounded-md uppercase tracking-wider">Active</span>
-                <span className="shrink-0 px-2 py-1 bg-[#F5F5F5] text-[#666666] border border-[#EAEAEA] text-[10px] font-bold rounded-md uppercase tracking-wider">
-                  {activeAccount.planType === 'monthly' ? '月限' : '周限'}
-                </span>
+                <PlanBadge planType={activeAccount.chatgptPlanType} />
               </div>
               <p className="text-[14px] text-[#666666]">{activeAccount.notes || '无备注信息'}</p>
             </div>

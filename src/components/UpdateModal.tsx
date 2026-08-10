@@ -1,5 +1,6 @@
 import React from 'react';
 import type { UpdaterController } from '../hooks/useUpdater';
+import Markdown from './Markdown';
 
 interface UpdateModalProps {
   updater: UpdaterController;
@@ -91,8 +92,14 @@ export default function UpdateModal({ updater }: UpdateModalProps) {
               <h4 className="text-[13px] font-semibold text-black">更新内容</h4>
               {publishDate && <span className="text-[11px] text-[#999999]">{publishDate}</span>}
             </div>
-            <div className="bg-white border border-[#EAEAEA] rounded-lg px-4 py-3.5 text-[13px] text-[#555555] leading-relaxed whitespace-pre-wrap select-text min-h-[88px]">
-              {update.body?.trim() || '本次更新包含功能优化与问题修复。'}
+            <div className="bg-white border border-[#EAEAEA] rounded-lg px-4 py-3.5 min-h-[88px]">
+              {update.body?.trim() ? (
+                <Markdown content={update.body} />
+              ) : (
+                <p className="text-[13px] leading-relaxed text-[#555555]">
+                  本次更新包含功能优化与问题修复。
+                </p>
+              )}
             </div>
           </div>
 

@@ -34,7 +34,7 @@ export default function CodexInfo() {
       <div className="flex items-center justify-between mb-8 shrink-0">
         <div>
           <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">Codex 信息</h2>
-          <p className="text-[13px] text-[#666666]">查看本机安装的 Codex 引擎版本与状态。</p>
+          <p className="text-[13px] text-[#666666]">查看应用启动时检测并保存的 Codex 引擎版本。</p>
         </div>
       </div>
 

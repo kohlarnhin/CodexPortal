@@ -33,12 +33,19 @@ html, body, #root {
   height: 100%;
   margin: 0;
   overflow: hidden;
-  user-select: none;
-  -webkit-user-select: none;
   background-color: #FAFAFA;
 }
 
-/* Allow text selection only in inputs and textareas */
+/* 默认允许选中文字（长按/拖拽选择），仅交互控件与拖拽区不可选 */
+button,
+[role="button"],
+select,
+[data-tauri-drag-region] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 确保输入框、文本域、代码内文字始终可选 */
 input, textarea, code {
   user-select: text;
   -webkit-user-select: text;
