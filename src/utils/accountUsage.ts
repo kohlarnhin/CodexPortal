@@ -1,4 +1,4 @@
-import { AccountUsageWindow } from '../types/account';
+import { AccountUsage, AccountUsageWindow } from '../types/account';
 
 export function getRemainingPercent(window: AccountUsageWindow): number {
   const usedPercent = Number.isFinite(window.usedPercent) ? window.usedPercent : 0;
@@ -46,4 +46,39 @@ export function formatUsageSyncedAt(syncedAt: string): string {
     minute: '2-digit',
     hour12: false,
   }).format(syncedDate)}`;
+}
+
+/** 短周期（primary）窗口是否已用尽（剩余 0%）。 */
+export function isShortCycleExhausted(usage: AccountUsage | null): boolean {
+  const primary = usage?.primary;
+  return !!primary && primary.usedPercent >= 100;
+}
+
+function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '未知时间';
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+/**
+ * 下次自动刷新时间文案：额度用尽 → 重置后刷新；否则显示具体刷新时刻。
+ * nextRefreshAt 由后端在每次刷新成功后计算并持久化。
+ */
+export function formatNextRefreshAt(
+  nextRefreshAt: string | null | undefined,
+  usage: AccountUsage | null,
+): string {
+  if (isShortCycleExhausted(usage)) {
+    if (nextRefreshAt) return `额度已用完 · 重置后刷新（${formatDateTime(nextRefreshAt)}）`;
+    return '额度已用完 · 重置后自动刷新';
+  }
+  if (nextRefreshAt) return `下次刷新 ${formatDateTime(nextRefreshAt)}`;
+  return '等待自动刷新';
 }

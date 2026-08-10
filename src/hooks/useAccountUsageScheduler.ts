@@ -1,65 +1,65 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AccountUsage, UsageRefreshSummary } from '../types/account';
+import { listen } from '@tauri-apps/api/event';
+import { AccountUsage } from '../types/account';
 
-const USAGE_REFRESH_INTERVAL_MS = 60 * 60 * 1_000;
-
+/**
+ * 账号额度刷新调度。
+ *
+ * 自动刷新已由后端后台调度器驱动（启动全量逐个刷新 + 按 next_refresh_at 精确触发），
+ * 前端仅监听事件刷新 UI；手动刷新仍直接调用后端命令。
+ */
 export function useAccountUsageScheduler() {
   const [usageRevision, setUsageRevision] = useState(0);
-  const [timerVersion, setTimerVersion] = useState(0);
-  const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   const [refreshingAccountIds, setRefreshingAccountIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const initialRefreshRequested = useRef(false);
-  const autoRefreshInFlight = useRef(false);
-
-  const refreshStaleUsages = useCallback(async () => {
-    if (autoRefreshInFlight.current) return;
-
-    autoRefreshInFlight.current = true;
-    setIsAutoRefreshing(true);
-    try {
-      const summary = await invoke<UsageRefreshSummary>('refresh_stale_account_usages');
-      if (summary.refreshedAccountIds.length > 0) {
-        setUsageRevision((revision) => revision + 1);
-      }
-    } catch (error) {
-      console.warn('Automatic account usage refresh failed', error);
-    } finally {
-      autoRefreshInFlight.current = false;
-      setIsAutoRefreshing(false);
-    }
-  }, []);
 
   useEffect(() => {
-    if (initialRefreshRequested.current) return;
-    initialRefreshRequested.current = true;
-    void refreshStaleUsages();
-  }, [refreshStaleUsages]);
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void refreshStaleUsages().finally(() => {
-        setTimerVersion((version) => version + 1);
+    const handleUsageUpdated = () => {
+      if (disposed) return;
+      setUsageRevision((revision) => revision + 1);
+    };
+    const handleRefreshStarted = (event: { payload: { accountId: string } }) => {
+      if (disposed) return;
+      const { accountId } = event.payload;
+      setRefreshingAccountIds((current) => new Set(current).add(accountId));
+    };
+    const handleRefreshFinished = (event: { payload: { accountId: string } }) => {
+      if (disposed) return;
+      const { accountId } = event.payload;
+      setRefreshingAccountIds((current) => {
+        const next = new Set(current);
+        next.delete(accountId);
+        return next;
       });
-    }, USAGE_REFRESH_INTERVAL_MS);
+    };
 
-    return () => window.clearTimeout(timer);
-  }, [refreshStaleUsages, timerVersion]);
-
-  const refreshAccountUsage = useCallback(async (accountId: string) => {
-    setTimerVersion((version) => version + 1);
-    setRefreshingAccountIds((current) => {
-      const next = new Set(current);
-      next.add(accountId);
-      return next;
+    void Promise.all([
+      listen('usage-updated', handleUsageUpdated),
+      listen<{ accountId: string }>('usage-refresh-started', handleRefreshStarted),
+      listen<{ accountId: string }>('usage-refresh-finished', handleRefreshFinished),
+    ]).then((resolved) => {
+      if (disposed) {
+        resolved.forEach((unlisten) => unlisten());
+        return;
+      }
+      unlisteners.push(...resolved);
     });
 
+    return () => {
+      disposed = true;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, []);
+
+  const refreshAccountUsage = useCallback(async (accountId: string) => {
+    setRefreshingAccountIds((current) => new Set(current).add(accountId));
     try {
-      const usage = await invoke<AccountUsage>('refresh_account_usage', { id: accountId });
-      setUsageRevision((revision) => revision + 1);
-      return usage;
+      return await invoke<AccountUsage>('refresh_account_usage', { id: accountId });
     } finally {
       setRefreshingAccountIds((current) => {
         const next = new Set(current);
@@ -70,8 +70,8 @@ export function useAccountUsageScheduler() {
   }, []);
 
   const isUsageRefreshing = useCallback(
-    (accountId: string) => isAutoRefreshing || refreshingAccountIds.has(accountId),
-    [isAutoRefreshing, refreshingAccountIds],
+    (accountId: string) => refreshingAccountIds.has(accountId),
+    [refreshingAccountIds],
   );
 
   return {

@@ -3,12 +3,15 @@ use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use std::thread;
+use std::time::Duration;
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
 const PERSONAL_ACCESS_TOKEN_METADATA_URL: &str =
@@ -50,6 +53,8 @@ pub struct Account {
     pub usage: Option<AccountUsage>,
     #[serde(rename = "canRefreshUsage")]
     pub can_refresh_usage: bool,
+    #[serde(rename = "nextRefreshAt")]
+    pub next_refresh_at: Option<String>,
     #[serde(skip)]
     pub is_active: bool,
 }
@@ -84,14 +89,6 @@ struct UsageApiWindow {
     reset_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct UsageRefreshSummary {
-    #[serde(rename = "refreshedAccountIds")]
-    pub refreshed_account_ids: Vec<String>,
-    #[serde(rename = "failedAccountIds")]
-    pub failed_account_ids: Vec<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountStore {
     #[serde(rename = "activeAccountId")]
@@ -101,6 +98,8 @@ pub struct AccountStore {
 
 pub struct AppState {
     pub db: Mutex<Connection>,
+    /// 正在被手动刷新的账号 id，调度器跳过它们避免撞车。
+    pub refreshing: Mutex<HashSet<String>>,
 }
 
 impl AppState {
@@ -116,7 +115,8 @@ impl AppState {
                 is_active INTEGER NOT NULL,
                 plan_type TEXT NOT NULL DEFAULT 'weekly',
                 usage_json TEXT,
-                usage_updated_at TEXT
+                usage_updated_at TEXT,
+                next_refresh_at TEXT
             )",
             [],
         )?;
@@ -127,6 +127,7 @@ impl AppState {
         );
         let _ = conn.execute("ALTER TABLE accounts ADD COLUMN usage_json TEXT", []);
         let _ = conn.execute("ALTER TABLE accounts ADD COLUMN usage_updated_at TEXT", []);
+        let _ = conn.execute("ALTER TABLE accounts ADD COLUMN next_refresh_at TEXT", []);
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS configs (
@@ -295,6 +296,38 @@ fn fetch_account_usage(token: &str) -> Result<AccountUsage, String> {
     })
 }
 
+/// 计算本次刷新成功后该账号的下次刷新时间。
+///
+/// 规则（以短周期 primary 窗口为准）：
+/// - primary 剩余额度为 0（used_percent >= 100）→ 下次 = primary.resets_at + 1 分钟；
+/// - 否则 → 下次 = 本次同步时间 + 1 小时。
+///
+/// 加 `now + 60s` 底线，防止 resets_at 已过或接口延迟导致热轮询。
+fn compute_next_refresh_at(usage: &AccountUsage, now: DateTime<Utc>) -> DateTime<Utc> {
+    let base = DateTime::parse_from_rfc3339(&usage.synced_at)
+        .map(|synced| synced.with_timezone(&Utc) + chrono::Duration::seconds(USAGE_REFRESH_INTERVAL_SECONDS))
+        .unwrap_or(now + chrono::Duration::seconds(USAGE_REFRESH_INTERVAL_SECONDS));
+
+    let exhausted = usage
+        .primary
+        .as_ref()
+        .map(|window| window.used_percent >= 100.0)
+        .unwrap_or(false);
+
+    let candidate = if exhausted {
+        match usage.primary.as_ref().and_then(|window| window.resets_at) {
+            Some(resets_at) => DateTime::from_timestamp(resets_at, 0)
+                .map(|reset| reset + chrono::Duration::seconds(60))
+                .unwrap_or(base),
+            None => base,
+        }
+    } else {
+        base
+    };
+
+    std::cmp::max(candidate, now + chrono::Duration::seconds(60))
+}
+
 fn persist_account_usage(
     db: &Connection,
     account_id: &str,
@@ -313,10 +346,11 @@ fn persist_account_usage(
     }
 
     let usage_json = serde_json::to_string(usage).map_err(|e| e.to_string())?;
+    let next_refresh_at = compute_next_refresh_at(usage, Utc::now()).to_rfc3339();
     let rows_affected = db
         .execute(
-            "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2 WHERE id = ?3",
-            params![usage_json, usage.synced_at, account_id],
+            "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?3 WHERE id = ?4",
+            params![usage_json, usage.synced_at, next_refresh_at, account_id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -326,22 +360,15 @@ fn persist_account_usage(
     Ok(())
 }
 
-fn usage_cache_is_stale(updated_at: Option<&str>) -> bool {
-    let Some(updated_at) = updated_at else {
-        return true;
-    };
-    let Ok(updated_at) = DateTime::parse_from_rfc3339(updated_at) else {
-        return true;
-    };
-
-    Utc::now()
-        .signed_duration_since(updated_at.with_timezone(&Utc))
-        .num_seconds()
-        >= USAGE_REFRESH_INTERVAL_SECONDS
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountRefreshEvent {
+    #[serde(rename = "accountId")]
+    pub account_id: String,
 }
 
 #[tauri::command]
 async fn refresh_account_usage(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
 ) -> Result<AccountUsage, String> {
@@ -358,92 +385,203 @@ async fn refresh_account_usage(
             .ok_or_else(|| "仅 Personal Access Token 账号支持额度刷新".to_string())?
     };
 
-    let request_token = token.clone();
-    let usage = tauri::async_runtime::spawn_blocking(move || fetch_account_usage(&request_token))
-        .await
-        .map_err(|e| format!("额度刷新任务失败：{e}"))??;
-
     {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
-        persist_account_usage(&db, &id, &token, &usage)?;
+        let mut refreshing = state.refreshing.lock().map_err(|e| e.to_string())?;
+        refreshing.insert(id.clone());
     }
+
+    let fetch_result = tauri::async_runtime::spawn_blocking({
+        let token = token.clone();
+        move || fetch_account_usage(&token)
+    })
+    .await
+    .map_err(|e| format!("额度刷新任务失败：{e}"));
+
+    let usage = match fetch_result {
+        Ok(Ok(usage)) => usage,
+        Ok(Err(error)) => {
+            remove_from_refreshing(&*state, &id);
+            return Err(error);
+        }
+        Err(error) => {
+            remove_from_refreshing(&*state, &id);
+            return Err(error);
+        }
+    };
+
+    let persist_result = (|| {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        persist_account_usage(&db, &id, &token, &usage)
+    })();
+    remove_from_refreshing(&*state, &id);
+
+    persist_result?;
+
+    let _ = app.emit(
+        "usage-updated",
+        AccountRefreshEvent {
+            account_id: id.clone(),
+        },
+    );
 
     Ok(usage)
 }
 
-#[tauri::command]
-async fn refresh_stale_account_usages(
-    state: State<'_, AppState>,
-) -> Result<UsageRefreshSummary, String> {
-    let targets = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
-        let mut stmt = db
-            .prepare(
-                "SELECT id, auth_json_content, usage_updated_at FROM accounts ORDER BY created_at ASC",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
-
-        let mut targets = Vec::new();
-        for row in rows {
-            let (id, auth_json_content, usage_updated_at) = row.map_err(|e| e.to_string())?;
-            if usage_cache_is_stale(usage_updated_at.as_deref()) {
-                if let Some(token) = extract_personal_access_token(&auth_json_content) {
-                    targets.push((id, token));
-                }
-            }
-        }
-        targets
-    };
-
-    let refresh_results = tauri::async_runtime::spawn_blocking(move || {
-        targets
-            .into_iter()
-            .map(|(id, token)| {
-                let result = fetch_account_usage(&token);
-                (id, token, result)
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(|e| format!("自动额度刷新任务失败：{e}"))?;
-
-    let mut refreshed_account_ids = Vec::new();
-    let mut failed_account_ids = Vec::new();
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
-    for (id, token, result) in refresh_results {
-        match result {
-            Ok(usage) => {
-                if persist_account_usage(&db, &id, &token, &usage).is_ok() {
-                    refreshed_account_ids.push(id);
-                } else {
-                    failed_account_ids.push(id);
-                }
-            }
-            Err(_) => failed_account_ids.push(id),
-        }
+fn remove_from_refreshing(state: &AppState, id: &str) {
+    if let Ok(mut refreshing) = state.refreshing.lock() {
+        refreshing.remove(id);
     }
+}
 
-    Ok(UsageRefreshSummary {
-        refreshed_account_ids,
-        failed_account_ids,
-    })
+/// 每个账号之间的刷新间隔（重启全量刷新时逐个执行）。
+const USAGE_REFRESH_BATCH_SLEEP_SECONDS: u64 = 60;
+/// 刷新失败后的重试间隔。
+const USAGE_REFRESH_RETRY_SECONDS: i64 = 5 * 60;
+/// 空闲时最长睡眠，保证能及时感知新增账号/手动刷新变化，同时精准到分钟。
+const USAGE_REFRESH_MAX_SLEEP_SECONDS: u64 = 300;
+
+fn schedule_retry(db: &Connection, id: &str) {
+    let retry_at =
+        (Utc::now() + chrono::Duration::seconds(USAGE_REFRESH_RETRY_SECONDS)).to_rfc3339();
+    let _ = db.execute(
+        "UPDATE accounts SET next_refresh_at = ?1 WHERE id = ?2",
+        params![retry_at, id],
+    );
+}
+
+/// 后台额度调度器：重启后沿用持久化的 next_refresh_at 计划，仅刷新已到期的账号
+/// （逐个、间隔 1 分钟），避免重启触发不必要的频繁刷新。
+fn start_usage_scheduler(app: tauri::AppHandle) {
+    thread::spawn(move || {
+        loop {
+            let due: Vec<(String, String)> = {
+                let state = app.state::<AppState>();
+                let Ok(db) = state.db.lock() else {
+                    thread::sleep(Duration::from_secs(30));
+                    continue;
+                };
+                let now = Utc::now().to_rfc3339();
+                let mut stmt = match db.prepare(
+                    "SELECT id, auth_json_content FROM accounts WHERE next_refresh_at IS NULL OR next_refresh_at <= ?1 ORDER BY created_at ASC",
+                ) {
+                    Ok(stmt) => stmt,
+                    Err(_) => {
+                        thread::sleep(Duration::from_secs(30));
+                        continue;
+                    }
+                };
+                let mut due = Vec::new();
+                let rows = stmt.query_map(params![now], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                });
+                if let Ok(rows) = rows {
+                    for (id, auth_json_content) in rows.flatten() {
+                        if let Some(token) = extract_personal_access_token(&auth_json_content) {
+                            due.push((id, token));
+                        }
+                    }
+                }
+                due
+            };
+
+            for (id, token) in due {
+                let state = app.state::<AppState>();
+                let refreshing = state
+                    .refreshing
+                    .lock()
+                    .map(|refreshing| refreshing.contains(&id))
+                    .unwrap_or(false);
+                if refreshing {
+                    continue;
+                }
+
+                let _ = app.emit(
+                    "usage-refresh-started",
+                    AccountRefreshEvent {
+                        account_id: id.clone(),
+                    },
+                );
+
+                let result = fetch_account_usage(&token);
+
+                match result {
+                    Ok(usage) => {
+                        let ok = {
+                            let state = app.state::<AppState>();
+                            let persisted = match state.db.lock() {
+                                Ok(db) => persist_account_usage(&db, &id, &token, &usage).is_ok(),
+                                Err(_) => false,
+                            };
+                            persisted
+                        };
+                        if ok {
+                            eprintln!("[usage-scheduler] 刷新成功 {id}");
+                            let _ = app.emit(
+                                "usage-updated",
+                                AccountRefreshEvent {
+                                    account_id: id.clone(),
+                                },
+                            );
+                        } else {
+                            eprintln!("[usage-scheduler] 持久化失败 {id}");
+                            if let Ok(db) = state.db.lock() {
+                                schedule_retry(&db, &id);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("[usage-scheduler] 刷新失败 {id}: {error}");
+                        if let Ok(db) = state.db.lock() {
+                            schedule_retry(&db, &id);
+                        }
+                    }
+                }
+
+                let _ = app.emit(
+                    "usage-refresh-finished",
+                    AccountRefreshEvent {
+                        account_id: id.clone(),
+                    },
+                );
+
+                thread::sleep(Duration::from_secs(USAGE_REFRESH_BATCH_SLEEP_SECONDS));
+            }
+
+            // 睡到最早的未来刷新时间（精确触发），最多 5 分钟醒一次。
+            let sleep_secs = {
+                let state = app.state::<AppState>();
+                let now = Utc::now();
+                let earliest: Option<String> = match state.db.lock() {
+                    Ok(db) => db
+                        .query_row(
+                            "SELECT MIN(next_refresh_at) FROM accounts WHERE next_refresh_at IS NOT NULL",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(None),
+                    Err(_) => None,
+                };
+                match earliest {
+                    Some(ts) => match DateTime::parse_from_rfc3339(&ts) {
+                        Ok(next) if next.with_timezone(&Utc) > now => {
+                            let secs = (next.with_timezone(&Utc) - now).num_seconds();
+                            secs.clamp(1, USAGE_REFRESH_MAX_SLEEP_SECONDS as i64) as u64
+                        }
+                        _ => 30,
+                    },
+                    None => USAGE_REFRESH_MAX_SLEEP_SECONDS,
+                }
+            };
+            thread::sleep(Duration::from_secs(sleep_secs));
+        }
+    });
 }
 
 #[tauri::command]
 fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
     let account_iter = stmt
         .query_map([], |row| {
             let auth_json_content: String = row.get(2)?;
@@ -458,6 +596,7 @@ fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
                 is_active: row.get::<_, i32>(6)? == 1,
                 plan_type: row.get(7)?,
                 usage: parse_cached_usage(row.get(8)?),
+                next_refresh_at: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -499,6 +638,7 @@ fn add_account(
         plan_type: plan_type.clone(),
         usage: None,
         can_refresh_usage,
+        next_refresh_at: None,
         is_active: false,
     };
 
@@ -538,11 +678,11 @@ fn update_account(
 
     let tx = db.transaction().map_err(|e| e.to_string())?;
 
-    let (existing_auth_json_content, existing_usage_json, existing_usage_updated_at, is_active): (String, Option<String>, Option<String>, i32) = tx
+    let (existing_auth_json_content, existing_usage_json, existing_usage_updated_at, existing_next_refresh_at, is_active): (String, Option<String>, Option<String>, Option<String>, i32) = tx
         .query_row(
-            "SELECT auth_json_content, usage_json, usage_updated_at, is_active FROM accounts WHERE id = ?1",
+            "SELECT auth_json_content, usage_json, usage_updated_at, next_refresh_at, is_active FROM accounts WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .map_err(|_| "Account not found".to_string())?;
 
@@ -557,10 +697,15 @@ fn update_account(
     } else {
         existing_usage_updated_at
     };
+    let next_refresh_at = if auth_changed {
+        None
+    } else {
+        existing_next_refresh_at
+    };
 
     let rows_affected = tx.execute(
-        "UPDATE accounts SET name = ?1, auth_json_content = ?2, notes = ?3, updated_at = ?4, plan_type = ?5, usage_json = ?6, usage_updated_at = ?7 WHERE id = ?8",
-        params![name, auth_json_content, notes, now, plan_type, usage_json, usage_updated_at, id],
+        "UPDATE accounts SET name = ?1, auth_json_content = ?2, notes = ?3, updated_at = ?4, plan_type = ?5, usage_json = ?6, usage_updated_at = ?7, next_refresh_at = ?8 WHERE id = ?9",
+        params![name, auth_json_content, notes, now, plan_type, usage_json, usage_updated_at, next_refresh_at, id],
     ).map_err(|e| e.to_string())?;
 
     if rows_affected == 0 {
@@ -585,6 +730,7 @@ fn update_account(
         plan_type,
         usage: parse_cached_usage(usage_json),
         can_refresh_usage,
+        next_refresh_at,
         is_active: is_active == 1,
     })
 }
@@ -867,6 +1013,10 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 let _ = window.hide();
@@ -892,7 +1042,10 @@ pub fn run() {
 
             app.manage(AppState {
                 db: Mutex::new(conn),
+                refreshing: Mutex::new(HashSet::new()),
             });
+
+            start_usage_scheduler(app.handle().clone());
 
             #[cfg(desktop)]
             show_main_window(app.handle());
@@ -906,7 +1059,6 @@ pub fn run() {
             delete_account,
             set_active_account,
             refresh_account_usage,
-            refresh_stale_account_usages,
             get_codex_config,
             save_codex_config,
             get_codex_version,
@@ -927,4 +1079,114 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utc_ts(iso: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(iso)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    fn usage(used_percent: f64, resets_at: Option<i64>) -> AccountUsage {
+        AccountUsage {
+            primary: Some(AccountUsageWindow {
+                used_percent,
+                window_minutes: Some(300),
+                resets_at,
+            }),
+            secondary: None,
+            synced_at: "2026-08-07T10:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn not_exhausted_uses_next_hour() {
+        let now = utc_ts("2026-08-07T10:00:00Z");
+        let next = compute_next_refresh_at(&usage(40.0, None), now);
+        assert_eq!(next, utc_ts("2026-08-07T11:00:00Z"));
+    }
+
+    #[test]
+    fn exhausted_with_future_reset_uses_reset_plus_minute() {
+        let now = utc_ts("2026-08-07T10:00:00Z");
+        let resets_at = now.timestamp() + 600; // 10:10
+        let next = compute_next_refresh_at(&usage(100.0, Some(resets_at)), now);
+        assert_eq!(next, utc_ts("2026-08-07T10:11:00Z"));
+    }
+
+    #[test]
+    fn exhausted_without_reset_falls_back_to_next_hour() {
+        let now = utc_ts("2026-08-07T10:00:00Z");
+        let next = compute_next_refresh_at(&usage(100.0, None), now);
+        assert_eq!(next, utc_ts("2026-08-07T11:00:00Z"));
+    }
+
+    #[test]
+    fn exhausted_with_past_reset_is_floored_to_next_minute() {
+        let now = utc_ts("2026-08-07T10:00:00Z");
+        let resets_at = now.timestamp() - 600; // 已过
+        let next = compute_next_refresh_at(&usage(100.0, Some(resets_at)), now);
+        assert_eq!(next, utc_ts("2026-08-07T10:01:00Z"));
+    }
+
+    #[test]
+    fn missing_primary_uses_next_hour() {
+        let now = utc_ts("2026-08-07T10:00:00Z");
+        let usage = AccountUsage {
+            primary: None,
+            secondary: None,
+            synced_at: "2026-08-07T10:00:00Z".to_string(),
+        };
+        let next = compute_next_refresh_at(&usage, now);
+        assert_eq!(next, utc_ts("2026-08-07T11:00:00Z"));
+    }
+
+    #[test]
+    fn persist_writes_next_refresh_at() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                auth_json_content TEXT NOT NULL,
+                usage_json TEXT,
+                usage_updated_at TEXT,
+                next_refresh_at TEXT
+            )",
+        )
+        .unwrap();
+        let auth = r#"{"personal_access_token": "sk-test-token"}"#;
+        conn.execute(
+            "INSERT INTO accounts (id, auth_json_content) VALUES (?1, ?2)",
+            params!["a1", auth],
+        )
+        .unwrap();
+
+        let now = Utc::now();
+        let resets_at = now.timestamp() + 600;
+        let usage = AccountUsage {
+            primary: Some(AccountUsageWindow {
+                used_percent: 100.0,
+                window_minutes: Some(300),
+                resets_at: Some(resets_at),
+            }),
+            secondary: None,
+            synced_at: now.to_rfc3339(),
+        };
+
+        persist_account_usage(&conn, "a1", "sk-test-token", &usage).unwrap();
+
+        let expected =
+            (DateTime::from_timestamp(resets_at, 0).unwrap() + chrono::Duration::seconds(60))
+                .to_rfc3339();
+        let next: Option<String> = conn
+            .query_row("SELECT next_refresh_at FROM accounts WHERE id = 'a1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(next.as_deref(), Some(expected.as_str()));
+    }
 }

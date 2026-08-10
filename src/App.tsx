@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import AccountList from './components/AccountList';
 import Settings from './components/Settings';
+import AppSettings from './components/AppSettings';
 import ActiveAccount from './components/ActiveAccount';
 import MCPManager from './components/MCPManager';
 import SkillManager from './components/SkillManager';
@@ -11,12 +12,14 @@ import Logo from './components/Logo';
 import { useUpdater } from './hooks/useUpdater';
 import { useEmailMasking } from './hooks/useEmailMasking';
 import { useAccountUsageScheduler } from './hooks/useAccountUsageScheduler';
+import { useAutostart } from './hooks/useAutostart';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const updater = useUpdater();
   const { isEmailMaskingEnabled, toggleEmailMasking } = useEmailMasking();
   const usageScheduler = useAccountUsageScheduler();
+  const autostart = useAutostart();
 
   return (
     <>
@@ -106,6 +109,18 @@ function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('app-settings')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
+              activeTab === 'app-settings'
+                ? 'bg-black/[0.06] text-black font-semibold'
+                : 'text-[#666666] hover:bg-black/[0.03] hover:text-black font-medium'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            设置
+          </button>
+
+          <button
             onClick={() => setActiveTab('about')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
               activeTab === 'about' 
@@ -118,39 +133,6 @@ function App() {
           </button>
         </nav>
 
-        <div className="px-4 pb-5 shrink-0">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isEmailMaskingEnabled}
-            onClick={toggleEmailMasking}
-            title="控制当前账号与账号管理列表中的邮箱是否脱敏"
-            className="w-full flex items-center justify-between gap-3 px-3.5 py-3 bg-white border border-[#EAEAEA] rounded-lg hover:border-[#D0D0D0] hover:shadow-sm transition-all"
-          >
-            <span className="flex items-center gap-2.5 min-w-0 text-left">
-              <span className="w-7 h-7 shrink-0 rounded-md bg-[#F5F5F5] border border-[#EAEAEA] flex items-center justify-center text-[#555555]">
-                {isEmailMaskingEnabled ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11V8a9 9 0 0 1 18 0v3"/><path d="M5 11h14v10H5z"/><path d="M12 15v2"/></svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
-                )}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[13px] font-medium text-black leading-tight">邮箱脱敏</span>
-                <span className="block text-[10px] text-[#888888] mt-0.5">
-                  {isEmailMaskingEnabled ? '隐私保护已开启' : '正在显示原邮箱'}
-                </span>
-              </span>
-            </span>
-            <span className={`relative w-9 h-5 shrink-0 rounded-full transition-colors ${
-              isEmailMaskingEnabled ? 'bg-black' : 'bg-[#D8D8D8]'
-            }`}>
-              <span className={`absolute top-[2px] left-[2px] w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${
-                isEmailMaskingEnabled ? 'translate-x-4' : 'translate-x-0'
-              }`} />
-            </span>
-          </button>
-        </div>
       </div>
 
       {/* Content Area */}
@@ -197,6 +179,17 @@ function App() {
           {activeTab === 'codex-info' && (
             <div className="flex-1 flex flex-col min-h-0">
               <CodexInfo />
+            </div>
+          )}
+          {activeTab === 'app-settings' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <AppSettings
+                isEmailMaskingEnabled={isEmailMaskingEnabled}
+                onToggleEmailMasking={toggleEmailMasking}
+                isAutoLaunchEnabled={autostart.isEnabled}
+                isAutoLaunchLoading={autostart.isLoading}
+                onToggleAutoLaunch={autostart.toggleAutostart}
+              />
             </div>
           )}
           {activeTab === 'about' && (

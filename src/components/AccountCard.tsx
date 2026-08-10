@@ -2,6 +2,7 @@ import React from 'react';
 import { Account, AccountUsageWindow } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import {
+  formatNextRefreshAt,
   formatUsageResetAt,
   formatUsageSyncedAt,
   formatUsageWindowLabel,
@@ -191,11 +192,18 @@ const AccountCard: React.FC<AccountCardProps> = ({
               </>
             )}
           </div>
-          <span className="text-[11px] text-[#999999] shrink-0 font-mono">
-            {account.usage
-              ? formatUsageSyncedAt(account.usage.syncedAt)
-              : `账号更新于 ${new Date(account.updatedAt).toLocaleDateString()}`}
-          </span>
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="text-[11px] text-[#999999] font-mono">
+              {account.usage
+                ? formatUsageSyncedAt(account.usage.syncedAt)
+                : `账号更新于 ${new Date(account.updatedAt).toLocaleDateString()}`}
+            </span>
+            {account.usage && (
+              <span className="rounded-full border border-[#EAEAEA] bg-[#FAFAFA] px-2 py-0.5 text-[10px] font-medium text-[#666666]">
+                {formatNextRefreshAt(account.nextRefreshAt, account.usage)}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>

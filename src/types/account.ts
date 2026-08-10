@@ -20,6 +20,7 @@ export interface Account {
   planType: 'weekly' | 'monthly';
   usage: AccountUsage | null;
   canRefreshUsage: boolean;
+  nextRefreshAt?: string | null;
 }
 
 export interface AccountStore {
@@ -32,9 +33,4 @@ export interface AccountFormData {
   authJsonContent: string;
   notes: string;
   planType: 'weekly' | 'monthly';
-}
-
-export interface UsageRefreshSummary {
-  refreshedAccountIds: string[];
-  failedAccountIds: string[];
 }
