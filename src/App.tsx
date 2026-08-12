@@ -3,6 +3,8 @@ import AccountList from './components/AccountList';
 import Settings from './components/Settings';
 import AppSettings from './components/AppSettings';
 import ActiveAccount from './components/ActiveAccount';
+import SessionsPage from './components/SessionsPage';
+import TokenUsagePage from './components/TokenUsagePage';
 import MCPManager from './components/MCPManager';
 import SkillManager from './components/SkillManager';
 import CodexInfo from './components/CodexInfo';
@@ -58,6 +60,30 @@ function App() {
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             账号管理
+          </button>
+
+          <button
+            onClick={() => setActiveTab('sessions')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
+              activeTab === 'sessions'
+                ? 'bg-black/[0.06] text-black font-semibold'
+                : 'text-[#666666] hover:bg-black/[0.03] hover:text-black font-medium'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            会话管理
+          </button>
+
+          <button
+            onClick={() => setActiveTab('token-usage')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
+              activeTab === 'token-usage'
+                ? 'bg-black/[0.06] text-black font-semibold'
+                : 'text-[#666666] hover:bg-black/[0.03] hover:text-black font-medium'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+            Token 用量
           </button>
 
           <button
@@ -164,6 +190,16 @@ function App() {
           {activeTab === 'settings' && (
             <div className="flex-1 flex flex-col min-h-0">
               <Settings />
+            </div>
+          )}
+          {activeTab === 'sessions' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <SessionsPage />
+            </div>
+          )}
+          {activeTab === 'token-usage' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <TokenUsagePage />
             </div>
           )}
           {activeTab === 'mcp' && (

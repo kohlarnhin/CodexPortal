@@ -20,6 +20,8 @@
 - **邮箱隐私保护**：全局邮箱脱敏默认开启，作用于当前账号与账号管理列表。
 - **开机自启动**：默认开启，可在“设置”页随时关闭。
 - **配置管理**：可视化编辑模型、沙盒模式、审批策略、推理强度、功能开关与自定义模型服务，并支持 TOML 高级编辑与一致性检查。
+- **会话管理**：将 `~/.codex/sessions` 全部历史会话按项目入库 SQLite（含完整内容），按项目卡片浏览会话列表，展示标题、消息数、模型、Token 消耗，支持复制恢复命令与 Finder 定位。
+- **Token 用量**：同步时自动拆解每个会话的 Token 消耗并按天入库，支持查看当天及任意历史日期的用量，按项目、按模型分布展示。
 - **MCP 管理**：新增、编辑、启用、停用或删除 STDIO / SSE 类型 MCP 服务器，并管理参数与环境变量。
 - **应用内更新**：生产版本启动后自动检查更新，也可在“关于”页面手动检查、下载、安装并重启应用。
 - **环境信息**：展示应用启动时检测并保存的 Codex CLI 版本。
@@ -32,6 +34,8 @@
 | 当前账号 | 查看当前生效的账号、备注、额度、订阅铭牌与下次刷新时间，并支持立即刷新 |
 | 账号管理 | 通过 PAT / Refresh Token / OAuth 添加账号，编辑、删除、切换，按订阅筛选，展示额度、重置次数与下次刷新时间 |
 | 配置管理 | 可视化编辑 Codex 核心配置或直接编辑 TOML |
+| 会话管理 | 按项目浏览 `~/.codex/sessions` 历史会话，查看标题、模型与 Token 消耗，查看完整会话内容 |
+| Token 用量 | 查看当天与任意历史日期的 Token 用量，按项目、按模型分布 |
 | MCP 配置 | 管理 STDIO / SSE MCP 服务器及其参数、环境变量 |
 | Skill 管理 | Skill 管理入口，完整管理能力仍在开发中 |
 | Codex 信息 | 查看应用启动时检测并保存的 Codex CLI 版本 |
@@ -40,12 +44,12 @@
 
 ## 下载安装
 
-当前稳定版本为 `0.1.7`，可从 [GitHub Releases](https://github.com/kohlarnhin/CodexPortal/releases/tag/v0.1.7) 下载 macOS 安装包：
+当前稳定版本为 `0.1.8`，可从 [GitHub Releases](https://github.com/kohlarnhin/CodexPortal/releases/tag/v0.1.8) 下载 macOS 安装包：
 
 | Mac 类型 | 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列芯片） | [CodexPortal_0.1.7_arm64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.7/CodexPortal_0.1.7_arm64.dmg) |
-| Intel | [CodexPortal_0.1.7_x64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.7/CodexPortal_0.1.7_x64.dmg) |
+| Apple Silicon（M 系列芯片） | [CodexPortal_0.1.8_arm64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.8/CodexPortal_0.1.8_arm64.dmg) |
+| Intel | [CodexPortal_0.1.8_x64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.8/CodexPortal_0.1.8_x64.dmg) |
 
 ## 技术栈
 
@@ -127,6 +131,7 @@ Codex Portal 在本机保存账号与配置数据，不会把完整账号库或 
 | 数据 | 保存位置 / 行为 |
 | --- | --- |
 | 账号认证、配置快照与额度缓存 | Tauri 应用数据目录中的 `database.sqlite` |
+| 会话数据 | 同步 `~/.codex/sessions` 的历史会话（含完整内容与 Token 统计）到本机 SQLite，按项目入库，仅本机存储 |
 | 当前账号认证 | 切换账号时写入 `~/.codex/auth.json` |
 | Codex 核心配置 | 读取并写入 `~/.codex/config.toml` |
 | 邮箱脱敏偏好 | 保存在应用本地存储中，首次使用默认开启 |
@@ -156,6 +161,6 @@ CodexPortal/
 
 ## 当前状态
 
-项目当前版本为 `0.1.7`。支持 Personal Access Token、Refresh Token、OAuth 三种账号接入方式，提供实时额度、智能自动刷新、额度测试、重置卡与订阅筛选等功能。Skill 管理完整能力仍在开发中。
+项目当前版本为 `0.1.8`。支持 Personal Access Token、Refresh Token、OAuth 三种账号接入方式，提供实时额度、智能自动刷新、额度测试、重置卡与订阅筛选等功能；新增会话管理（按项目浏览 `~/.codex/sessions` 历史会话）与 Token 用量统计（当天与历史日期、按项目/模型分布）。Skill 管理完整能力仍在开发中。
 
 提交 Issue 或 Pull Request 前，请避免在日志、截图和示例中包含真实认证信息。

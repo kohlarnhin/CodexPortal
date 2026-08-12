@@ -374,8 +374,17 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
             {renderFooterButtons(
               isOauth ? '开始 OAuth 登录' : isTokenUnchanged && !isRt ? '保存' : '验证并继续',
-              isValidating,
-              () => (isOauth ? void handleStartOauth() : void handleValidate()),
+              isOauth ? isValidating : isTokenUnchanged && !isRt ? isSubmitting : isValidating,
+              () => {
+                if (isOauth) {
+                  void handleStartOauth();
+                } else if (isTokenUnchanged && !isRt) {
+                  // Token 未变化：直接保存，不重新验证、不弹确认框。
+                  void handleConfirmSave();
+                } else {
+                  void handleValidate();
+                }
+              },
               !isOauth && !input.trim(),
               '取消',
               onClose,

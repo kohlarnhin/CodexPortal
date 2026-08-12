@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -188,6 +188,8 @@ pub struct AppState {
     pub refreshing: Mutex<HashSet<String>>,
     /// OAuth 登录会话。
     pub oauth: Mutex<OAuthSession>,
+    /// sessions 目录正在同步（手动或自动），避免撞车。
+    pub syncing_sessions: Mutex<bool>,
 }
 
 impl AppState {
@@ -238,6 +240,66 @@ impl AppState {
             "CREATE TABLE IF NOT EXISTS configs (
                 key TEXT PRIMARY KEY,
                 content TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // WAL 模式：sessions 全量同步耗时较长，写库期间账号额度等读操作不阻塞。
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+
+        // 按天 token 用量：同步时把每个会话的 token_count 累计值做增量差分，归入本地日期。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_daily_tokens (
+                date TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model TEXT,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, session_id)
+            )",
+            [],
+        )?;
+
+        // ~/.codex/sessions 的会话索引：按项目（cwd）聚合。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_projects (
+                path TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                first_session_at TEXT,
+                last_session_at TEXT,
+                synced_at TEXT
+            )",
+            [],
+        )?;
+
+        // 每个 session 文件的完整内容（JSONL 原文）与解析出的元信息（含 token 消耗）。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                project_path TEXT NOT NULL,
+                file_path TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                last_activity_at TEXT,
+                mtime_secs INTEGER NOT NULL,
+                file_size INTEGER NOT NULL,
+                model_provider TEXT,
+                cli_version TEXT,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                model TEXT,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                content TEXT NOT NULL,
+                synced_at TEXT NOT NULL
             )",
             [],
         )?;
@@ -2744,6 +2806,1122 @@ fn get_codex_version(state: State<'_, AppState>) -> Result<String, String> {
     }
 }
 
+// ==================== Sessions（~/.codex/sessions）管理 ====================
+
+/// 自动同步间隔：每 5 分钟增量扫描一次 sessions 目录。
+const SESSION_SYNC_INTERVAL_SECONDS: i64 = 5 * 60;
+/// 会话入库/解析规则版本：修改解析逻辑（如标题提取规则）后递增。
+/// 仅在**手动**同步时检测：版本不一致会对已有会话重解析一次元数据（不重写内容），
+/// 自动同步始终是纯增量，不做全量重解析。
+const SESSIONS_SCHEMA_VERSION: &str = "4";
+
+/// 判断当前是否需要同步：从未同步 / 记录无效 / 已到下一次同步时间 → 需要同步。
+/// 重启后若下次同步时间在未来，则跳过，等到了那个时间点再同步。
+fn session_sync_due(next_sync_at: Option<&str>, now: DateTime<Utc>) -> bool {
+    let Some(ts) = next_sync_at else {
+        return true;
+    };
+    match DateTime::parse_from_rfc3339(ts) {
+        Ok(time) => time.with_timezone(&Utc) <= now,
+        Err(_) => true,
+    }
+}
+
+/// 距下一次同步的睡眠秒数：未到期 → 睡到那一刻（最多 5 分钟醒一次检查，避免长睡漏掉变化）；
+/// 已到期/无记录 → 30 秒后重查。
+fn session_sync_sleep_secs(next_sync_at: Option<&str>, now: DateTime<Utc>) -> u64 {
+    let Some(ts) = next_sync_at else {
+        return 30;
+    };
+    match DateTime::parse_from_rfc3339(ts) {
+        Ok(time) if time.with_timezone(&Utc) > now => {
+            let secs = (time.with_timezone(&Utc) - now).num_seconds();
+            secs.clamp(1, SESSION_SYNC_INTERVAL_SECONDS) as u64
+        }
+        _ => 30,
+    }
+}
+
+/// 会话文件首行（session_meta）解析出的元信息。
+#[derive(Debug, Clone)]
+struct SessionFileMeta {
+    id: String,
+    project_path: String,
+    started_at: String,
+    model_provider: Option<String>,
+    cli_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionProject {
+    pub path: String,
+    pub name: String,
+    #[serde(rename = "sessionCount")]
+    pub session_count: i64,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: i64,
+    #[serde(rename = "firstSessionAt")]
+    pub first_session_at: Option<String>,
+    #[serde(rename = "lastSessionAt")]
+    pub last_session_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionRecord {
+    pub id: String,
+    #[serde(rename = "projectPath")]
+    pub project_path: String,
+    #[serde(rename = "filePath")]
+    pub file_path: String,
+    pub title: String,
+    #[serde(rename = "startedAt")]
+    pub started_at: String,
+    #[serde(rename = "lastActivityAt")]
+    pub last_activity_at: Option<String>,
+    #[serde(rename = "modelProvider")]
+    pub model_provider: Option<String>,
+    #[serde(rename = "cliVersion")]
+    pub cli_version: Option<String>,
+    #[serde(rename = "fileSize")]
+    pub file_size: i64,
+    #[serde(rename = "messageCount")]
+    pub message_count: i64,
+    pub model: Option<String>,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: i64,
+    #[serde(rename = "cachedInputTokens")]
+    pub cached_input_tokens: i64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: i64,
+    #[serde(rename = "reasoningTokens")]
+    pub reasoning_tokens: i64,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSyncProgress {
+    pub done: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSyncResult {
+    pub total: usize,
+    pub imported: usize,
+    pub updated: usize,
+    pub removed: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub projects: usize,
+    #[serde(rename = "syncedAt")]
+    pub synced_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSyncStatus {
+    #[serde(rename = "lastSyncedAt")]
+    pub last_synced_at: Option<String>,
+    #[serde(rename = "nextSyncAt")]
+    pub next_sync_at: Option<String>,
+    #[serde(rename = "totalProjects")]
+    pub total_projects: i64,
+    #[serde(rename = "totalSessions")]
+    pub total_sessions: i64,
+}
+
+fn sessions_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
+    Ok(home.join(".codex").join("sessions"))
+}
+
+/// 递归收集指定目录下所有 .jsonl 文件及文件系统元数据（mtime 秒、字节数）。
+fn scan_session_files_in(root: &PathBuf) -> Vec<(PathBuf, i64, i64)> {
+    fn walk(dir: &PathBuf, out: &mut Vec<(PathBuf, i64, i64)>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+                if let Ok(meta) = entry.metadata() {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_secs() as i64)
+                        .unwrap_or(0);
+                    out.push((path, mtime, meta.len() as i64));
+                }
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    walk(root, &mut files);
+    files
+}
+
+/// 递归收集 ~/.codex/sessions 下所有 .jsonl 文件。
+fn scan_session_files() -> Vec<(PathBuf, i64, i64)> {
+    sessions_dir()
+        .map(|dir| scan_session_files_in(&dir))
+        .unwrap_or_default()
+}
+
+/// 解析 JSONL 首行的 session_meta 记录。
+/// 兼容旧格式（2025-09 之前）：首行为 `{"id":..., "timestamp":..., "instructions":null}`，
+/// 无 type/payload，此时 cwd 为空，由调用方从内容中的 `<cwd>` 环境上下文补全。
+fn parse_session_meta(line: &str) -> Option<SessionFileMeta> {
+    let event: Value = serde_json::from_str(line).ok()?;
+    let payload = event.get("payload");
+    if payload.is_none() {
+        // 旧格式：无 payload 且带 id / timestamp 才视为会话元数据（排除 state 等记录）。
+        let id = event.get("id").and_then(Value::as_str)?.to_string();
+        let started_at = event
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        return Some(SessionFileMeta {
+            id,
+            project_path: String::new(),
+            started_at,
+            model_provider: None,
+            cli_version: None,
+        });
+    }
+    let payload = payload?;
+    if event.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+    let id = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("id").and_then(Value::as_str))?
+        .to_string();
+    let started_at = payload
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let project_path = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let model_provider = payload
+        .get("model_provider")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let cli_version = payload
+        .get("cli_version")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some(SessionFileMeta {
+        id,
+        project_path,
+        started_at,
+        model_provider,
+        cli_version,
+    })
+}
+
+/// 判断注入型用户消息（AGENTS.md / Skill / 环境上下文 / 用户指令模板），这类内容不能作为会话标题。
+fn is_injected_user_message(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("# AGENTS.md")
+        || trimmed.contains("<INSTRUCTIONS>")
+        || trimmed.starts_with("# Skills")
+        || trimmed.starts_with("<user_instructions>")
+        || trimmed.starts_with("<environment_context>")
+}
+
+/// 从一条 response_item 消息中提取用户消息文本（多个 input_text 段落拼接）。
+fn extract_user_text_from_message(payload: &Value) -> Option<String> {
+    if payload.get("type").and_then(Value::as_str) != Some("message") {
+        return None;
+    }
+    if payload.get("role").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    let texts: Vec<String> = payload
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter_map(|part| {
+            let text = part.get("text")?.as_str()?;
+            (!text.trim().is_empty()).then(|| text.to_string())
+        })
+        .collect();
+    if texts.is_empty() {
+        None
+    } else {
+        Some(texts.join("\n"))
+    }
+}
+
+/// 从会话内容中提取 cwd（旧格式无 session_meta 时，环境上下文里带 `<cwd>路径</cwd>`）。
+fn extract_cwd_from_content(content: &str) -> String {
+    for line in content.lines() {
+        let Some(start) = line.find("<cwd>") else {
+            continue;
+        };
+        let rest = &line[start + 5..];
+        if let Some(end) = rest.find("</cwd>") {
+            let cwd = rest[..end].trim().to_string();
+            if !cwd.is_empty() {
+                return cwd;
+            }
+        }
+    }
+    String::new()
+}
+
+/// 整理标题：压缩空白、限制长度（超出截断并追加省略号）。
+fn normalize_title(text: &str, max_chars: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= max_chars {
+        collapsed
+    } else {
+        let mut result: String = collapsed.chars().take(max_chars).collect();
+        result.push('…');
+        result
+    }
+}
+
+/// 从会话全文行中解析出的摘要：标题、消息数、模型名与 token 消耗。
+#[derive(Debug, Default)]
+struct SessionParsedSummary {
+    title: String,
+    message_count: i64,
+    model: Option<String>,
+    input_tokens: i64,
+    cached_input_tokens: i64,
+    output_tokens: i64,
+    reasoning_tokens: i64,
+    total_tokens: i64,
+    /// 按本地日期（YYYY-MM-DD）汇总的 token 增量（供 token 用量统计）。
+    daily: HashMap<String, SessionDailyTokens>,
+}
+
+/// token_count 累计值快照（各维度）。
+#[derive(Debug, Clone, Default)]
+struct TokenUsageSnapshot {
+    input: i64,
+    cached_input: i64,
+    output: i64,
+    reasoning: i64,
+    total: i64,
+}
+
+impl TokenUsageSnapshot {
+    /// 相对上一条累计值的增量；累计值理论上单调，异常时按 0 计。
+    fn delta(&self, prev: &TokenUsageSnapshot) -> TokenUsageSnapshot {
+        TokenUsageSnapshot {
+            input: (self.input - prev.input).max(0),
+            cached_input: (self.cached_input - prev.cached_input).max(0),
+            output: (self.output - prev.output).max(0),
+            reasoning: (self.reasoning - prev.reasoning).max(0),
+            total: (self.total - prev.total).max(0),
+        }
+    }
+}
+
+/// 单个会话在某一日期的 token 增量。
+#[derive(Debug, Clone, Default)]
+struct SessionDailyTokens {
+    input_tokens: i64,
+    cached_input_tokens: i64,
+    output_tokens: i64,
+    reasoning_tokens: i64,
+    total_tokens: i64,
+}
+
+/// UTC RFC3339 时间戳 → 本地时区日期（YYYY-MM-DD）。
+fn utc_ts_to_local_date(ts: &str) -> Option<String> {
+    let local = DateTime::parse_from_rfc3339(ts)
+        .ok()?
+        .with_timezone(&chrono::Local);
+    Some(local.format("%Y-%m-%d").to_string())
+}
+
+/// 解析会话全文（单遍遍历）：
+/// - 标题：跳过 AGENTS.md / Skill 指令注入，取第一条真实用户消息；
+/// - 消息数：response_item 数量；
+/// - 模型名：最后一个 thread_settings_applied 的 thread_settings.model；
+/// - token：最后一个 token_count 事件的 total_token_usage（会话累计值）。
+fn extract_session_summary<S: AsRef<str>>(lines: &[S]) -> SessionParsedSummary {
+    let mut summary = SessionParsedSummary {
+        title: "未命名会话".to_string(),
+        ..Default::default()
+    };
+    let mut title: Option<String> = None;
+    let mut prev_usage: Option<TokenUsageSnapshot> = None;
+    for line in lines {
+        let line = line.as_ref();
+        let Ok(event) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match event.get("type").and_then(Value::as_str) {
+            Some("response_item") => {
+                summary.message_count += 1;
+                if title.is_none() {
+                    if let Some(payload) = event.get("payload") {
+                        if let Some(text) = extract_user_text_from_message(payload) {
+                            if !is_injected_user_message(&text) {
+                                title = Some(normalize_title(&text, 120));
+                            }
+                        }
+                    }
+                }
+            }
+            // 老版本 CLI（约 2026-06 及以前）没有 thread_settings_applied 事件，
+            // 模型名写在 turn_context 的 payload.model。
+            Some("turn_context") => {
+                if let Some(model) = event
+                    .get("payload")
+                    .and_then(|p| p.get("model"))
+                    .and_then(Value::as_str)
+                {
+                    let model = model.trim();
+                    if !model.is_empty() {
+                        summary.model = Some(model.to_string());
+                    }
+                }
+            }
+            Some("event_msg") => {
+                let payload = event.get("payload");
+                match payload.and_then(|p| p.get("type")).and_then(Value::as_str) {
+                    Some("token_count") => {
+                        // total_token_usage 是会话累计值，取最后一个即最终消耗。
+                        let usage = payload
+                            .and_then(|p| p.get("info"))
+                            .and_then(|info| info.get("total_token_usage"));
+                        if let Some(usage) = usage {
+                            let current = TokenUsageSnapshot {
+                                input: usage
+                                    .get("input_tokens")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(0),
+                                cached_input: usage
+                                    .get("cached_input_tokens")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(0),
+                                output: usage
+                                    .get("output_tokens")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(0),
+                                reasoning: usage
+                                    .get("reasoning_output_tokens")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(0),
+                                total: usage
+                                    .get("total_tokens")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(0),
+                            };
+                            summary.input_tokens = current.input;
+                            summary.cached_input_tokens = current.cached_input;
+                            summary.output_tokens = current.output;
+                            summary.reasoning_tokens = current.reasoning;
+                            summary.total_tokens = current.total;
+
+                            // 增量差分 → 按事件时间戳归属到本地日期（resume 跨天自动拆分）。
+                            let delta = match &prev_usage {
+                                Some(prev) => current.delta(prev),
+                                None => current.clone(),
+                            };
+                            if let Some(ts) = event.get("timestamp").and_then(Value::as_str) {
+                                if let Some(date) = utc_ts_to_local_date(ts) {
+                                    let entry = summary.daily.entry(date).or_default();
+                                    entry.input_tokens += delta.input;
+                                    entry.cached_input_tokens += delta.cached_input;
+                                    entry.output_tokens += delta.output;
+                                    entry.reasoning_tokens += delta.reasoning;
+                                    entry.total_tokens += delta.total;
+                                }
+                            }
+                            prev_usage = Some(current);
+                        }
+                    }
+                    Some("thread_settings_applied") => {
+                        if let Some(model) = payload
+                            .and_then(|p| p.get("thread_settings"))
+                            .and_then(|settings| settings.get("model"))
+                            .and_then(Value::as_str)
+                        {
+                            let model = model.trim();
+                            if !model.is_empty() {
+                                summary.model = Some(model.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(title) = title {
+        summary.title = title;
+    }
+    summary
+}
+
+/// 项目展示名：cwd 的末级目录名；cwd 为空时归为「未指定目录」。
+fn project_display_name(path: &str) -> String {
+    if path.trim().is_empty() {
+        return "未指定目录".to_string();
+    }
+    PathBuf::from(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// 执行一次同步（全量或增量）：扫描磁盘 → 比对入库 → 清理已删除 → 重建项目聚合。
+///
+/// 全程在后台线程执行（异步）；数据库锁按批次持有（每批 50 个文件提交一次并释放锁），
+/// 保证首次全量导入或大量新增期间，账号额度等其它查询命令不被长时间阻塞。
+/// `force_full` 为 true 时（仅手动同步 + 规则版本升级触发），对已入库会话也重新解析
+/// 元数据（标题等），但不重写 content，避免 1.2GB 内容反复写入。
+/// 以 `syncing_sessions` 标志防重入；进度经 `session-sync-progress` 事件推送。
+fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<SessionSyncResult, String> {
+    {
+        let state = app.state::<AppState>();
+        let mut syncing = state.syncing_sessions.lock().map_err(|e| e.to_string())?;
+        if *syncing {
+            return Err("会话正在同步中，请稍候".to_string());
+        }
+        *syncing = true;
+    }
+
+    let result = (|| {
+        let files = scan_session_files();
+        let total = files.len();
+        let mut imported = 0usize;
+        let mut updated = 0usize;
+        let mut skipped = 0usize;
+        let mut failed = 0usize;
+        let now = Utc::now().to_rfc3339();
+
+        let state = app.state::<AppState>();
+        let mut db = state.db.lock().map_err(|e| e.to_string())?;
+
+        // 库里已有的文件 → (mtime, size)，未变化则跳过（增量同步的核心）。
+        let mut existing: HashMap<String, (i64, i64)> = HashMap::new();
+        {
+            let mut stmt = db
+                .prepare("SELECT file_path, mtime_secs, file_size FROM sessions")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+            for row in rows.flatten() {
+                existing.insert(row.0, (row.1, row.2));
+            }
+        }
+
+        // 分批提交：每批完成后释放数据库锁片刻，让其它查询命令穿插执行，避免界面卡顿。
+        const SYNC_BATCH_SIZE: usize = 50;
+        let mut tx = db.transaction().map_err(|e| e.to_string())?;
+        for (index, (path, mtime_secs, file_size)) in files.iter().enumerate() {
+            if index > 0 && index % SYNC_BATCH_SIZE == 0 {
+                tx.commit().map_err(|e| e.to_string())?;
+                drop(db);
+                thread::sleep(Duration::from_millis(10));
+                db = state.db.lock().map_err(|e| e.to_string())?;
+                tx = db.transaction().map_err(|e| e.to_string())?;
+            }
+
+            let key = path.to_string_lossy().to_string();
+            let unchanged = existing.get(&key) == Some(&(*mtime_secs, *file_size));
+            if !force_full && unchanged {
+                skipped += 1;
+                continue;
+            }
+
+            let Ok(content) = fs::read_to_string(path) else {
+                failed += 1;
+                continue;
+            };
+            let lines: Vec<&str> = content.lines().collect();
+            let Some(mut meta) = lines.first().and_then(|line| parse_session_meta(line)) else {
+                failed += 1;
+                continue;
+            };
+            // 旧格式会话没有 cwd，从环境上下文里补全。
+            if meta.project_path.is_empty() {
+                meta.project_path = extract_cwd_from_content(&content);
+            }
+            let parsed = extract_session_summary(&lines);
+            let last_activity_at =
+                DateTime::from_timestamp(*mtime_secs, 0).map(|time| time.to_rfc3339());
+
+            // 该会话按天用量：先删旧行再重建（会话 resume 增长后需重算当天分布）。
+            tx.execute(
+                "DELETE FROM session_daily_tokens WHERE session_id = ?1",
+                params![meta.id],
+            )
+            .map_err(|e| e.to_string())?;
+            for (date, daily) in &parsed.daily {
+                tx.execute(
+                    "INSERT OR REPLACE INTO session_daily_tokens (date, project_path, session_id, model, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    params![date, meta.project_path, meta.id, parsed.model, daily.input_tokens, daily.cached_input_tokens, daily.output_tokens, daily.reasoning_tokens, daily.total_tokens],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            if unchanged {
+                // 文件未变（仅规则升级触发的全量重解析）：只更新元数据字段，不重写 content。
+                tx.execute(
+                    "UPDATE sessions SET id = ?1, project_path = ?2, title = ?3, started_at = ?4, last_activity_at = ?5, model_provider = ?6, cli_version = ?7, message_count = ?8, model = ?9, input_tokens = ?10, cached_input_tokens = ?11, output_tokens = ?12, reasoning_tokens = ?13, total_tokens = ?14, synced_at = ?15 WHERE file_path = ?16",
+                    params![
+                        meta.id,
+                        meta.project_path,
+                        parsed.title,
+                        meta.started_at,
+                        last_activity_at,
+                        meta.model_provider,
+                        meta.cli_version,
+                        parsed.message_count,
+                        parsed.model,
+                        parsed.input_tokens,
+                        parsed.cached_input_tokens,
+                        parsed.output_tokens,
+                        parsed.reasoning_tokens,
+                        parsed.total_tokens,
+                        now,
+                        key
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                updated += 1;
+            } else {
+                let is_new = !existing.contains_key(&key);
+                tx.execute(
+                    "INSERT OR REPLACE INTO sessions (id, project_path, file_path, title, started_at, last_activity_at, mtime_secs, file_size, model_provider, cli_version, message_count, model, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, content, synced_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+                    params![
+                        meta.id,
+                        meta.project_path,
+                        key,
+                        parsed.title,
+                        meta.started_at,
+                        last_activity_at,
+                        mtime_secs,
+                        file_size,
+                        meta.model_provider,
+                        meta.cli_version,
+                        parsed.message_count,
+                        parsed.model,
+                        parsed.input_tokens,
+                        parsed.cached_input_tokens,
+                        parsed.output_tokens,
+                        parsed.reasoning_tokens,
+                        parsed.total_tokens,
+                        content,
+                        now
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                if is_new {
+                    imported += 1;
+                } else {
+                    updated += 1;
+                }
+            }
+            if index % 10 == 0 {
+                let _ = app.emit(
+                    "session-sync-progress",
+                    SessionSyncProgress {
+                        done: index + 1,
+                        total,
+                    },
+                );
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(db);
+
+        // 删除磁盘上已不存在的会话 + 重建项目聚合（数据量小，短暂持锁即可）。
+        let mut db = state.db.lock().map_err(|e| e.to_string())?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+
+        // 磁盘上已不存在的会话（被删除/清理）。
+        let disk_paths: HashSet<String> = files
+            .iter()
+            .map(|(path, _, _)| path.to_string_lossy().to_string())
+            .collect();
+        let mut removed = 0usize;
+        {
+            let mut stmt = tx
+                .prepare("SELECT file_path FROM sessions")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            for file_path in rows.flatten() {
+                if !disk_paths.contains(&file_path) {
+                    if let Ok(session_id) = tx.query_row(
+                        "SELECT id FROM sessions WHERE file_path = ?1",
+                        params![file_path],
+                        |row| row.get::<_, String>(0),
+                    ) {
+                        tx.execute(
+                            "DELETE FROM session_daily_tokens WHERE session_id = ?1",
+                            params![session_id],
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    tx.execute(
+                        "DELETE FROM sessions WHERE file_path = ?1",
+                        params![file_path],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    removed += 1;
+                }
+            }
+        }
+
+        // 重建项目聚合（计数、总 token、首末时间）。
+        tx.execute("DELETE FROM session_projects", [])
+            .map_err(|e| e.to_string())?;
+        let mut projects = 0usize;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT project_path, COUNT(*), SUM(total_tokens), MIN(started_at), MAX(last_activity_at) FROM sessions GROUP BY project_path",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+            for row in rows.flatten() {
+                let name = project_display_name(&row.0);
+                tx.execute(
+                    "INSERT INTO session_projects (path, name, session_count, total_tokens, first_session_at, last_session_at, synced_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    params![row.0, name, row.1, row.2, row.3, row.4, now],
+                )
+                .map_err(|e| e.to_string())?;
+                projects += 1;
+            }
+        }
+
+        tx.commit().map_err(|e| e.to_string())?;
+
+        // 记录本次同步时间、下次同步时间与当前入库规则版本。
+        // 手动同步与自动同步统一在这里刷新，调度器据此决定重启后是否需要同步。
+        let next_sync_at =
+            (Utc::now() + chrono::Duration::seconds(SESSION_SYNC_INTERVAL_SECONDS)).to_rfc3339();
+        let _ = db.execute(
+            "INSERT INTO configs (key, content) VALUES ('sessions_last_synced_at', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
+            params![now],
+        );
+        let _ = db.execute(
+            "INSERT INTO configs (key, content) VALUES ('sessions_next_sync_at', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
+            params![next_sync_at],
+        );
+        let _ = db.execute(
+            "INSERT INTO configs (key, content) VALUES ('sessions_schema_version', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
+            params![SESSIONS_SCHEMA_VERSION],
+        );
+
+        Ok::<SessionSyncResult, String>(SessionSyncResult {
+            total,
+            imported,
+            updated,
+            removed,
+            skipped,
+            failed,
+            projects,
+            synced_at: now,
+        })
+    })();
+
+    {
+        let state = app.state::<AppState>();
+        if let Ok(mut syncing) = state.syncing_sessions.lock() {
+            *syncing = false;
+        };
+    }
+    result
+}
+
+/// 自动同步调度器：同步时间与下次同步时间持久化在数据库中。
+/// - 重启后：下次同步时间在未来 → 跳过同步，睡到那个时间点（最多 5 分钟醒一次检查）；
+/// - 从未同步 / 已到下次同步时间 → 同步（首次全量入库或增量），完成后刷新两个时间。
+/// 始终是纯增量（force_full = false），不做全量重解析，快速且不阻塞界面。
+fn start_session_sync_scheduler(app: tauri::AppHandle) {
+    thread::spawn(move || loop {
+        let (due, sleep_secs) = {
+            let state = app.state::<AppState>();
+            let locked = state.db.lock();
+            match locked {
+                Ok(db) => {
+                    let next_sync_at: Option<String> = db
+                        .query_row(
+                            "SELECT content FROM configs WHERE key = 'sessions_next_sync_at'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .ok();
+                    let now = Utc::now();
+                    (
+                        session_sync_due(next_sync_at.as_deref(), now),
+                        session_sync_sleep_secs(next_sync_at.as_deref(), now),
+                    )
+                }
+                Err(_) => (false, 30),
+            }
+        };
+
+        if due {
+            match sync_sessions_inner(&app, false) {
+                Ok(result) => {
+                    eprintln!(
+                        "[session-sync] 同步完成：新增 {}，更新 {}，删除 {}，跳过 {}，失败 {}，共 {} 个项目",
+                        result.imported,
+                        result.updated,
+                        result.removed,
+                        result.skipped,
+                        result.failed,
+                        result.projects
+                    );
+                    let _ = app.emit("session-sync-completed", result);
+                }
+                Err(error) => eprintln!("[session-sync] 同步失败: {error}"),
+            }
+        } else {
+            eprintln!("[session-sync] 未到下次同步时间，{sleep_secs}s 后检查");
+        }
+
+        thread::sleep(Duration::from_secs(sleep_secs));
+    });
+}
+
+/// 手动触发一次同步（前端按钮），结果同时经 `session-sync-completed` 事件推送。
+/// 入库规则版本升级时自动附带一次全量重解析（元数据）；版本一致时与自动同步一样是纯增量。
+#[tauri::command]
+async fn sync_sessions(app: tauri::AppHandle) -> Result<SessionSyncResult, String> {
+    let force_full = {
+        let state = app.state::<AppState>();
+        let locked = state.db.lock();
+        match locked {
+            Ok(db) => db
+                .query_row(
+                    "SELECT content FROM configs WHERE key = 'sessions_schema_version'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(|stored| stored != SESSIONS_SCHEMA_VERSION)
+                .unwrap_or(true),
+            Err(_) => true,
+        }
+    };
+    let thread_app = app.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || sync_sessions_inner(&thread_app, force_full))
+            .await
+            .map_err(|e| format!("会话同步任务失败：{e}"))??;
+    let _ = app.emit("session-sync-completed", &result);
+    Ok(result)
+}
+
+#[tauri::command]
+fn get_session_sync_status(state: State<'_, AppState>) -> Result<SessionSyncStatus, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let last_synced_at: Option<String> = db
+        .query_row(
+            "SELECT content FROM configs WHERE key = 'sessions_last_synced_at'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    let next_sync_at: Option<String> = db
+        .query_row(
+            "SELECT content FROM configs WHERE key = 'sessions_next_sync_at'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    let total_sessions: i64 = db
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap_or(0);
+    let total_projects: i64 = db
+        .query_row("SELECT COUNT(*) FROM session_projects", [], |row| row.get(0))
+        .unwrap_or(0);
+    Ok(SessionSyncStatus {
+        last_synced_at,
+        next_sync_at,
+        total_projects,
+        total_sessions,
+    })
+}
+
+#[tauri::command]
+fn list_session_projects(state: State<'_, AppState>) -> Result<Vec<SessionProject>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare(
+            "SELECT path, name, session_count, total_tokens, first_session_at, last_session_at FROM session_projects ORDER BY last_session_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(SessionProject {
+                path: row.get(0)?,
+                name: row.get(1)?,
+                session_count: row.get(2)?,
+                total_tokens: row.get(3)?,
+                first_session_at: row.get(4)?,
+                last_session_at: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut projects = Vec::new();
+    for row in rows {
+        projects.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(projects)
+}
+
+#[tauri::command]
+fn list_project_sessions(
+    state: State<'_, AppState>,
+    project_path: String,
+) -> Result<Vec<SessionRecord>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare(
+            "SELECT id, project_path, file_path, title, started_at, last_activity_at, model_provider, cli_version, file_size, message_count, model, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens FROM sessions WHERE project_path = ?1 ORDER BY started_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![project_path], |row| {
+            Ok(SessionRecord {
+                id: row.get(0)?,
+                project_path: row.get(1)?,
+                file_path: row.get(2)?,
+                title: row.get(3)?,
+                started_at: row.get(4)?,
+                last_activity_at: row.get(5)?,
+                model_provider: row.get(6)?,
+                cli_version: row.get(7)?,
+                file_size: row.get(8)?,
+                message_count: row.get(9)?,
+                model: row.get(10)?,
+                input_tokens: row.get(11)?,
+                cached_input_tokens: row.get(12)?,
+                output_tokens: row.get(13)?,
+                reasoning_tokens: row.get(14)?,
+                total_tokens: row.get(15)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut sessions = Vec::new();
+    for row in rows {
+        sessions.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(sessions)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectTokenUsage {
+    #[serde(rename = "projectPath")]
+    pub project_path: String,
+    pub name: String,
+    #[serde(rename = "sessionCount")]
+    pub session_count: i64,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelTokenUsage {
+    pub model: String,
+    #[serde(rename = "sessionCount")]
+    pub session_count: i64,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyTokenUsage {
+    pub date: String,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: i64,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: i64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: i64,
+    #[serde(rename = "reasoningTokens")]
+    pub reasoning_tokens: i64,
+    /// 当日按项目分布（按 token 降序）。
+    pub projects: Vec<ProjectTokenUsage>,
+    /// 当日按模型分布（按 token 降序）。
+    pub models: Vec<ModelTokenUsage>,
+}
+
+fn is_date_str(value: &str) -> bool {
+    value.len() == 10
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value.as_bytes().get(7) == Some(&b'-')
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| byte.is_ascii_digit() || index == 4 || index == 7)
+}
+
+/// 查询 [start_date, end_date]（YYYY-MM-DD）范围内每天的 token 用量，
+/// 每天附带按项目与按模型的分布，供"Token 用量"页面展示。
+#[tauri::command]
+fn get_token_usage(
+    state: State<'_, AppState>,
+    start_date: String,
+    end_date: String,
+) -> Result<Vec<DailyTokenUsage>, String> {
+    if !is_date_str(&start_date) || !is_date_str(&end_date) {
+        return Err("日期格式无效，应为 YYYY-MM-DD".to_string());
+    }
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    let mut days: Vec<DailyTokenUsage> = Vec::new();
+    {
+        let mut stmt = db
+            .prepare(
+                "SELECT date, SUM(total_tokens), SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date ORDER BY date",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![start_date, end_date], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (date, total, input, output, reasoning) = row.map_err(|e| e.to_string())?;
+            days.push(DailyTokenUsage {
+                date,
+                total_tokens: total,
+                input_tokens: input,
+                output_tokens: output,
+                reasoning_tokens: reasoning,
+                projects: Vec::new(),
+                models: Vec::new(),
+            });
+        }
+    }
+
+    // 按项目分布。
+    {
+        let mut stmt = db
+            .prepare(
+                "SELECT date, project_path, COUNT(DISTINCT session_id), SUM(total_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date, project_path ORDER BY date, SUM(total_tokens) DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![start_date, end_date], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut by_date: HashMap<String, Vec<ProjectTokenUsage>> = HashMap::new();
+        for row in rows {
+            let (date, path, count, total) = row.map_err(|e| e.to_string())?;
+            by_date
+                .entry(date)
+                .or_default()
+                .push(ProjectTokenUsage {
+                    name: project_display_name(&path),
+                    project_path: path,
+                    session_count: count,
+                    total_tokens: total,
+                });
+        }
+        for day in &mut days {
+            if let Some(projects) = by_date.remove(&day.date) {
+                day.projects = projects;
+            }
+        }
+    }
+
+    // 按模型分布。
+    {
+        let mut stmt = db
+            .prepare(
+                "SELECT date, COALESCE(model, '未知'), COUNT(DISTINCT session_id), SUM(total_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date, COALESCE(model, '未知') ORDER BY date, SUM(total_tokens) DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![start_date, end_date], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut by_date: HashMap<String, Vec<ModelTokenUsage>> = HashMap::new();
+        for row in rows {
+            let (date, model, count, total) = row.map_err(|e| e.to_string())?;
+            by_date
+                .entry(date)
+                .or_default()
+                .push(ModelTokenUsage {
+                    model,
+                    session_count: count,
+                    total_tokens: total,
+                });
+        }
+        for day in &mut days {
+            if let Some(models) = by_date.remove(&day.date) {
+                day.models = models;
+            }
+        }
+    }
+
+    Ok(days)
+}
+
+/// 读取单个会话的完整内容（JSONL 原文，可能较大，按需加载）。
+#[tauri::command]
+fn get_session_content(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.query_row("SELECT content FROM sessions WHERE id = ?1", params![id], |row| {
+        row.get::<_, String>(0)
+    })
+    .map_err(|_| "会话不存在".to_string())
+}
+
 #[cfg(desktop)]
 fn show_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     #[cfg(target_os = "macos")]
@@ -2792,9 +3970,11 @@ pub fn run() {
                 db: Mutex::new(conn),
                 refreshing: Mutex::new(HashSet::new()),
                 oauth: Mutex::new(OAuthSession::default()),
+                syncing_sessions: Mutex::new(false),
             });
 
             start_usage_scheduler(app.handle().clone());
+            start_session_sync_scheduler(app.handle().clone());
 
             #[cfg(desktop)]
             show_main_window(app.handle());
@@ -2821,6 +4001,12 @@ pub fn run() {
             save_codex_config,
             get_codex_version,
             check_config_consistency,
+            sync_sessions,
+            get_session_sync_status,
+            list_session_projects,
+            list_project_sessions,
+            get_session_content,
+            get_token_usage,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -3063,5 +4249,438 @@ mod tests {
             })
             .unwrap();
         assert_eq!(next.as_deref(), Some(expected.as_str()));
+    }
+
+    fn meta_line(cwd: &str) -> String {
+        serde_json::json!({
+            "timestamp": "2026-08-11T09:10:42.358Z",
+            "ordinal": 0,
+            "type": "session_meta",
+            "payload": {
+                "session_id": "sess-001",
+                "id": "sess-001",
+                "timestamp": "2026-08-11T09:10:42.358Z",
+                "cwd": cwd,
+                "originator": "codex-tui",
+                "cli_version": "0.147.0",
+                "model_provider": "openai"
+            }
+        })
+        .to_string()
+    }
+
+    fn response_item_line(role: &str, text: &str) -> String {
+        serde_json::json!({
+            "timestamp": "2026-08-11T09:11:00.000Z",
+            "ordinal": 1,
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": role,
+                "content": [{"type": "input_text", "text": text}]
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn parse_session_meta_extracts_fields() {
+        let meta = parse_session_meta(&meta_line("/Users/u/Projects/demo")).unwrap();
+        assert_eq!(meta.id, "sess-001");
+        assert_eq!(meta.project_path, "/Users/u/Projects/demo");
+        assert_eq!(meta.started_at, "2026-08-11T09:10:42.358Z");
+        assert_eq!(meta.cli_version.as_deref(), Some("0.147.0"));
+        assert_eq!(meta.model_provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn parse_session_meta_rejects_non_meta_line() {
+        assert!(parse_session_meta(r#"{"type":"event_msg","payload":{}}"#).is_none());
+    }
+
+    #[test]
+    fn parse_session_meta_legacy_format_without_payload() {
+        // 2025-09 之前的旧格式：首行无 type/payload。
+        let meta = parse_session_meta(
+            r#"{"id":"56c862da-342c-47ba-abdf-75125b8862ba","timestamp":"2025-09-05T11:05:23.343Z","instructions":null}"#,
+        )
+        .unwrap();
+        assert_eq!(meta.id, "56c862da-342c-47ba-abdf-75125b8862ba");
+        assert_eq!(meta.started_at, "2025-09-05T11:05:23.343Z");
+        assert!(meta.project_path.is_empty());
+        assert!(meta.cli_version.is_none());
+        // 非元数据行（如 state 记录）不应被误认为会话元数据。
+        assert!(parse_session_meta(r#"{"record_type":"state"}"#).is_none());
+    }
+
+    #[test]
+    fn session_sync_due_never_synced_is_due() {
+        let now = utc_ts("2026-08-12T10:00:00Z");
+        assert!(session_sync_due(None, now));
+    }
+
+    #[test]
+    fn session_sync_due_skips_when_next_in_future() {
+        let now = utc_ts("2026-08-12T10:00:00Z");
+        // 重启后下一次同步时间在未来 → 不同步。
+        assert!(!session_sync_due(Some("2026-08-12T10:05:00Z"), now));
+        // 已到/超过下一次同步时间 → 同步。
+        assert!(session_sync_due(Some("2026-08-12T10:00:00Z"), now));
+        assert!(session_sync_due(Some("2026-08-12T09:59:00Z"), now));
+        // 记录无效 → 视为需要同步。
+        assert!(session_sync_due(Some("not-a-time"), now));
+    }
+
+    #[test]
+    fn session_sync_sleep_waits_until_next_time() {
+        let now = utc_ts("2026-08-12T10:00:00Z");
+        // 距离下次同步 100 秒 → 睡 100 秒（精确触发）。
+        assert_eq!(session_sync_sleep_secs(Some("2026-08-12T10:01:40Z"), now), 100);
+        // 距离超过 5 分钟 → 最多 5 分钟醒一次检查。
+        assert_eq!(session_sync_sleep_secs(Some("2026-08-12T10:30:00Z"), now), 300);
+        // 已到期 / 无记录 → 30 秒后重查。
+        assert_eq!(session_sync_sleep_secs(Some("2026-08-12T09:59:00Z"), now), 30);
+        assert_eq!(session_sync_sleep_secs(None, now), 30);
+    }
+
+    #[test]
+    fn extract_cwd_from_environment_context() {
+        let content = r#"{"record_type":"state"}
+{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/u/Projects/front-test</cwd>\n  <approval_policy>on-request</approval_policy>\n</environment_context>"}]}"#;
+        assert_eq!(
+            extract_cwd_from_content(content),
+            "/Users/u/Projects/front-test"
+        );
+        assert_eq!(extract_cwd_from_content("no cwd here"), "");
+    }
+
+    #[test]
+    fn extract_title_skips_instructions_injection() {
+        let lines = vec![
+            meta_line("/tmp/p"),
+            response_item_line(
+                "user",
+                "<user_instructions>\n > Behavioral Guidelines for Intelligent Programming Assistants",
+            ),
+            response_item_line(
+                "user",
+                "<environment_context>\n  <cwd>/tmp/p</cwd>\n</environment_context>",
+            ),
+            response_item_line("user", "把登录接口的鉴权逻辑改一下"),
+        ];
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(parsed.title, "把登录接口的鉴权逻辑改一下");
+    }
+
+    #[test]
+    fn extract_title_skips_agents_injection() {
+        let lines = vec![
+            meta_line("/tmp/p"),
+            response_item_line("user", "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nSkill policy"),
+            response_item_line("developer", "thinking..."),
+            response_item_line("user", "分析下这里为什么 tips 没生效，并给出修复方案"),
+        ];
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(parsed.title, "分析下这里为什么 tips 没生效，并给出修复方案");
+        assert_eq!(parsed.message_count, 3);
+    }
+
+    #[test]
+    fn extract_title_normalizes_whitespace_and_truncates() {
+        let long = format!(
+            "第一行\n\n  第二行   {:0<200}",
+            "x"
+        );
+        let lines = vec![meta_line("/tmp/p"), response_item_line("user", &long)];
+        let parsed = extract_session_summary(&lines);
+        assert!(!parsed.title.contains('\n'), "标题应压缩空白: {}", parsed.title);
+        assert!(parsed.title.chars().count() <= 121, "标题应截断: {}", parsed.title.len());
+        assert!(parsed.title.ends_with('…'));
+    }
+
+    #[test]
+    fn extract_title_falls_back_to_unnamed() {
+        let lines = vec![
+            meta_line("/tmp/p"),
+            response_item_line("developer", "no user message here"),
+        ];
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(parsed.title, "未命名会话");
+        assert_eq!(parsed.message_count, 1);
+    }
+
+    #[test]
+    fn extract_title_uses_first_real_user_message() {
+        let lines = vec![
+            meta_line("/tmp/p"),
+            response_item_line("user", "# AGENTS.md instructions"),
+            response_item_line("user", "真实的第一个需求"),
+            response_item_line("user", "后续消息不应覆盖标题"),
+        ];
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(parsed.title, "真实的第一个需求");
+    }
+
+    fn token_count_line(input: i64, output: i64, reasoning: i64, total: i64) -> String {
+        serde_json::json!({
+            "timestamp": "2026-08-11T09:12:00.000Z",
+            "ordinal": 20,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": input / 2,
+                        "cache_write_input_tokens": 0,
+                        "output_tokens": output,
+                        "reasoning_output_tokens": reasoning,
+                        "total_tokens": total
+                    },
+                    "model_context_window": 258400
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn token_count_line_ts(ts: &str, input: i64, output: i64, reasoning: i64, total: i64) -> String {
+        serde_json::json!({
+            "timestamp": ts,
+            "ordinal": 20,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": input / 2,
+                        "cache_write_input_tokens": 0,
+                        "output_tokens": output,
+                        "reasoning_output_tokens": reasoning,
+                        "total_tokens": total
+                    },
+                    "model_context_window": 258400
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn thread_settings_line(model: &str) -> String {
+        serde_json::json!({
+            "timestamp": "2026-08-11T09:12:00.000Z",
+            "ordinal": 21,
+            "type": "event_msg",
+            "payload": {
+                "type": "thread_settings_applied",
+                "thread_settings": { "model": model }
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn extract_tokens_takes_last_accumulated_count() {
+        let lines = vec![
+            meta_line("/tmp/p"),
+            thread_settings_line("gpt-5.6-sol"),
+            response_item_line("user", "帮我加一个功能"),
+            token_count_line(100, 50, 10, 160),
+            token_count_line(1000, 200, 80, 1280),
+            token_count_line(5000, 600, 300, 5900),
+        ];
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(parsed.model.as_deref(), Some("gpt-5.6-sol"));
+        // 取最后一个 token_count 事件的累计值。
+        assert_eq!(parsed.input_tokens, 5000);
+        assert_eq!(parsed.cached_input_tokens, 2500);
+        assert_eq!(parsed.output_tokens, 600);
+        assert_eq!(parsed.reasoning_tokens, 300);
+        assert_eq!(parsed.total_tokens, 5900);
+    }
+
+    #[test]
+    fn extract_tokens_defaults_when_missing() {
+        let lines = vec![meta_line("/tmp/p"), response_item_line("user", "hi")];
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(parsed.total_tokens, 0);
+        assert!(parsed.model.is_none());
+    }
+
+    #[test]
+    fn extract_model_from_legacy_turn_context() {
+        // 老版本 CLI：无 thread_settings_applied，模型名在 turn_context.payload.model。
+        let lines = vec![
+            meta_line("/tmp/p"),
+            serde_json::json!({
+                "timestamp": "2026-06-01T02:00:00.000Z",
+                "ordinal": 1,
+                "type": "turn_context",
+                "payload": {
+                    "turn_id": "turn-1",
+                    "cwd": "/tmp/p",
+                    "model": "gpt-5.5",
+                    "personality": "pragmatic"
+                }
+            })
+            .to_string(),
+            response_item_line("user", "帮我加个功能"),
+        ];
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(parsed.model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn extract_daily_tokens_splits_across_days() {
+        // 两天前累计 500/1500 → 昨天累计 1900 → 今天累计 2550：
+        // 差分后各日期增量 = 1900 / (2550-1900=650)… 但日期归属取决于本地时区，
+        // 用同一转换函数算出期望日期键再断言，验证差分逻辑本身。
+        let lines = vec![
+            meta_line("/tmp/p"),
+            token_count_line_ts("2026-08-11T10:00:00Z", 500, 100, 50, 650),
+            token_count_line_ts("2026-08-11T11:00:00Z", 1500, 300, 100, 1900),
+            token_count_line_ts("2026-08-12T09:00:00Z", 2000, 400, 150, 2550),
+        ];
+        let parsed = extract_session_summary(&lines);
+        let day1 = utc_ts_to_local_date("2026-08-11T11:00:00Z").unwrap();
+        let day2 = utc_ts_to_local_date("2026-08-12T09:00:00Z").unwrap();
+
+        let d1 = parsed.daily.get(&day1).expect("第一天应有增量");
+        assert_eq!(d1.total_tokens, 1900);
+        assert_eq!(d1.input_tokens, 1500);
+        assert_eq!(d1.output_tokens, 300);
+        assert_eq!(d1.reasoning_tokens, 100);
+
+        let d2 = parsed.daily.get(&day2).expect("第二天应有增量");
+        // 第二天 = 最后累计值 2550 - 前一天累计 1900。
+        assert_eq!(d2.total_tokens, 650);
+        assert_eq!(d2.input_tokens, 500);
+        assert_eq!(d2.output_tokens, 100);
+        assert_eq!(d2.reasoning_tokens, 50);
+
+        // 会话总累计值 = 最后一条。
+        assert_eq!(parsed.total_tokens, 2550);
+    }
+
+    #[test]
+    fn extract_daily_tokens_clamps_negative_delta() {
+        // 累计值异常回退（不应发生，防御）：差分为负时按 0 计。
+        let lines = vec![
+            meta_line("/tmp/p"),
+            token_count_line_ts("2026-08-11T10:00:00Z", 1500, 300, 100, 1900),
+            token_count_line_ts("2026-08-11T11:00:00Z", 1000, 200, 50, 1250),
+        ];
+        let parsed = extract_session_summary(&lines);
+        let day = utc_ts_to_local_date("2026-08-11T11:00:00Z").unwrap();
+        let d = parsed.daily.get(&day).unwrap();
+        // 第一条为会话起始增量（自身 1900），第二条负增量被 clamp 为 0。
+        assert_eq!(d.total_tokens, 1900);
+        assert_eq!(d.input_tokens, 1500);
+    }
+
+    #[test]
+    fn utc_ts_to_local_date_returns_ymd() {
+        let date = utc_ts_to_local_date("2026-08-12T09:00:00Z").unwrap();
+        assert_eq!(date.len(), 10);
+        assert_eq!(&date[4..5], "-");
+        assert_eq!(&date[7..8], "-");
+        assert!(utc_ts_to_local_date("not-a-time").is_none());
+    }
+
+    #[test]
+    fn is_date_str_validates_ymd() {
+        assert!(is_date_str("2026-08-12"));
+        assert!(!is_date_str("2026-8-12"));
+        assert!(!is_date_str("20260812"));
+        assert!(!is_date_str("2026-08-1"));
+        assert!(!is_date_str(""));
+    }
+
+    #[test]
+    fn project_name_from_basename() {
+        assert_eq!(project_display_name("/Users/u/Projects/apcp-web-api"), "apcp-web-api");
+        assert_eq!(project_display_name("/"), "/");
+        assert_eq!(project_display_name(""), "未指定目录");
+        assert_eq!(project_display_name("   "), "未指定目录");
+    }
+
+    #[test]
+    fn sync_sessions_incremental_and_aggregation() {
+        // 用内存库 + 临时 sessions 目录验证：首次入库、mtime 未变跳过、删除清理、项目聚合。
+        let home = std::env::temp_dir().join(format!("codex-portal-test-{}", Uuid::new_v4()));
+        let sessions_root = home.join(".codex").join("sessions").join("2026").join("08").join("11");
+        fs::create_dir_all(&sessions_root).unwrap();
+        let file = sessions_root.join("rollout-2026-08-11T09-10-42-sess-001.jsonl");
+        let content = format!(
+            "{}\n{}\n{}",
+            meta_line("/Users/u/Projects/demo"),
+            response_item_line("user", "帮我加一个功能"),
+            response_item_line("assistant", "好的")
+        );
+        fs::write(&file, content).unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, project_path TEXT NOT NULL, file_path TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL, started_at TEXT NOT NULL, last_activity_at TEXT,
+                mtime_secs INTEGER NOT NULL, file_size INTEGER NOT NULL,
+                model_provider TEXT, cli_version TEXT,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                model TEXT,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                content TEXT NOT NULL, synced_at TEXT NOT NULL
+            )",
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_projects (
+                path TEXT PRIMARY KEY, name TEXT NOT NULL,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                first_session_at TEXT, last_session_at TEXT, synced_at TEXT
+            )",
+        )
+        .unwrap();
+
+        let files = scan_session_files_in(&home.join(".codex").join("sessions"));
+        assert!(
+            files.iter().any(|(path, _, _)| path == &file),
+            "扫描应找到临时会话文件"
+        );
+        let file_meta = files
+            .iter()
+            .find(|(path, _, _)| path == &file)
+            .map(|(_, mtime, size)| (*mtime, *size))
+            .unwrap();
+        let raw = fs::read_to_string(&file).unwrap();
+        let lines: Vec<&str> = raw.lines().collect();
+        let meta = parse_session_meta(lines.first().unwrap()).unwrap();
+        let parsed = extract_session_summary(&lines);
+        assert_eq!(meta.id, "sess-001");
+        assert_eq!(parsed.title, "帮我加一个功能");
+        assert_eq!(parsed.message_count, 2);
+
+        conn.execute(
+            "INSERT INTO sessions (id, project_path, file_path, title, started_at, last_activity_at, mtime_secs, file_size, message_count, content, synced_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![meta.id, meta.project_path, file.to_string_lossy(), parsed.title, meta.started_at, None::<String>, file_meta.0, file_meta.1, parsed.message_count, raw, "2026-08-11T10:00:00Z"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session_projects (path, name, session_count, first_session_at, last_session_at, synced_at) VALUES ('/Users/u/Projects/demo', 'demo', 1, '2026-08-11T09:10:42.358Z', '2026-08-11T09:11:00.000Z', '2026-08-11T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let file_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(file_count, 1);
+        fs::remove_dir_all(&home).unwrap();
     }
 }
