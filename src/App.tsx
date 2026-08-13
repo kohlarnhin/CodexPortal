@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import AccountList from './components/AccountList';
 import Settings from './components/Settings';
 import AppSettings from './components/AppSettings';
@@ -22,6 +22,13 @@ function App() {
   const { isEmailMaskingEnabled, toggleEmailMasking } = useEmailMasking();
   const usageScheduler = useAccountUsageScheduler();
   const autostart = useAutostart();
+
+  // 自动检查发现新版本时跳转到"关于"页，让用户看到版本更新提示。
+  useEffect(() => {
+    if (updater.promptRevision > 0) {
+      setActiveTab('about');
+    }
+  }, [updater.promptRevision]);
 
   return (
     <>

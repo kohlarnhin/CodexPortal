@@ -102,6 +102,17 @@ export function useAccounts() {
     return await invoke<ResetCreditsInfo>('get_reset_credits', { id, force });
   };
 
+  const consumeResetCredit = async (id: string, creditId: string): Promise<ResetCreditsInfo> => {
+    try {
+      const info = await invoke<ResetCreditsInfo>('consume_reset_credit', { id, creditId });
+      await loadAccounts(false);
+      return info;
+    } catch (err: any) {
+      console.error('Failed to consume reset credit:', err);
+      throw err;
+    }
+  };
+
   const deleteAccount = async (id: string) => {
     try {
       await invoke('delete_account', { id });
@@ -139,6 +150,7 @@ export function useAccounts() {
     completeOauthLogin,
     setAccountAccessToken,
     getResetCredits,
+    consumeResetCredit,
     refresh: loadAccounts
   };
 }

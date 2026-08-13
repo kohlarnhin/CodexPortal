@@ -24,6 +24,8 @@ const PERSONAL_ACCESS_TOKEN_METADATA_URL: &str =
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const RESET_CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+const RESET_CREDITS_CONSUME_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
 const OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 /// Codex CLI 登录使用的 OAuth client_id（/oauth/token 必需）。
 const OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -315,6 +317,26 @@ fn extract_personal_access_token(auth_json_content: &str) -> Option<String> {
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .map(str::to_string)
+}
+
+/// auth.json 中可自动导入的凭证类型。
+#[derive(Debug)]
+enum AuthJsonCredential {
+    /// Personal Access Token（personal_access_token 字段）。
+    Pat(String),
+    /// Refresh Token（任意层级嵌套的 refresh_token 字段）。
+    RefreshToken(String),
+}
+
+/// 从 auth.json 内容中解析支持的凭证：与"添加账号"支持的格式一致——
+/// 优先 personal_access_token（PAT），其次任意层级 refresh_token（rt）；
+/// 两者都不支持则返回 None。
+fn resolve_auth_json_credential(content: &str) -> Option<AuthJsonCredential> {
+    if let Some(pat) = extract_personal_access_token(content) {
+        return Some(AuthJsonCredential::Pat(pat));
+    }
+    let value = serde_json::from_str::<Value>(content).ok()?;
+    find_refresh_token(&value).map(|rt| AuthJsonCredential::RefreshToken(rt.to_string()))
 }
 
 fn parse_cached_usage(usage_json: Option<String>) -> Option<AccountUsage> {
@@ -654,7 +676,11 @@ fn fetch_reset_credits(
 
     let (body, status) = run_curl(&config)?;
     if !(200..300).contains(&status) {
-        return Err(format!("获取重置卡失败（HTTP {status}）"));
+        return Err(match status {
+            401 | 403 => "Access Token 已失效或无权访问，请重新输入 Access Token".to_string(),
+            429 => "获取重置卡失败：请求过于频繁，请稍后再试".to_string(),
+            _ => format!("获取重置卡失败（HTTP {status}）"),
+        });
     }
 
     let response: ResetCreditsApiResponse =
@@ -2152,63 +2178,25 @@ async fn save_rt_account(
     at_expires_at: i64,
     notes: Option<String>,
 ) -> Result<Account, String> {
-    let access_token = access_token.trim().to_string();
-    let refresh_token = refresh_token.trim().to_string();
-    if access_token.is_empty() || refresh_token.is_empty() {
-        return Err("Token 信息不完整，请重新兑换".to_string());
-    }
-
-    let auth_json_content = serde_json::json!({ "personal_access_token": null }).to_string();
-    let now = Utc::now().to_rfc3339();
-    let at_expires = DateTime::from_timestamp(at_expires_at, 0)
-        .map(|time| time.to_rfc3339())
-        .unwrap_or_else(|| now.clone());
-
-    let account = Account {
-        id: Uuid::new_v4().to_string(),
-        name: email,
-        auth_json_content,
+    insert_rt_account(
+        &state,
+        RtTokenInfo {
+            email,
+            chatgpt_plan_type,
+            chatgpt_account_id,
+            access_token,
+            refresh_token,
+            at_expires_at,
+        },
         notes,
-        created_at: now.clone(),
-        updated_at: now,
-        // 限额类型由额度接口自动推导。
-        plan_type: "weekly".to_string(),
-        usage: None,
-        can_refresh_usage: true,
-        next_refresh_at: None,
-        chatgpt_plan_type,
-        has_access_token: true,
-        reset_credits: None,
-        is_active: false,
-        access_token: Some(access_token),
-        chatgpt_account_id,
-        chatgpt_account_is_fedramp: false,
-        refresh_token: Some(refresh_token),
-        at_expires_at: Some(at_expires),
-    };
-
-    let mut db = state.db.lock().map_err(|e| e.to_string())?;
-    let count: i32 = db
-        .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
-        .unwrap_or(0);
-    let mut account_to_return = account.clone();
-    account_to_return.is_active = count == 0;
-
-    let tx = db.transaction().map_err(|e| e.to_string())?;
-    tx.execute(
-        "INSERT INTO accounts (id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, chatgpt_plan_type, chatgpt_account_id, chatgpt_account_is_fedramp, access_token, refresh_token, at_expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
-        params![account.id, account.name, account.auth_json_content, account.notes, account.created_at, account.updated_at, if count == 0 { 1 } else { 0 }, account.plan_type, account.chatgpt_plan_type, account.chatgpt_account_id, account.chatgpt_account_is_fedramp as i32, account.access_token, account.refresh_token, account.at_expires_at],
     )
-    .map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
-
-    // rt 账号无法生成 codex 可用的 auth.json，不写入 ~/.codex/auth.json。
-    Ok(account_to_return)
+    .await
 }
 
-#[tauri::command]
-async fn add_account(
-    state: State<'_, AppState>,
+/// 校验 PAT 并入库（手动添加与 auth.json 自动导入共用）。
+/// 首个账号自动设为活跃账号并写入 ~/.codex/auth.json。
+async fn insert_pat_account(
+    state: &State<'_, AppState>,
     token: String,
     notes: Option<String>,
 ) -> Result<Account, String> {
@@ -2270,6 +2258,74 @@ async fn add_account(
     }
 
     Ok(account_to_return)
+}
+
+/// 入库 rt 兑换出的账号（手动添加与 auth.json 自动导入共用）。
+/// 首个账号自动设为活跃账号；rt 账号不写入 ~/.codex/auth.json。
+async fn insert_rt_account(
+    state: &State<'_, AppState>,
+    info: RtTokenInfo,
+    notes: Option<String>,
+) -> Result<Account, String> {
+    if info.access_token.trim().is_empty() || info.refresh_token.trim().is_empty() {
+        return Err("Token 信息不完整，请重新兑换".to_string());
+    }
+
+    let auth_json_content = serde_json::json!({ "personal_access_token": null }).to_string();
+    let now = Utc::now().to_rfc3339();
+    let at_expires = DateTime::from_timestamp(info.at_expires_at, 0)
+        .map(|time| time.to_rfc3339())
+        .unwrap_or_else(|| now.clone());
+
+    let account = Account {
+        id: Uuid::new_v4().to_string(),
+        name: info.email,
+        auth_json_content,
+        notes,
+        created_at: now.clone(),
+        updated_at: now,
+        // 限额类型由额度接口自动推导。
+        plan_type: "weekly".to_string(),
+        usage: None,
+        can_refresh_usage: true,
+        next_refresh_at: None,
+        chatgpt_plan_type: info.chatgpt_plan_type,
+        has_access_token: true,
+        reset_credits: None,
+        is_active: false,
+        access_token: Some(info.access_token),
+        chatgpt_account_id: info.chatgpt_account_id,
+        chatgpt_account_is_fedramp: false,
+        refresh_token: Some(info.refresh_token),
+        at_expires_at: Some(at_expires),
+    };
+
+    let mut db = state.db.lock().map_err(|e| e.to_string())?;
+    let count: i32 = db
+        .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+        .unwrap_or(0);
+    let mut account_to_return = account.clone();
+    account_to_return.is_active = count == 0;
+
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO accounts (id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, chatgpt_plan_type, chatgpt_account_id, chatgpt_account_is_fedramp, access_token, refresh_token, at_expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        params![account.id, account.name, account.auth_json_content, account.notes, account.created_at, account.updated_at, if count == 0 { 1 } else { 0 }, account.plan_type, account.chatgpt_plan_type, account.chatgpt_account_id, account.chatgpt_account_is_fedramp as i32, account.access_token, account.refresh_token, account.at_expires_at],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    // rt 账号无法生成 codex 可用的 auth.json，不写入 ~/.codex/auth.json。
+    Ok(account_to_return)
+}
+
+#[tauri::command]
+async fn add_account(
+    state: State<'_, AppState>,
+    token: String,
+    notes: Option<String>,
+) -> Result<Account, String> {
+    insert_pat_account(&state, token, notes).await
 }
 
 #[tauri::command]
@@ -2447,6 +2503,15 @@ async fn get_reset_credits(
     id: String,
     force: Option<bool>,
 ) -> Result<ResetCreditsInfo, String> {
+    load_reset_credits_cached(&state, id, force.unwrap_or(false)).await
+}
+
+/// 读取（或强制刷新）账号的重置卡信息并缓存入库，供查询与"使用重置卡"后刷新复用。
+async fn load_reset_credits_cached(
+    state: &State<'_, AppState>,
+    id: String,
+    force: bool,
+) -> Result<ResetCreditsInfo, String> {
     let (at, account_id, is_fedramp, saved) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.query_row(
@@ -2463,7 +2528,7 @@ async fn get_reset_credits(
     };
     let at = at.ok_or_else(|| "未配置 Access Token".to_string())?;
 
-    if !force.unwrap_or(false) {
+    if !force {
         if let Some(json) = saved {
             if let Ok(info) = serde_json::from_str::<ResetCreditsInfo>(&json) {
                 return Ok(info);
@@ -2488,6 +2553,106 @@ async fn get_reset_credits(
     }
 
     Ok(info)
+}
+
+/// 构造"使用重置卡"请求失败的友好错误信息。
+fn build_consume_error(status: u16, body: &str) -> String {
+    let api_message = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(|message| message.as_str())
+                .map(str::to_string)
+        })
+        .filter(|message| !message.trim().is_empty());
+
+    if let Some(message) = api_message {
+        return format!("使用重置卡失败（HTTP {status}）：{message}");
+    }
+
+    let generic = match status {
+        401 | 403 => "Access Token 已失效或无权访问，请重新输入 Access Token".to_string(),
+        429 => "请求过于频繁，请稍后再试".to_string(),
+        _ => String::new(),
+    };
+    if !generic.is_empty() {
+        return format!("使用重置卡失败（HTTP {status}）：{generic}");
+    }
+    format!("使用重置卡失败（HTTP {status}）")
+}
+
+/// 使用一张重置卡请求重置额度（consume）。
+/// 成功后刷新并缓存最新的重置卡列表返回。
+#[tauri::command]
+async fn consume_reset_credit(
+    state: State<'_, AppState>,
+    id: String,
+    credit_id: String,
+) -> Result<ResetCreditsInfo, String> {
+    let credit_id = credit_id.trim().to_string();
+    if credit_id.is_empty() {
+        return Err("请选择要使用的重置卡".to_string());
+    }
+
+    let (at, account_id, is_fedramp) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.query_row(
+            "SELECT access_token, chatgpt_account_id, chatgpt_account_is_fedramp FROM accounts WHERE id = ?1",
+            params![id],
+            |row| Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, i32>(2)? == 1,
+            )),
+        )
+        .map_err(|_| "Account not found".to_string())?
+    };
+    let at = at.ok_or_else(|| "未配置 Access Token".to_string())?;
+    let redeem_request_id = Uuid::new_v4().to_string();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = serde_json::json!({
+            "credit_id": credit_id,
+            "redeem_request_id": redeem_request_id,
+        })
+        .to_string();
+
+        let mut config = String::from(
+            "silent\nshow-error\nrequest = \"POST\"\nconnect-timeout = 10\nmax-time = 25\nproto = \"=https\"\n",
+        );
+        config.push_str("url = ");
+        config.push_str(&curl_config_quote(RESET_CREDITS_CONSUME_URL));
+        config.push('\n');
+        append_curl_header(&mut config, "Accept", "application/json")?;
+        append_curl_header(&mut config, "Content-Type", "application/json")?;
+        append_curl_header(&mut config, "Authorization", &format!("Bearer {at}"))?;
+        append_curl_header(&mut config, "originator", "Codex Desktop")?;
+        append_curl_header(&mut config, "OAI-Product-Sku", "CODEX")?;
+        append_curl_header(&mut config, "User-Agent", &codex_cli_user_agent())?;
+        if let Some(account_id) = account_id {
+            append_curl_header(&mut config, "ChatGPT-Account-Id", &account_id)?;
+        }
+        if is_fedramp {
+            append_curl_header(&mut config, "X-OpenAI-Fedramp", "true")?;
+        }
+        config.push_str("data-raw = ");
+        config.push_str(&curl_config_quote(&body));
+        config.push('\n');
+        config.push_str("write-out = \"\\n%{http_code}\"\n");
+
+        let (response_body, status) = run_curl(&config)?;
+        if !(200..300).contains(&status) {
+            return Err(build_consume_error(status, &response_body));
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("使用重置卡任务失败：{e}"))??;
+
+    // 使用成功后强制刷新卡片列表（状态会变为已兑换/可用数减少）并返回。
+    load_reset_credits_cached(&state, id, true).await
 }
 
 #[tauri::command]
@@ -3761,6 +3926,14 @@ pub struct ModelTokenUsage {
     pub session_count: i64,
     #[serde(rename = "totalTokens")]
     pub total_tokens: i64,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: i64,
+    #[serde(rename = "cachedInputTokens")]
+    pub cached_input_tokens: i64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: i64,
+    #[serde(rename = "reasoningTokens")]
+    pub reasoning_tokens: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3770,6 +3943,8 @@ pub struct DailyTokenUsage {
     pub total_tokens: i64,
     #[serde(rename = "inputTokens")]
     pub input_tokens: i64,
+    #[serde(rename = "cachedInputTokens")]
+    pub cached_input_tokens: i64,
     #[serde(rename = "outputTokens")]
     pub output_tokens: i64,
     #[serde(rename = "reasoningTokens")]
@@ -3808,7 +3983,7 @@ fn get_token_usage(
     {
         let mut stmt = db
             .prepare(
-                "SELECT date, SUM(total_tokens), SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date ORDER BY date",
+                "SELECT date, SUM(total_tokens), SUM(input_tokens), SUM(cached_input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date ORDER BY date",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -3819,15 +3994,17 @@ fn get_token_usage(
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
         for row in rows {
-            let (date, total, input, output, reasoning) = row.map_err(|e| e.to_string())?;
+            let (date, total, input, cached, output, reasoning) = row.map_err(|e| e.to_string())?;
             days.push(DailyTokenUsage {
                 date,
                 total_tokens: total,
                 input_tokens: input,
+                cached_input_tokens: cached,
                 output_tokens: output,
                 reasoning_tokens: reasoning,
                 projects: Vec::new(),
@@ -3873,11 +4050,11 @@ fn get_token_usage(
         }
     }
 
-    // 按模型分布。
+    // 按模型分布（含各维度 token 细分，供前端按单价实时计算金额）。
     {
         let mut stmt = db
             .prepare(
-                "SELECT date, COALESCE(model, '未知'), COUNT(DISTINCT session_id), SUM(total_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date, COALESCE(model, '未知') ORDER BY date, SUM(total_tokens) DESC",
+                "SELECT date, COALESCE(model, '未知'), COUNT(DISTINCT session_id), SUM(total_tokens), SUM(input_tokens), SUM(cached_input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date, COALESCE(model, '未知') ORDER BY date, SUM(total_tokens) DESC",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -3887,12 +4064,17 @@ fn get_token_usage(
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
         let mut by_date: HashMap<String, Vec<ModelTokenUsage>> = HashMap::new();
         for row in rows {
-            let (date, model, count, total) = row.map_err(|e| e.to_string())?;
+            let (date, model, count, total, input, cached, output, reasoning) =
+                row.map_err(|e| e.to_string())?;
             by_date
                 .entry(date)
                 .or_default()
@@ -3900,6 +4082,10 @@ fn get_token_usage(
                     model,
                     session_count: count,
                     total_tokens: total,
+                    input_tokens: input,
+                    cached_input_tokens: cached,
+                    output_tokens: output,
+                    reasoning_tokens: reasoning,
                 });
         }
         for day in &mut days {
@@ -3910,6 +4096,75 @@ fn get_token_usage(
     }
 
     Ok(days)
+}
+
+/// 账号库为空时，自动从 ~/.codex/auth.json 导入账号（仅支持 PAT / rt 两种格式）。
+/// 无 auth.json、格式不支持或已有账号时不处理；导入成功返回账号。
+#[tauri::command]
+async fn import_account_from_auth_json(state: State<'_, AppState>) -> Result<Option<Account>, String> {
+    // 已有账号则跳过（幂等，避免重复导入）。
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let count: i32 = db
+            .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+            .unwrap_or(0);
+        if count > 0 {
+            return Ok(None);
+        }
+    }
+
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    let auth_path = home.join(".codex").join("auth.json");
+    let Ok(content) = fs::read_to_string(&auth_path) else {
+        return Ok(None); // 无 auth.json：不处理
+    };
+
+    let Some(credential) = resolve_auth_json_credential(&content) else {
+        return Ok(None); // 格式不支持：不处理
+    };
+
+    let account = match credential {
+        AuthJsonCredential::Pat(token) => {
+            insert_pat_account(&state, token, None).await?
+        }
+        AuthJsonCredential::RefreshToken(rt) => {
+            // rt 兑换出 at 与账号信息后入库（rt 一次性使用）。
+            let info = exchange_refresh_token(rt).await?;
+            insert_rt_account(&state, info, None).await?
+        }
+    };
+    eprintln!("[auth-import] 已自动导入账号：{}", account.name);
+    Ok(Some(account))
+}
+
+/// 已提醒过用户的新版本号（用户关闭更新弹窗后记录，用于避免重复打扰）。
+#[tauri::command]
+fn get_pending_update(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let version: Option<String> = db
+        .query_row(
+            "SELECT content FROM configs WHERE key = 'updater_pending_version'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(version.filter(|value| !value.trim().is_empty()))
+}
+
+/// 记录已提醒过的新版本号（每次检测到新版本时写入，无论弹窗是否被关闭）。
+#[tauri::command]
+fn set_pending_update(state: State<'_, AppState>, version: String) -> Result<(), String> {
+    let version = version.trim().to_string();
+    if version.is_empty() {
+        return Err("版本号不能为空".to_string());
+    }
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "INSERT INTO configs (key, content) VALUES ('updater_pending_version', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
+        params![version],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 读取单个会话的完整内容（JSONL 原文，可能较大，按需加载）。
@@ -3976,6 +4231,18 @@ pub fn run() {
             start_usage_scheduler(app.handle().clone());
             start_session_sync_scheduler(app.handle().clone());
 
+            // 账号库为空时，后台自动从 ~/.codex/auth.json 导入账号（异步，失败静默）。
+            {
+                let import_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = import_app.state::<AppState>();
+                    match import_account_from_auth_json(state).await {
+                        Ok(_) => {}
+                        Err(error) => eprintln!("[auth-import] 自动导入失败: {error}"),
+                    }
+                });
+            }
+
             #[cfg(desktop)]
             show_main_window(app.handle());
 
@@ -3995,6 +4262,7 @@ pub fn run() {
             set_active_account,
             set_account_access_token,
             get_reset_credits,
+            consume_reset_credit,
             refresh_account_usage,
             send_test_message,
             get_codex_config,
@@ -4007,6 +4275,9 @@ pub fn run() {
             list_project_sessions,
             get_session_content,
             get_token_usage,
+            get_pending_update,
+            set_pending_update,
+            import_account_from_auth_json,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -4138,6 +4409,35 @@ mod tests {
             plan_type: None,
         };
         assert_eq!(derive_plan_type_from_usage(&usage), None);
+    }
+
+    #[test]
+    fn resolve_auth_json_credential_prefers_pat() {
+        // 本应用写入的格式：personal_access_token（不限定 token 前缀）。
+        let content = r#"{"OPENAI_API_KEY": null, "personal_access_token": "at-pat-token"}"#;
+        match resolve_auth_json_credential(content) {
+            Some(AuthJsonCredential::Pat(token)) => assert_eq!(token, "at-pat-token"),
+            other => panic!("应为 PAT，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_auth_json_credential_falls_back_to_refresh_token() {
+        // Codex CLI 登录格式：tokens 嵌套 refresh_token。
+        let content = r#"{"tokens": {"id_token": "x", "access_token": "y", "refresh_token": "rt-nested"}}"#;
+        match resolve_auth_json_credential(content) {
+            Some(AuthJsonCredential::RefreshToken(rt)) => assert_eq!(rt, "rt-nested"),
+            other => panic!("应为 rt，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_auth_json_credential_unsupported_returns_none() {
+        assert!(resolve_auth_json_credential("{}").is_none());
+        assert!(resolve_auth_json_credential(r#"{"foo": "bar"}"#).is_none());
+        assert!(resolve_auth_json_credential("not json").is_none());
+        // personal_access_token 为 null（rt 账号存库格式）→ 无 PAT，也无 rt。
+        assert!(resolve_auth_json_credential(r#"{"personal_access_token": null}"#).is_none());
     }
 
     #[test]

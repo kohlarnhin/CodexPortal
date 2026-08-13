@@ -63,6 +63,10 @@ export interface ModelTokenUsage {
   model: string;
   sessionCount: number;
   totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
 }
 
 /** 某一天的 token 用量（含项目/模型分布）。 */
@@ -70,6 +74,7 @@ export interface DailyTokenUsage {
   date: string;
   totalTokens: number;
   inputTokens: number;
+  cachedInputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
   projects: ProjectTokenUsage[];

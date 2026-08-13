@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { DailyTokenUsage, ModelTokenUsage, ProjectTokenUsage } from '../types/session';
 import { formatTokens } from '../utils/format';
+import { calcModelCost, formatCost } from '../utils/modelPricing';
 import DatePicker from './DatePicker';
 
 function toDateStr(date: Date): string {
@@ -86,13 +87,19 @@ const TokenUsagePage: React.FC = () => {
         (acc, day) => ({
           totalTokens: acc.totalTokens + day.totalTokens,
           inputTokens: acc.inputTokens + day.inputTokens,
+          cachedInputTokens: acc.cachedInputTokens + day.cachedInputTokens,
           outputTokens: acc.outputTokens + day.outputTokens,
           reasoningTokens: acc.reasoningTokens + day.reasoningTokens,
         }),
-        { totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 },
+        { totalTokens: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0 },
       ),
     [days],
   );
+
+  // 输入缓存率：缓存命中占比（输入为 0 时为 0）。
+  const cacheRate = totals.inputTokens > 0
+    ? Math.min(100, (totals.cachedInputTokens / totals.inputTokens) * 100)
+    : 0;
 
   // 多天查询时把每天的项目/模型分布合并为范围聚合。
   const mergedProjects = useMemo(() => {
@@ -119,6 +126,10 @@ const TokenUsagePage: React.FC = () => {
         if (existing) {
           existing.totalTokens += model.totalTokens;
           existing.sessionCount += model.sessionCount;
+          existing.inputTokens += model.inputTokens;
+          existing.cachedInputTokens += model.cachedInputTokens;
+          existing.outputTokens += model.outputTokens;
+          existing.reasoningTokens += model.reasoningTokens;
         } else {
           map.set(model.model, { ...model });
         }
@@ -129,6 +140,21 @@ const TokenUsagePage: React.FC = () => {
 
   const maxProjectTokens = mergedProjects[0]?.totalTokens ?? 0;
   const maxModelTokens = mergedModels[0]?.totalTokens ?? 0;
+
+  // 消耗金额：按内置 API 单价实时计算（任意日期范围，数据来自同步入库的 token 记录）。
+  const totalCost = useMemo(() => {
+    let cost = 0;
+    for (const model of mergedModels) {
+      const modelCost = calcModelCost(model.model, {
+        input: model.inputTokens,
+        cachedInput: model.cachedInputTokens,
+        output: model.outputTokens,
+        reasoning: model.reasoningTokens,
+      });
+      if (modelCost !== null) cost += modelCost;
+    }
+    return cost;
+  }, [mergedModels]);
 
   const setRange = (start: string, end: string) => {
     setStartDate(start);
@@ -189,12 +215,28 @@ const TokenUsagePage: React.FC = () => {
           </div>
         ) : (
           <>
-            {/* 统计卡片 */}
+            {/* 统计卡片：推理卡片由"当天消耗金额"取代 */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 shrink-0">
               <StatCard label="合计 Token" value={formatTokens(totals.totalTokens)} />
-              <StatCard label="输入" value={formatTokens(totals.inputTokens)} />
+              <div
+                className="flex-1 min-w-0 rounded-xl border border-[#EAEAEA] bg-white px-4 py-3"
+                title="输入总量（含缓存命中部分）"
+              >
+                <p className="text-[11px] font-medium text-[#888888] mb-1">输入</p>
+                <p className="text-[18px] font-bold tracking-tight text-black">{formatTokens(totals.inputTokens)}</p>
+                <p className="mt-0.5 text-[10px] text-[#AAAAAA]">
+                  缓存 {formatTokens(totals.cachedInputTokens)}（{cacheRate.toFixed(1)}%）
+                </p>
+              </div>
               <StatCard label="输出" value={formatTokens(totals.outputTokens)} />
-              <StatCard label="推理" value={formatTokens(totals.reasoningTokens)} />
+              <div
+                className="flex-1 min-w-0 rounded-xl border border-[#EAEAEA] bg-white px-4 py-3"
+                title="按 OpenAI API 标准价估算（非缓存输入×单价 + 缓存输入×缓存价 + 输出×单价）"
+              >
+                <p className="text-[11px] font-medium text-[#888888] mb-1">金额</p>
+                <p className="text-[18px] font-bold tracking-tight text-black">{formatCost(totalCost)}</p>
+                <p className="mt-0.5 text-[10px] text-[#AAAAAA]">按 API 标准价估算</p>
+              </div>
             </div>
 
             {/* 两个分布卡片平分剩余高度，各自内部滚动 */}

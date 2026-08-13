@@ -12,7 +12,8 @@
 
 - **多账号管理**：支持 **Personal Access Token、Refresh Token、OAuth 登录**三种方式添加账号；邮箱与订阅类型（Team / Plus / Pro / Free）自动解析并作为账号铭牌展示。
 - **额度测试**：账号卡片一键调用 Codex 模型接口，流式展示回复，测试即消耗该账号额度并自动刷新。
-- **重置卡**：Team 账号配置 Access Token 后查看银行式重置额度（可用重置次数与明细）。
+- **重置卡**：Team 账号配置 Access Token 后查看银行式重置额度（可用重置次数与明细），可选中可用重置卡一键请求重置，成功后自动刷新额度。
+- **智能更新检查**：启动与每小时自动检查更新；检测到新版本自动记录并跳转"关于"页提醒，关闭弹窗后不再重复打扰，仅发布更新版本时再次提醒。
 - **订阅筛选**：账号列表按订阅类型筛选，并显示各类型数量。
 - **快速切换账号**：切换活跃账号时自动将认证内容写入 `~/.codex/auth.json`；使用中的账号始终排在列表首位。
 - **实时额度同步**：可刷新账号读取最新额度，在当前账号与账号列表展示，并缓存到 SQLite。
@@ -21,7 +22,8 @@
 - **开机自启动**：默认开启，可在“设置”页随时关闭。
 - **配置管理**：可视化编辑模型、沙盒模式、审批策略、推理强度、功能开关与自定义模型服务，并支持 TOML 高级编辑与一致性检查。
 - **会话管理**：将 `~/.codex/sessions` 全部历史会话按项目入库 SQLite（含完整内容），按项目卡片浏览会话列表，展示标题、消息数、模型、Token 消耗，支持复制恢复命令与 Finder 定位。
-- **Token 用量**：同步时自动拆解每个会话的 Token 消耗并按天入库，支持查看当天及任意历史日期的用量，按项目、按模型分布展示。
+- **Token 用量**：同步时自动拆解每个会话的 Token 消耗并按天入库，支持查看当天及任意历史日期的用量，按项目、按模型分布展示；内置 GPT-5.5 / GPT-5.6（Sol/Terra/Luna）官方价格，实时估算消耗金额（区分输入/缓存/输出计费），输入卡片展示缓存命中量与缓存率。
+- **自动导入账号**：账号库为空时自动读取 `~/.codex/auth.json`（PAT / Refresh Token 格式）并走与手动添加一致的流程入库，开箱即用。
 - **MCP 管理**：新增、编辑、启用、停用或删除 STDIO / SSE 类型 MCP 服务器，并管理参数与环境变量。
 - **应用内更新**：生产版本启动后自动检查更新，也可在“关于”页面手动检查、下载、安装并重启应用。
 - **环境信息**：展示应用启动时检测并保存的 Codex CLI 版本。
@@ -44,12 +46,12 @@
 
 ## 下载安装
 
-当前稳定版本为 `0.1.8`，可从 [GitHub Releases](https://github.com/kohlarnhin/CodexPortal/releases/tag/v0.1.8) 下载 macOS 安装包：
+当前稳定版本为 `0.1.9`，可从 [GitHub Releases](https://github.com/kohlarnhin/CodexPortal/releases/tag/v0.1.9) 下载 macOS 安装包：
 
 | Mac 类型 | 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列芯片） | [CodexPortal_0.1.8_arm64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.8/CodexPortal_0.1.8_arm64.dmg) |
-| Intel | [CodexPortal_0.1.8_x64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.8/CodexPortal_0.1.8_x64.dmg) |
+| Apple Silicon（M 系列芯片） | [CodexPortal_0.1.9_arm64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.9/CodexPortal_0.1.9_arm64.dmg) |
+| Intel | [CodexPortal_0.1.9_x64.dmg](https://github.com/kohlarnhin/CodexPortal/releases/download/v0.1.9/CodexPortal_0.1.9_x64.dmg) |
 
 ## 技术栈
 
@@ -161,6 +163,6 @@ CodexPortal/
 
 ## 当前状态
 
-项目当前版本为 `0.1.8`。支持 Personal Access Token、Refresh Token、OAuth 三种账号接入方式，提供实时额度、智能自动刷新、额度测试、重置卡与订阅筛选等功能；新增会话管理（按项目浏览 `~/.codex/sessions` 历史会话）与 Token 用量统计（当天与历史日期、按项目/模型分布）。Skill 管理完整能力仍在开发中。
+项目当前版本为 `0.1.9`。支持 Personal Access Token、Refresh Token、OAuth 三种账号接入方式，提供实时额度、智能自动刷新、额度测试、重置卡（含一键请求重置）、订阅筛选与账号自动导入（auth.json）等功能；会话管理（按项目浏览 `~/.codex/sessions` 历史会话）与 Token 用量统计（当天与历史日期、按项目/模型分布、内置模型价格估算金额）；智能更新检查（启动/每小时，入库记录避免重复打扰）。Skill 管理完整能力仍在开发中。
 
 提交 Issue 或 Pull Request 前，请避免在日志、截图和示例中包含真实认证信息。

@@ -30,7 +30,7 @@ const AccountList: React.FC<AccountListProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, refresh } = useAccounts();
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -276,6 +276,8 @@ const AccountList: React.FC<AccountListProps> = ({
           onClose={() => setResetAccount(null)}
           getResetCredits={getResetCredits}
           setAccountAccessToken={setAccountAccessToken}
+          consumeResetCredit={consumeResetCredit}
+          onRefreshUsage={handleRefreshUsage}
         />
       )}
     </div>

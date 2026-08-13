@@ -33,10 +33,14 @@ export default function About({ updater }: AboutProps) {
     };
   }, []);
 
+  // 已记录的新版本与当前版本不一致才提示（升级到该版本后提示自动消失）。
+  const hasPendingUpdate =
+    updater.pendingVersion !== null && updater.pendingVersion !== appVersion;
+
   const updateStatus = updater.status === 'checking'
     ? '正在检查...'
-    : updater.update
-      ? `发现 v${updater.update.version}`
+    : hasPendingUpdate
+      ? `有新版本 v${updater.pendingVersion}`
       : updater.status === 'up-to-date'
         ? '已是最新版本'
         : updater.status === 'error'
@@ -45,7 +49,7 @@ export default function About({ updater }: AboutProps) {
 
   const updateStatusColor = updater.status === 'error'
     ? 'bg-[#D32F2F]'
-    : updater.update
+    : hasPendingUpdate
       ? 'bg-emerald-500'
       : 'bg-[#B0B0B0]';
 
@@ -96,7 +100,7 @@ export default function About({ updater }: AboutProps) {
                 className="px-3 py-1.5 bg-white border border-[#DADADA] text-[12px] font-medium text-[#444444] rounded-md hover:border-black hover:text-black hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={updater.status === 'checking' ? 'animate-spin' : ''}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                {updater.status === 'checking' ? '检查中' : updater.update ? '查看更新' : '检查更新'}
+                {updater.status === 'checking' ? '检查中' : hasPendingUpdate ? '更新' : '检查更新'}
               </button>
             </div>
           </div>
