@@ -257,17 +257,22 @@ impl AppState {
                 started_at TEXT NOT NULL,
                 ended_at TEXT,
                 start_used_percent REAL,
-                last_used_percent REAL
+                last_used_percent REAL,
+                last_sensed_at TEXT
             )",
             [],
         )?;
-        // 老库兼容：窗口起点额度 / 最近感知额度列（表已存在时静默忽略）。
+        // 老库兼容：窗口起点额度 / 最近感知额度 / 最近感知时间列（表已存在时静默忽略）。
         let _ = conn.execute(
             "ALTER TABLE account_active_periods ADD COLUMN start_used_percent REAL",
             [],
         );
         let _ = conn.execute(
             "ALTER TABLE account_active_periods ADD COLUMN last_used_percent REAL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE account_active_periods ADD COLUMN last_sensed_at TEXT",
             [],
         );
 
@@ -2732,6 +2737,13 @@ fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), String> 
         )
         .unwrap_or(0);
 
+    // 关闭被删账号的进行中时段，避免幽灵时段劫持后续 token/额度归属。
+    tx.execute(
+        "UPDATE account_active_periods SET ended_at = ?1 WHERE account_id = ?2 AND ended_at IS NULL",
+        params![Utc::now().to_rfc3339(), id],
+    )
+    .map_err(|e| e.to_string())?;
+
     tx.execute("DELETE FROM accounts WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
 
@@ -2744,6 +2756,12 @@ fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), String> 
             tx.execute(
                 "UPDATE accounts SET is_active = 1 WHERE id = ?1",
                 params![nid],
+            )
+            .unwrap_or(0);
+            // 接班人开启新时段（带起点额度），避免窗口归属中断。
+            tx.execute(
+                "INSERT INTO account_active_periods (account_id, started_at, start_used_percent) VALUES (?1, ?2, ?3)",
+                params![nid, Utc::now().to_rfc3339(), cached_used_percent(&tx, &nid)],
             )
             .unwrap_or(0);
             if let Ok(content) = tx.query_row(
@@ -2763,6 +2781,19 @@ fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), String> 
 fn set_active_account(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut db = state.db.lock().map_err(|e| e.to_string())?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
+
+    // 目标账号已是活跃账号：直接返回，避免重复开段产生重叠时段。
+    let already_active: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE id = ?1 AND is_active = 1",
+            params![id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if already_active {
+        return Ok(());
+    }
 
     let content: String = tx
         .query_row(
@@ -2823,7 +2854,7 @@ fn set_active_account(state: State<'_, AppState>, id: String) -> Result<(), Stri
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
             )
             .unwrap_or((0, 0, 0, 0, 0));
-        let (d_total, d_input, d_cached, d_output, d_reasoning) = (
+        let (_d_total, d_input, d_cached, d_output, d_reasoning) = (
             (total_tokens - prev.0).max(0),
             (input_tokens - prev.1).max(0),
             (cached_input_tokens - prev.2).max(0),
@@ -2831,7 +2862,7 @@ fn set_active_account(state: State<'_, AppState>, id: String) -> Result<(), Stri
             (reasoning_tokens - prev.4).max(0),
         );
         let period_cost =
-            estimate_token_cost(d_total, d_input, d_cached, d_output, d_reasoning);
+            estimate_token_cost(d_input, d_cached, d_output, d_reasoning);
         // 切换时刻的当前 used：账号缓存的 usedPercent。
         let current_used: Option<f64> = tx
             .query_row(
@@ -2888,12 +2919,14 @@ fn cached_used_percent(conn: &Connection, account_id: &str) -> Option<f64> {
 /// 确保当前活跃账号存在一条进行中时段（懒创建，幂等）：
 /// 若账号库有活跃账号且其没有进行中时段，则补开一条（started_at = 当前时刻），
 /// 并记录该账号当前缓存的 used_percent 作为窗口起点额度。
-/// 返回活跃账号 id（无活跃账号返回 None）。
-fn ensure_active_account_period(conn: &Connection) -> Option<String> {
+/// 返回活跃账号 id（无活跃账号返回 None）；补段失败返回错误（不再静默丢失窗口归属）。
+fn ensure_active_account_period(conn: &Connection) -> Result<Option<String>, String> {
     let active_id: Option<String> = conn
         .query_row("SELECT id FROM accounts WHERE is_active = 1", [], |row| row.get(0))
         .ok();
-    let active_id = active_id?;
+    let Some(active_id) = active_id else {
+        return Ok(None);
+    };
     let has_open: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL",
@@ -2902,18 +2935,74 @@ fn ensure_active_account_period(conn: &Connection) -> Option<String> {
         )
         .unwrap_or(0);
     if has_open == 0 {
-        let _ = conn.execute(
+        conn.execute(
             "INSERT INTO account_active_periods (account_id, started_at, start_used_percent) VALUES (?1, ?2, ?3)",
             params![active_id, Utc::now().to_rfc3339(), cached_used_percent(conn, &active_id)],
-        );
+        )
+        .map_err(|e| format!("为活跃账号补开时段失败：{e}"))?;
     }
-    Some(active_id)
+    Ok(Some(active_id))
 }
 
 /// 应用启动时整理账号活跃时段：
 /// - 上次进行中的时段与当前活跃账号相同 → 直接续接（不关闭，时间段保持连续，
 ///   app 重启前后的消耗归属到同一条时段）；
 /// - 不同或无进行中时段 → 关闭旧段并给当前账号开新段（关闭时段内的消耗归未知）。
+/// 为关闭的进行中时段记录窗口快照（累计 + 推算窗口总额），避免窗口边界丢失。
+/// 供启动整理时段关闭段时调用（与切换/重置走同一套推算）。
+fn record_period_close_snapshot(conn: &Connection, account_id: &str, timestamp: &str) {
+    let start_remaining: Option<f64> = conn
+        .query_row(
+            "SELECT start_used_percent FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+            params![account_id],
+            |row| row.get::<_, Option<f64>>(0),
+        )
+        .ok()
+        .flatten();
+    let current_used: Option<f64> = conn
+        .query_row(
+            "SELECT json_extract(usage_json, '$.primary.usedPercent') FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get::<_, Option<f64>>(0),
+        )
+        .ok()
+        .flatten();
+    let plan_type: Option<String> = conn
+        .query_row(
+            "SELECT chatgpt_plan_type FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .ok();
+    let (total, input, cached, output, reasoning) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(cached_input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(reasoning_tokens), 0) FROM account_token_usage WHERE account_id = ?1",
+            params![account_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
+        )
+        .unwrap_or((0, 0, 0, 0, 0));
+    let prev: (i64, i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(MAX(total_tokens), 0), COALESCE(MAX(input_tokens), 0), COALESCE(MAX(cached_input_tokens), 0), COALESCE(MAX(output_tokens), 0), COALESCE(MAX(reasoning_tokens), 0) FROM account_window_snapshots WHERE account_id = ?1",
+            params![account_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
+        )
+        .unwrap_or((0, 0, 0, 0, 0));
+    let (_d_total, d_input, d_cached, d_output, d_reasoning) = (
+        (total - prev.0).max(0),
+        (input - prev.1).max(0),
+        (cached - prev.2).max(0),
+        (output - prev.3).max(0),
+        (reasoning - prev.4).max(0),
+    );
+    let period_cost = estimate_token_cost(d_input, d_cached, d_output, d_reasoning);
+    let window_total = estimate_window_total(start_remaining, current_used, period_cost);
+    let _ = conn.execute(
+        "INSERT INTO account_window_snapshots (account_id, switched_at, plan_type, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, window_total_cost) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![account_id, timestamp, plan_type, total, input, cached, output, reasoning, window_total],
+    );
+}
+
 fn ensure_account_period(conn: &Connection, active_id: Option<&str>, now: &str) {
     let last_open: Option<(i64, String)> = conn
         .query_row(
@@ -2937,6 +3026,10 @@ fn ensure_account_period(conn: &Connection, active_id: Option<&str>, now: &str) 
             );
         }
         None => {
+            // 关闭前为进行中时段记录快照（窗口边界不丢失）。
+            if let Some((_, account)) = &last_open {
+                record_period_close_snapshot(conn, account, now);
+            }
             let _ = conn.execute(
                 "UPDATE account_active_periods SET ended_at = ?1 WHERE ended_at IS NULL",
                 params![now],
@@ -3585,8 +3678,7 @@ const ESTIMATE_OUTPUT_PER_1M: f64 = 30.0;
 
 /// 按 gpt-5.6-sol 单价估算 token 消耗金额（USD）。
 /// 输入累计值已含缓存命中部分，非缓存按全价、缓存按缓存价，避免重复计费。
-fn estimate_token_cost(total: i64, input: i64, cached: i64, output: i64, reasoning: i64) -> f64 {
-    let _ = total;
+fn estimate_token_cost(input: i64, cached: i64, output: i64, reasoning: i64) -> f64 {
     let uncached = (input - cached).max(0) as f64;
     (uncached * ESTIMATE_INPUT_PER_1M
         + cached as f64 * ESTIMATE_CACHED_INPUT_PER_1M
@@ -3614,13 +3706,17 @@ fn estimate_window_total(
 /// 1. 记录一条切换快照（当前累计，作为新窗口周期增量的基准）；
 /// 2. 关闭进行中时段；
 /// 3. 从重置时刻开新段（起点剩余量 = 100 − 新 used）。
+/// 额度重置处理。
+/// `pre_reset_used`：重置前的 used（旧窗口的已用百分比，窗口总额推算用）——
+/// 注意不能传重置后的 new_used，否则消耗百分点按新窗口剩余计算会恒错。
 fn handle_usage_reset(
     conn: &Connection,
     account_id: &str,
     timestamp: &str,
     plan_type: Option<&str>,
     new_used: f64,
-) {
+    pre_reset_used: Option<f64>,
+) -> Result<(), String> {
     // 被关闭时段的起点剩余（窗口总额推算用）。
     let start_remaining: Option<f64> = conn
         .query_row(
@@ -3647,29 +3743,33 @@ fn handle_usage_reset(
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
         )
         .unwrap_or((0, 0, 0, 0, 0));
-    let (d_total, d_input, d_cached, d_output, d_reasoning) = (
+    let (_d_total, d_input, d_cached, d_output, d_reasoning) = (
         (total - prev.0).max(0),
         (input - prev.1).max(0),
         (cached - prev.2).max(0),
         (output - prev.3).max(0),
         (reasoning - prev.4).max(0),
     );
-    let period_cost = estimate_token_cost(d_total, d_input, d_cached, d_output, d_reasoning);
-    // 重置时刻的"当前 used" = 感知到的新值（重置后回满）。
-    let window_total = estimate_window_total(start_remaining, Some(new_used), period_cost);
+    let period_cost = estimate_token_cost(d_input, d_cached, d_output, d_reasoning);
+    // 窗口总额按"旧窗口"的消耗百分点推算（重置前 used）。
+    let window_total = estimate_window_total(start_remaining, pre_reset_used, period_cost);
 
-    let _ = conn.execute(
+    conn.execute(
         "INSERT INTO account_window_snapshots (account_id, switched_at, plan_type, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, window_total_cost) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         params![account_id, timestamp, plan_type, total, input, cached, output, reasoning, window_total],
-    );
-    let _ = conn.execute(
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
         "UPDATE account_active_periods SET ended_at = ?1 WHERE account_id = ?2 AND ended_at IS NULL",
         params![timestamp, account_id],
-    );
-    let _ = conn.execute(
-        "INSERT INTO account_active_periods (account_id, started_at, start_used_percent, last_used_percent) VALUES (?1, ?2, ?3, ?3)",
-        params![account_id, timestamp, (100.0 - new_used).clamp(0.0, 100.0)],
-    );
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO account_active_periods (account_id, started_at, start_used_percent, last_used_percent, last_sensed_at) VALUES (?1, ?2, ?3, ?3, ?4)",
+        params![account_id, timestamp, (100.0 - new_used).clamp(0.0, 100.0), timestamp],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 用会话感知的额度快照更新账号的剩余额度：
@@ -3683,6 +3783,23 @@ fn update_account_usage_from_session(
     account_id: &str,
     rl: &RateLimitSnapshot,
 ) -> Result<(), String> {
+    // 时间顺序保护：会话按 read_dir 无序处理，事件时间不晚于时段内上次感知时间的
+    // 旧事件直接跳过（不应用额度、不触发重置、不倒退 syncedAt），
+    // 避免乱序回放（含 force_full 重放历史会话）造成假重置与显示倒退。
+    let last_sensed_at: Option<String> = tx
+        .query_row(
+            "SELECT last_sensed_at FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+            params![account_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten();
+    if let Some(last) = last_sensed_at {
+        if !last.is_empty() && rl.timestamp.as_str() <= last.as_str() {
+            return Ok(());
+        }
+    }
+
     let existing: Option<String> = tx
         .query_row(
             "SELECT usage_json FROM accounts WHERE id = ?1",
@@ -3708,6 +3825,7 @@ fn update_account_usage_from_session(
     });
 
     // 额度重置：used 下降超过容差（正常消耗只会上升，下降即窗口重置/回满）。
+    // 窗口总额按重置前 used（旧窗口消耗百分点）推算。
     if let Some(old) = old_used {
         if rl.used_percent < old - 0.5 {
             handle_usage_reset(
@@ -3716,15 +3834,17 @@ fn update_account_usage_from_session(
                 &rl.timestamp,
                 rl.plan_type.as_deref(),
                 rl.used_percent,
-            );
+                Some(old),
+            )?;
         }
     }
 
-    // 更新进行中时段的"最近感知 used"（重置后新段已由 handle_usage_reset 写入）。
-    let _ = tx.execute(
-        "UPDATE account_active_periods SET last_used_percent = ?1 WHERE account_id = ?2 AND ended_at IS NULL",
-        params![rl.used_percent, account_id],
-    );
+    // 更新进行中时段的"最近感知 used 与时间"（重置后新段已由 handle_usage_reset 写入）。
+    tx.execute(
+        "UPDATE account_active_periods SET last_used_percent = ?1, last_sensed_at = ?2 WHERE account_id = ?3 AND ended_at IS NULL",
+        params![rl.used_percent, rl.timestamp, account_id],
+    )
+    .map_err(|e| e.to_string())?;
 
     let mut usage = existing
         .and_then(|json| serde_json::from_str::<AccountUsage>(&json).ok())
@@ -3747,6 +3867,41 @@ fn update_account_usage_from_session(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 加载全部账号活跃时段（token 按账号归属用）。
+fn load_active_periods(db: &Connection) -> Vec<ActivePeriod> {
+    let Ok(mut stmt) = db.prepare(
+        "SELECT account_id, started_at, ended_at FROM account_active_periods ORDER BY started_at",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    }) else {
+        return Vec::new();
+    };
+    let mut periods = Vec::new();
+    for row in rows.flatten() {
+        let started_secs = DateTime::parse_from_rfc3339(&row.1)
+            .map(|time| time.timestamp())
+            .unwrap_or(0);
+        let ended_secs = row
+            .2
+            .as_deref()
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|time| time.timestamp());
+        periods.push(ActivePeriod {
+            account_id: row.0,
+            started_secs,
+            ended_secs,
+        });
+    }
+    periods
 }
 
 /// 查找包含指定时刻（Unix 秒）的账号活跃时段；无匹配返回 None。
@@ -3898,11 +4053,16 @@ fn extract_session_summary<S: AsRef<str>>(
                             // 记录最后一次的额度快照（随模型请求返回，无额外请求）。
                             if let Some(rl) = payload.and_then(|p| p.get("rate_limits")) {
                                 if let Some(primary) = rl.get("primary") {
+                                    // used_percent 缺失/非数字：不更新额度快照，
+                                    // 避免误当 0%（重置回满）触发假重置。
+                                    let Some(used_percent) = primary
+                                        .get("used_percent")
+                                        .and_then(Value::as_f64)
+                                    else {
+                                        continue;
+                                    };
                                     summary.rate_limit = Some(RateLimitSnapshot {
-                                        used_percent: primary
-                                            .get("used_percent")
-                                            .and_then(Value::as_f64)
-                                            .unwrap_or(0.0),
+                                        used_percent,
                                         window_minutes: primary
                                             .get("window_minutes")
                                             .and_then(Value::as_i64),
@@ -3988,41 +4148,10 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
 
         // 确保当前活跃账号有进行中时段（懒创建），本次同步解析的会话即可按账号归属。
         // 首次全量同步时段表为空 → 不产生账号数据；增量同步时段存在 → 归属自然生效。
-        ensure_active_account_period(&db);
+        ensure_active_account_period(&db).map_err(|e| e.to_string())?;
 
         // 账号活跃时段（token 按账号归属用）。
-        let mut periods: Vec<ActivePeriod> = Vec::new();
-        {
-            let mut stmt = db
-                .prepare(
-                    "SELECT account_id, started_at, ended_at FROM account_active_periods ORDER BY started_at",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                    ))
-                })
-                .map_err(|e| e.to_string())?;
-            for row in rows.flatten() {
-                let started_secs = DateTime::parse_from_rfc3339(&row.1)
-                    .map(|time| time.timestamp())
-                    .unwrap_or(0);
-                let ended_secs = row
-                    .2
-                    .as_deref()
-                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                    .map(|time| time.timestamp());
-                periods.push(ActivePeriod {
-                    account_id: row.0,
-                    started_secs,
-                    ended_secs,
-                });
-            }
-        }
+        let mut periods: Vec<ActivePeriod> = load_active_periods(&db);
 
         // 库里已有的文件 → (mtime, size)，未变化则跳过（增量同步的核心）。
         let mut existing: HashMap<String, (i64, i64)> = HashMap::new();
@@ -4053,6 +4182,8 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
                 drop(db);
                 thread::sleep(Duration::from_millis(10));
                 db = state.db.lock().map_err(|e| e.to_string())?;
+                // 释放锁期间可能发生了账号切换：重载时段，避免用过期归属。
+                periods = load_active_periods(&db);
                 tx = db.transaction().map_err(|e| e.to_string())?;
             }
 
@@ -4240,8 +4371,20 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
 
         // 重建项目聚合（计数、总 token、首末时间）：
         // 仅在有变更（新增/更新/删除）时执行 —— 0 变更的同步只做 stat 比对，零 DB 写入。
+        // 中断自愈：sessions 最新写入时间晚于聚合的同步时间（上次重建未完成）→ 强制重建。
+        let sessions_latest: Option<String> = tx
+            .query_row("SELECT MAX(synced_at) FROM sessions", [], |row| row.get(0))
+            .ok();
+        let projects_synced: Option<String> = tx
+            .query_row("SELECT MAX(synced_at) FROM session_projects", [], |row| row.get(0))
+            .ok();
+        let aggregate_stale = match (&sessions_latest, &projects_synced) {
+            (Some(a), Some(b)) => a > b,
+            (Some(_), None) => true,
+            _ => false,
+        };
         let mut projects = 0usize;
-        if imported + updated + removed > 0 {
+        if imported + updated + removed > 0 || aggregate_stale {
             tx.execute("DELETE FROM session_projects", [])
                 .map_err(|e| e.to_string())?;
             let mut stmt = tx
@@ -4842,9 +4985,10 @@ fn get_account_window_snapshots(
         .unwrap_or(0);
     if has_open == 0 {
         let now = Utc::now().to_rfc3339();
+        // 懒补段带起点剩余基线（与其它开段点一致），保证窗口总额可推算。
         let _ = db.execute(
-            "INSERT INTO account_active_periods (account_id, started_at) VALUES (?1, ?2)",
-            params![account_id, now],
+            "INSERT INTO account_active_periods (account_id, started_at, start_used_percent) VALUES (?1, ?2, ?3)",
+            params![account_id, now, cached_used_percent(&db, &account_id)],
         );
     }
     let active_started: Option<(String, Option<f64>)> = db
@@ -4934,7 +5078,11 @@ fn get_account_window_snapshots(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillInfo {
+    /// 展示名（frontmatter name，缺失时用目录名）。
     pub name: String,
+    /// 目录名（操作 key：详情/删除一律用目录名，避免 frontmatter 与目录不一致）。
+    #[serde(rename = "dirName")]
+    pub dir_name: String,
     pub description: String,
     #[serde(rename = "isSymlink")]
     pub is_symlink: bool,
@@ -4944,6 +5092,8 @@ pub struct SkillInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillDetail {
     pub name: String,
+    #[serde(rename = "dirName")]
+    pub dir_name: String,
     pub description: String,
     #[serde(rename = "isSymlink")]
     pub is_symlink: bool,
@@ -4952,6 +5102,15 @@ pub struct SkillDetail {
     pub file_count: usize,
     /// SKILL.md 全文。
     pub content: String,
+}
+
+/// Skill 目录名必须是单个目录段（无路径分隔符、无 `.`/`..`），防路径遍历。
+fn is_valid_skill_dir_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name != "."
+        && name != ".."
 }
 
 /// Codex 主要读取的 skills 目录。
@@ -4992,15 +5151,19 @@ fn read_skill_info(dir: &PathBuf) -> Option<SkillInfo> {
     let skill_md = dir.join("SKILL.md");
     let content = fs::read_to_string(&skill_md).ok()?;
     let (front_name, description) = parse_skill_frontmatter(&content);
+    let dir_name = dir
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if !is_valid_skill_dir_name(&dir_name) {
+        return None;
+    }
     let name = front_name
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| {
-            dir.file_name()
-                .map(|value| value.to_string_lossy().to_string())
-                .unwrap_or_default()
-        });
+        .unwrap_or_else(|| dir_name.clone());
     Some(SkillInfo {
         name,
+        dir_name,
         description: description.unwrap_or_default(),
         is_symlink: fs::symlink_metadata(dir).map(|meta| meta.file_type().is_symlink()).unwrap_or(false),
         path: dir.to_string_lossy().to_string(),
@@ -5035,6 +5198,9 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
 /// 读取单个 skill 的详情（SKILL.md 全文 + 目录内文件数）。
 #[tauri::command]
 fn get_skill_detail(name: String) -> Result<SkillDetail, String> {
+    if !is_valid_skill_dir_name(&name) {
+        return Err("Skill 名称无效".to_string());
+    }
     let dir = skills_dir()?.join(&name);
     if !dir.is_dir() {
         return Err(format!("Skill \"{name}\" 不存在"));
@@ -5045,6 +5211,7 @@ fn get_skill_detail(name: String) -> Result<SkillDetail, String> {
     let file_count = count_files(&dir);
     Ok(SkillDetail {
         name: info.name,
+        dir_name: info.dir_name,
         description: info.description,
         is_symlink: info.is_symlink,
         path: info.path,
@@ -5053,7 +5220,14 @@ fn get_skill_detail(name: String) -> Result<SkillDetail, String> {
     })
 }
 
-/// 递归统计目录内文件数量。
+/// 判断路径是否为"不跟随符号链接"的目录（软链 skill 顶层允许，递归内容不跟随）。
+fn is_dir_no_follow(path: &PathBuf) -> bool {
+    fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_dir())
+        .unwrap_or(false)
+}
+
+/// 递归统计目录内文件数量（不跟随符号链接，防止链接循环导致栈溢出）。
 fn count_files(dir: &PathBuf) -> usize {
     fn walk(dir: &PathBuf, count: &mut usize) {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -5061,7 +5235,14 @@ fn count_files(dir: &PathBuf) -> usize {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            // 符号链接一律跳过（不跟随、不计数），避免循环与误统计外部目录。
+            if fs::symlink_metadata(&path)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if is_dir_no_follow(&path) {
                 walk(&path, count);
             } else {
                 *count += 1;
@@ -5083,6 +5264,9 @@ fn add_skill_to(root: &PathBuf, source: &PathBuf) -> Result<SkillInfo, String> {
         .map(|value| value.to_string_lossy().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "无法识别源目录名称".to_string())?;
+    if !is_valid_skill_dir_name(&source_name) {
+        return Err("源目录名称无效".to_string());
+    }
     if !source.join("SKILL.md").is_file() {
         return Err("源目录缺少 SKILL.md，不是有效的 Skill".to_string());
     }
@@ -5094,14 +5278,20 @@ fn add_skill_to(root: &PathBuf, source: &PathBuf) -> Result<SkillInfo, String> {
     read_skill_info(&target).ok_or_else(|| "Skill 添加失败".to_string())
 }
 
-/// 递归复制目录。
+/// 递归复制目录（不跟随符号链接：跳过链接条目，防止循环与复制外部目录）。
 fn copy_dir_recursive(source: &PathBuf, target: &PathBuf) -> Result<(), String> {
     fs::create_dir_all(target).map_err(|e| e.to_string())?;
     let entries = fs::read_dir(source).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
         let from = entry.path();
         let to = target.join(entry.file_name());
-        if from.is_dir() {
+        if fs::symlink_metadata(&from)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            continue; // 跳过符号链接
+        }
+        if is_dir_no_follow(&from) {
             copy_dir_recursive(&from, &to)?;
         } else {
             fs::copy(&from, &to).map_err(|e| e.to_string())?;
@@ -5112,6 +5302,9 @@ fn copy_dir_recursive(source: &PathBuf, target: &PathBuf) -> Result<(), String> 
 
 /// 从 skills 根目录删除 skill（软链接只删除链接本身）。
 fn delete_skill_from(root: &PathBuf, name: &str) -> Result<(), String> {
+    if !is_valid_skill_dir_name(name) {
+        return Err("Skill 名称无效".to_string());
+    }
     let target = root.join(name);
     if !target.exists() {
         return Err(format!("Skill \"{name}\" 不存在"));
@@ -5959,7 +6152,16 @@ mod tests {
                 usage_updated_at TEXT,
                 next_refresh_at TEXT,
                 chatgpt_plan_type TEXT
-            )",
+            );
+            CREATE TABLE account_active_periods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                start_used_percent REAL,
+                last_used_percent REAL,
+                last_sensed_at TEXT
+            );",
         )
         .unwrap();
         // 已有 wham 缓存（含 secondary）+ 调度计划。
@@ -6021,7 +6223,8 @@ mod tests {
                 started_at TEXT NOT NULL,
                 ended_at TEXT,
                 start_used_percent REAL,
-                last_used_percent REAL
+                last_used_percent REAL,
+                last_sensed_at TEXT
             );
             CREATE TABLE account_token_usage (
                 account_id TEXT NOT NULL,
@@ -6133,7 +6336,8 @@ mod tests {
                 started_at TEXT NOT NULL,
                 ended_at TEXT,
                 start_used_percent REAL,
-                last_used_percent REAL
+                last_used_percent REAL,
+                last_sensed_at TEXT
              );",
         )
         .unwrap();
@@ -6179,7 +6383,8 @@ mod tests {
                 started_at TEXT NOT NULL,
                 ended_at TEXT,
                 start_used_percent REAL,
-                last_used_percent REAL
+                last_used_percent REAL,
+                last_sensed_at TEXT
              );
              CREATE TABLE account_token_usage (
                 account_id TEXT NOT NULL, date TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -6317,7 +6522,8 @@ mod tests {
                 started_at TEXT NOT NULL,
                 ended_at TEXT,
                 start_used_percent REAL,
-                last_used_percent REAL
+                last_used_percent REAL,
+                last_sensed_at TEXT
             )",
         )
         .unwrap();
@@ -6345,19 +6551,19 @@ mod tests {
 
         // 无段 → 补开一条。
         let active = ensure_active_account_period(&conn).unwrap();
-        assert_eq!(active, "acc-a");
+        assert_eq!(active.as_deref(), Some("acc-a"));
         let periods = open_periods(&conn);
         assert_eq!(periods.len(), 1);
         assert!(periods[0].1.is_none(), "补开的段应为进行中");
 
         // 再次调用 → 幂等，不再新增。
         let active = ensure_active_account_period(&conn).unwrap();
-        assert_eq!(active, "acc-a");
+        assert_eq!(active.as_deref(), Some("acc-a"));
         assert_eq!(open_periods(&conn).len(), 1);
 
         // 无活跃账号 → None，且不开段。
         conn.execute("UPDATE accounts SET is_active = 0", []).unwrap();
-        assert!(ensure_active_account_period(&conn).is_none());
+        assert!(ensure_active_account_period(&conn).unwrap().is_none());
         assert_eq!(open_periods(&conn).len(), 1, "无活跃账号时不应新增时段");
     }
 
@@ -6411,6 +6617,32 @@ mod tests {
         let periods = open_periods(&conn);
         assert_eq!(periods.len(), 1);
         assert!(periods[0].1.is_some(), "无活跃账号时应关闭进行中时段");
+    }
+
+    #[test]
+    fn estimate_pricing_matches_frontend_modelpricing() {
+        // 与前端 src/utils/modelPricing.ts 中 gpt-5.6-sol 的价格保持一致。
+        // 修改价格必须同步两处（此处断言锁定，防止单侧漂移）。
+        assert_eq!(ESTIMATE_INPUT_PER_1M, 5.0);
+        assert_eq!(ESTIMATE_CACHED_INPUT_PER_1M, 0.5);
+        assert_eq!(ESTIMATE_OUTPUT_PER_1M, 30.0);
+        // 金额估算：1M 非缓存输入 = $5；缓存输入按缓存价；输出/推理按输出价。
+        let cost = estimate_token_cost(1_000_000, 0, 0, 0);
+        assert!((cost - 5.0).abs() < 0.001);
+        let cost = estimate_token_cost(1_000_000, 1_000_000, 100_000, 50_000);
+        // 0 非缓存 + 1M 缓存($0.5) + 150K 输出($4.5) = $5.0
+        assert!((cost - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn is_valid_skill_dir_name_rejects_traversal() {
+        assert!(is_valid_skill_dir_name("my-skill"));
+        assert!(is_valid_skill_dir_name("a-b-c"));
+        assert!(!is_valid_skill_dir_name(".."));
+        assert!(!is_valid_skill_dir_name("."));
+        assert!(!is_valid_skill_dir_name("a/b"));
+        assert!(!is_valid_skill_dir_name("a\\b"));
+        assert!(!is_valid_skill_dir_name(""));
     }
 
     #[test]

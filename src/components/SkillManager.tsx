@@ -128,7 +128,7 @@ const SkillManager: React.FC = () => {
             {skills.map(skill => (
               <div
                 key={skill.name}
-                onClick={() => void openDetail(skill.name)}
+                onClick={() => void openDetail(skill.dirName)}
                 className="group relative bg-white rounded-xl border border-[#EAEAEA] hover:border-[#C8C8C8] hover:shadow-sm transition-all p-5 cursor-pointer"
               >
                 <div className="flex items-start justify-between gap-3 mb-2">
@@ -148,7 +148,7 @@ const SkillManager: React.FC = () => {
                   <button
                     onClick={e => {
                       e.stopPropagation();
-                      setDeleteName(skill.name);
+                      setDeleteName(skill.dirName);
                     }}
                     title="删除 Skill"
                     className="w-7 h-7 shrink-0 flex items-center justify-center rounded text-[#BBBBBB] opacity-0 group-hover:opacity-100 hover:bg-[#FFF0F0] hover:text-[#D32F2F] transition-all"
