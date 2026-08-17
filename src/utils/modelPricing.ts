@@ -54,3 +54,23 @@ export function formatCost(cost: number): string {
   if (cost >= 100) return `$${Math.round(cost)}`;
   return `$${cost.toFixed(2)}`;
 }
+
+/**
+ * 窗口快照的金额估算：快照无模型维度，按主流模型 gpt-5.6-sol 单价估算。
+ * 输入累计值已含缓存命中部分，非缓存部分按全价、缓存部分按缓存价，避免重复计费。
+ */
+export function calcSnapshotCost(snapshot: {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}): number {
+  const pricing = MODEL_PRICING['gpt-5.6-sol'];
+  const uncachedInput = Math.max(0, snapshot.inputTokens - snapshot.cachedInputTokens);
+  return (
+    (uncachedInput * pricing.inputPer1M +
+      snapshot.cachedInputTokens * pricing.cachedInputPer1M +
+      (snapshot.outputTokens + snapshot.reasoningTokens) * pricing.outputPer1M) /
+    1_000_000
+  );
+}

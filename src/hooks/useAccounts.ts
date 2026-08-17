@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Account, AccountStore, AccountFormData, OAuthLoginInfo, ResetCreditsInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
+import { Account, AccountStore, AccountFormData, AccountWindowSnapshot, OAuthLoginInfo, ResetCreditsInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
 
 export function useAccounts() {
   const [store, setStore] = useState<AccountStore>({ activeAccountId: null, accounts: [] });
@@ -102,7 +102,17 @@ export function useAccounts() {
     return await invoke<ResetCreditsInfo>('get_reset_credits', { id, force });
   };
 
-  const consumeResetCredit = async (id: string, creditId: string): Promise<ResetCreditsInfo> => {
+  const getAccountWindowSnapshots = useCallback(async (
+    id: string,
+    limit = 2,
+  ): Promise<AccountWindowSnapshot[]> => {
+    return await invoke<AccountWindowSnapshot[]>('get_account_window_snapshots', {
+      accountId: id,
+      limit,
+    });
+  }, []);
+
+  const consumeResetCredit = useCallback(async (id: string, creditId: string): Promise<ResetCreditsInfo> => {
     try {
       const info = await invoke<ResetCreditsInfo>('consume_reset_credit', { id, creditId });
       await loadAccounts(false);
@@ -111,7 +121,7 @@ export function useAccounts() {
       console.error('Failed to consume reset credit:', err);
       throw err;
     }
-  };
+  }, [loadAccounts]);
 
   const deleteAccount = async (id: string) => {
     try {
@@ -151,6 +161,7 @@ export function useAccounts() {
     setAccountAccessToken,
     getResetCredits,
     consumeResetCredit,
+    getAccountWindowSnapshots,
     refresh: loadAccounts
   };
 }

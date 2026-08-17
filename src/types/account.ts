@@ -85,3 +85,22 @@ export interface TestMessageResult {
   input: string;
   output: string;
 }
+
+/** 账号窗口额度（进行中的当前窗口实时计算，其余为切换快照，均按周期增量展示）。 */
+export interface AccountWindowSnapshot {
+  switchedAt: string;
+  planType: string | null;
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  /** 是否为进行中的当前窗口。 */
+  isActive: boolean;
+  /** 窗口起点 used_percent（进行中窗口为开段时的额度）。 */
+  startUsedPercent: number | null;
+  /** 保存的推算窗口总额（USD，历史快照；进行中窗口为 null 由前端实时推算）。 */
+  windowTotalCost: number | null;
+  /** 窗口开始时间（历史快照；进行中窗口为 null）。 */
+  windowStartAt: string | null;
+}

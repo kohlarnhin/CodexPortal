@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import PlanBadge from './PlanBadge';
-import { AccountUsage, AccountUsageWindow } from '../types/account';
+import { AccountUsage, AccountUsageWindow, AccountWindowSnapshot } from '../types/account';
+import { formatTokens } from '../utils/format';
+import { formatDateTime } from '../utils/time';
+import { calcSnapshotCost, formatCost } from '../utils/modelPricing';
 import {
   formatNextRefreshAt,
   formatUsageResetAt,
@@ -64,6 +67,26 @@ const LinearProgress = ({
   );
 };
 
+/** 窗口总额估算：消耗金额 ÷ 窗口内消耗的剩余百分点 × 100。
+ *  口径为"剩余量"：起点剩余 37% → 当前剩余 29%，差值 8% 即该窗口的消耗。
+ *  起点额度缺失或差值过小时不推算。 */
+const WindowEstimate: React.FC<{
+  snapshot: AccountWindowSnapshot;
+  usagePercent: number;
+}> = ({ snapshot, usagePercent }) => {
+  if (snapshot.startUsedPercent === null || snapshot.startUsedPercent === undefined) return null;
+  // 当前剩余量 = 100 − 已用百分比（接口 usedPercent 为已用量）。
+  const currentRemaining = 100 - usagePercent;
+  const consumed = snapshot.startUsedPercent - currentRemaining;
+  if (consumed <= 0.5) return null;
+  const windowTotal = (calcSnapshotCost(snapshot) * 100) / consumed;
+  return (
+    <span className="block text-[10px] text-[#999999]" title={`起点剩余 ${snapshot.startUsedPercent.toFixed(0)}% → 当前剩余 ${currentRemaining.toFixed(0)}%`}>
+      窗口总额 ≈ {formatCost(windowTotal)}
+    </span>
+  );
+};
+
 const ActiveAccount: React.FC<ActiveAccountProps> = ({
   isEmailMaskingEnabled,
   onNavigateToAccounts,
@@ -71,14 +94,44 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, refresh } = useAccounts();
+  const { accounts, activeAccountId, isLoading, refresh, getAccountWindowSnapshots } = useAccounts();
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [snapshots, setSnapshots] = useState<AccountWindowSnapshot[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
 
   useEffect(() => {
     if (usageRevision > 0) {
       void refresh(false);
     }
   }, [refresh, usageRevision]);
+
+  // 加载当前账号最近 3 个窗口额度快照，并每 1 分钟自动静默刷新（进行中窗口实时累计）。
+  useEffect(() => {
+    if (!activeAccountId) {
+      setSnapshots([]);
+      return;
+    }
+    let cancelled = false;
+    const loadSnapshots = (showLoading: boolean) => {
+      if (showLoading) setSnapshotsLoading(true);
+      getAccountWindowSnapshots(activeAccountId, 2)
+        .then(data => {
+          if (!cancelled) setSnapshots(data);
+        })
+        .catch(() => {
+          if (!cancelled) setSnapshots([]);
+        })
+        .finally(() => {
+          if (!cancelled && showLoading) setSnapshotsLoading(false);
+        });
+    };
+    loadSnapshots(true);
+    const timer = window.setInterval(() => loadSnapshots(false), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeAccountId, getAccountWindowSnapshots]);
 
   useEffect(() => {
     setUsageError(null);
@@ -232,6 +285,77 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                 </div>
               </div>
             )}
+
+            {/* 最近窗口额度（进行中的当前窗口实时计算 + 历史切换快照，最多 3 个） */}
+            <div className="mt-6 pt-6 border-t border-[#EAEAEA]">
+              <div className="mb-3 flex items-center justify-between gap-4">
+                <label className="block text-[13px] font-semibold uppercase tracking-wider text-black">
+                  最近窗口额度
+                </label>
+                <span className="text-[10px] text-[#999999]">按使用周期估算 · 金额按 API 标准价估算</span>
+              </div>
+              {snapshotsLoading ? (
+                <div className="h-10 rounded-lg bg-[#F7F7F7] animate-pulse" />
+              ) : snapshots.length === 0 ? (
+                <div className="flex h-10 items-center justify-center rounded-lg border border-dashed border-[#D8D8D8] bg-[#FAFAFA] text-[12px] text-[#999999]">
+                  -
+                </div>
+              ) : (
+                <div className="flex flex-col overflow-hidden rounded-xl border border-[#EAEAEA]">
+                  {snapshots.map((snapshot, index) => (
+                    <div
+                      key={index}
+                      className={`flex items-center gap-4 px-4 py-2.5 ${index > 0 ? 'border-t border-[#F0F0F0]' : ''}`}
+                    >
+                      <div className="w-32 shrink-0">
+                        {snapshot.isActive ? (
+                          <div className="flex items-center gap-1.5 text-[12px] font-semibold text-black">
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            </span>
+                            使用中
+                          </div>
+                        ) : (
+                          <span className="block font-mono text-[12px] text-[#666666]">
+                            {snapshot.windowStartAt ? formatDateTime(snapshot.windowStartAt) : '—'}
+                          </span>
+                        )}
+                        <span className="block truncate text-[10px] text-[#AAAAAA]">
+                          {snapshot.isActive
+                            ? `自 ${formatDateTime(snapshot.switchedAt)}`
+                            : `→ ${formatDateTime(snapshot.switchedAt)}`}
+                        </span>
+                      </div>
+                      <span className="shrink-0 rounded-full border border-[#EAEAEA] bg-[#F5F5F5] px-2 py-0.5 text-[10px] font-medium text-[#666666]">
+                        {snapshot.planType || '未知'}
+                      </span>
+                      <span className="flex-1 truncate text-[12px] text-[#888888]">
+                        消耗 {formatTokens(snapshot.totalTokens)} tokens
+                        {snapshot.isActive && activeAccount.usage?.primary && (
+                          <span className="text-[#999999]">
+                            {' '}· 剩余 {Math.round(getRemainingPercent(activeAccount.usage.primary))}%
+                          </span>
+                        )}
+                      </span>
+                      <div className="shrink-0 text-right">
+                        <span className="block text-[12px] font-bold text-black">
+                          {formatCost(calcSnapshotCost(snapshot))}
+                        </span>
+                        {snapshot.isActive && activeAccount.usage?.primary && (
+                          <WindowEstimate snapshot={snapshot} usagePercent={activeAccount.usage.primary.usedPercent} />
+                        )}
+                        {!snapshot.isActive && snapshot.windowTotalCost !== null && snapshot.windowTotalCost !== undefined && (
+                          <span className="block text-[10px] text-[#999999]">
+                            窗口总额 ≈ {formatCost(snapshot.windowTotalCost)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

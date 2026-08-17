@@ -215,6 +215,8 @@ const AccountList: React.FC<AccountListProps> = ({
                 onSetActive={async (id) => {
                   try {
                     await setActiveAccount(id);
+                    // 切换成功后自动刷新新账号的额度（窗口起点额度也随之入库）。
+                    void handleRefreshUsage(id);
                   } catch (err: any) {
                     alert(`切换失败: ${err.message || err.toString()}`);
                   }
