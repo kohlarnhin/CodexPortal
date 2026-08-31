@@ -289,7 +289,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
         {unsupportedFormat ? (
           <div className="p-8 text-center">
-            <p className="text-[14px] text-[#555555] mb-5">该账号为 Refresh Token / 自定义认证，当前暂不支持直接编辑。<br/>可删除后重新添加。</p>
+            <p className="text-[14px] text-[#555555] mb-5">该账号为 OAuth / Refresh Token 登录的账号，无法直接编辑。<br/>可删除后重新添加。</p>
             <button
               onClick={onClose}
               className="px-4 py-1.5 text-[12px] font-medium text-white bg-black rounded hover:bg-[#333333] transition-colors"
@@ -315,12 +315,12 @@ const AccountModal: React.FC<AccountModalProps> = ({
                 />
                 {isRt && (
                   <p className="text-[11px] text-[#999999] mt-1.5">
-                    适用于非 Team 账号。Refresh Token 一次性使用，兑换后旧 rt 失效。
+                    Refresh Token 一次性使用，兑换后旧 rt 失效；Team 账号同样支持。
                   </p>
                 )}
                 {isOauth && (
                   <p className="text-[11px] text-[#999999] mt-1.5">
-                    生成 Codex 登录链接，浏览器登录后自动回跳本机完成认证。
+                    支持个人与 Team 账号。生成 Codex 登录链接，浏览器登录后自动回跳本机完成认证。
                   </p>
                 )}
               </div>

@@ -831,8 +831,9 @@ fn normalize_usage_window(window: UsageApiWindow) -> AccountUsageWindow {
 }
 
 /// 解析账号额度请求用的 bearer、账号 ID、FedRAMP 与是否允许 whoami：
-/// - rt 账号（有 refresh_token）：用 at + 存库 account_id（跳过 whoami，whoami 拒绝 at）；
-/// - PAT 账号：用 PAT，account_id 运行时经 whoami 获取。
+/// - 优先 Personal Access Token（PAT）：team 等账号的 auth.json 可同时持有 pat/rt/at，
+///   有 PAT 一律用 PAT（account_id 运行时经 whoami 获取）；
+/// - 无 PAT（OAuth / rt 账号）：用 at + 存库 account_id（跳过 whoami，whoami 拒绝 at）。
 fn account_usage_context(
     auth_json_content: &str,
     access_token: Option<&str>,
@@ -840,6 +841,9 @@ fn account_usage_context(
     chatgpt_account_id: Option<&str>,
     chatgpt_account_is_fedramp: bool,
 ) -> (Option<String>, Option<String>, bool, bool) {
+    if let Some(pat) = extract_personal_access_token(auth_json_content) {
+        return (Some(pat), None, false, true);
+    }
     if access_token.is_some() && refresh_token.is_some() {
         return (
             access_token.map(str::to_string),
@@ -848,7 +852,7 @@ fn account_usage_context(
             false,
         );
     }
-    (extract_personal_access_token(auth_json_content), None, false, true)
+    (None, None, false, true)
 }
 
 fn fetch_account_usage(
@@ -1049,8 +1053,12 @@ async fn refresh_account_usage(
         fedramp,
     );
 
-    // rt 账号且 at 临近过期：先用 rt 兑换新 at（rt 一次性使用，保存新 rt）。
-    if refresh_token.is_some() && at_is_due(&at_expires_at) {
+    // 无 PAT 的 rt 账号且 at 临近过期：先用 rt 兑换新 at（rt 一次性使用，保存新 rt）。
+    // 有 PAT 的账号走 PAT，无需兑换，也不覆盖 bearer。
+    if extract_personal_access_token(&auth_json_content).is_none()
+        && refresh_token.is_some()
+        && at_is_due(&at_expires_at)
+    {
         if let Some(rt) = refresh_token {
             let info = tauri::async_runtime::spawn_blocking(move || exchange_rt_for_at(&rt))
                 .await
@@ -1233,7 +1241,10 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
             backfill_account_metadata(&*state);
         }
 
-        loop {
+        // 应用启动时刷新一次账号额度（逐个、隔 1 分钟）。
+        // 运行期间不再定时刷新：额度由会话感知更新（update_account_usage_from_session），
+        // 手动刷新/切换账号后刷新/重置卡后刷新不受影响。
+        'startup: loop {
             // 先刷新 at 临近过期的 rt 账号。
             {
                 let state = app.state::<AppState>();
@@ -1244,14 +1255,14 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
                 let state = app.state::<AppState>();
                 let Ok(db) = state.db.lock() else {
                     thread::sleep(Duration::from_secs(30));
-                    continue;
+                    break 'startup;
                 };
                 let now = Utc::now().to_rfc3339();
                 let Ok(mut stmt) = db.prepare(
                     "SELECT id, auth_json_content, access_token, refresh_token, chatgpt_account_id, chatgpt_account_is_fedramp, at_expires_at FROM accounts WHERE next_refresh_at IS NULL OR next_refresh_at <= ?1 ORDER BY created_at ASC",
                 ) else {
                     thread::sleep(Duration::from_secs(30));
-                    continue;
+                    break 'startup;
                 };
                 let Ok(rows) = stmt.query_map(params![now], |row| Ok((
                     row.get::<_, String>(0)?,
@@ -1263,7 +1274,7 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
                     row.get::<_, Option<String>>(6)?,
                 ))) else {
                     thread::sleep(Duration::from_secs(30));
-                    continue;
+                    break 'startup;
                 };
                 rows.flatten().collect()
             };
@@ -1286,7 +1297,7 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
                     },
                 );
 
-                // 账号类型感知：rt 账号用 at（临近过期先刷新），PAT 账号用 PAT + whoami。
+                // 账号类型感知：有 PAT 用 PAT + whoami；无 PAT（OAuth / rt 账号）用 at（临近过期先刷新）。
                 let (mut bearer, mut account_id, fedramp, needs_whoami) = account_usage_context(
                     &auth_json_content,
                     access_token.as_deref(),
@@ -1294,7 +1305,11 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
                     chatgpt_account_id.as_deref(),
                     fedramp,
                 );
-                if refresh_token.is_some() && at_is_due(&at_expires_at) {
+                // 无 PAT 的 rt 账号且 at 临近过期：先兑换新 at；有 PAT 的账号不覆盖 bearer。
+                if extract_personal_access_token(&auth_json_content).is_none()
+                    && refresh_token.is_some()
+                    && at_is_due(&at_expires_at)
+                {
                     if let Some(rt) = refresh_token {
                         match exchange_rt_for_at(&rt) {
                             Ok(info) => {
@@ -1369,33 +1384,14 @@ fn start_usage_scheduler(app: tauri::AppHandle) {
 
                 thread::sleep(Duration::from_secs(USAGE_REFRESH_BATCH_SLEEP_SECONDS));
             }
+            break 'startup;
+        }
 
-            // 睡到最早的未来刷新时间（精确触发），最多 5 分钟醒一次。
-            let sleep_secs = {
-                let state = app.state::<AppState>();
-                let now = Utc::now();
-                let earliest: Option<String> = match state.db.lock() {
-                    Ok(db) => db
-                        .query_row(
-                            "SELECT MIN(next_refresh_at) FROM accounts WHERE next_refresh_at IS NOT NULL",
-                            [],
-                            |row| row.get(0),
-                        )
-                        .unwrap_or(None),
-                    Err(_) => None,
-                };
-                match earliest {
-                    Some(ts) => match DateTime::parse_from_rfc3339(&ts) {
-                        Ok(next) if next.with_timezone(&Utc) > now => {
-                            let secs = (next.with_timezone(&Utc) - now).num_seconds();
-                            secs.clamp(1, USAGE_REFRESH_MAX_SLEEP_SECONDS as i64) as u64
-                        }
-                        _ => 30,
-                    },
-                    None => USAGE_REFRESH_MAX_SLEEP_SECONDS,
-                }
-            };
-            thread::sleep(Duration::from_secs(sleep_secs));
+        // 后台循环：仅维护 rt 账号的 at 续期，不再触发额度刷新。
+        loop {
+            let state = app.state::<AppState>();
+            refresh_due_access_tokens(&*state);
+            thread::sleep(Duration::from_secs(USAGE_REFRESH_MAX_SLEEP_SECONDS));
         }
     });
 }
@@ -1525,6 +1521,8 @@ fn extract_responses_output_from_body(body: &str) -> String {
 }
 
 /// 用账号调用 Codex 模型接口（chatgpt.com 后端 /responses）发送 "hello"，验证账号额度可用性。
+/// 所有账号类型均支持：有 PAT 用 PAT（account_id 经 whoami 获取）；
+/// 无 PAT（OAuth / rt 账号）用 at + 存库 account_id，at 临近过期先兑换。
 #[tauri::command]
 async fn send_test_message(
     app: tauri::AppHandle,
@@ -1532,18 +1530,55 @@ async fn send_test_message(
     id: String,
     model: String,
 ) -> Result<TestMessageResult, String> {
-    let token = {
+    let (auth_json_content, access_token, refresh_token, chatgpt_account_id, fedramp, at_expires_at) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        let auth_json_content = db
-            .query_row(
-                "SELECT auth_json_content FROM accounts WHERE id = ?1",
-                params![id],
-                |row| row.get::<_, String>(0),
-            )
-            .map_err(|_| "Account not found".to_string())?;
-        extract_personal_access_token(&auth_json_content)
-            .ok_or_else(|| "仅 Personal Access Token 账号支持额度测试".to_string())?
+        db.query_row(
+            "SELECT auth_json_content, access_token, refresh_token, chatgpt_account_id, chatgpt_account_is_fedramp, at_expires_at FROM accounts WHERE id = ?1",
+            params![id],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i32>(4)? == 1,
+                row.get::<_, Option<String>>(5)?,
+            )),
+        )
+        .map_err(|_| "Account not found".to_string())?
     };
+
+    // PAT 优先，其次 at；无 PAT 的 rt 账号且 at 临近过期：先用 rt 兑换新 at。
+    let (mut bearer, mut account_id, mut fedramp, needs_whoami) = account_usage_context(
+        &auth_json_content,
+        access_token.as_deref(),
+        refresh_token.as_deref(),
+        chatgpt_account_id.as_deref(),
+        fedramp,
+    );
+    if extract_personal_access_token(&auth_json_content).is_none()
+        && refresh_token.is_some()
+        && at_is_due(&at_expires_at)
+    {
+        if let Some(rt) = refresh_token {
+            let info = tauri::async_runtime::spawn_blocking(move || exchange_rt_for_at(&rt))
+                .await
+                .map_err(|e| format!("刷新 Access Token 任务失败：{e}"))??;
+            let new_expiry =
+                DateTime::from_timestamp(info.at_expires_at, 0).map(|time| time.to_rfc3339());
+            {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let _ = db.execute(
+                    "UPDATE accounts SET access_token = ?1, refresh_token = ?2, at_expires_at = ?3, reset_credits_json = NULL WHERE id = ?4",
+                    params![info.access_token, info.refresh_token, new_expiry, id],
+                );
+            }
+            bearer = Some(info.access_token);
+            account_id = info.chatgpt_account_id;
+            fedramp = false;
+        }
+    }
+
+    let bearer = bearer.ok_or_else(|| "该账号暂无可用认证，无法测试额度".to_string())?;
 
     // 按 Codex 后端要求：input 为带 type 的消息列表、store 必须为 false、streaming 必须为 true。
     let request_body = serde_json::json!({
@@ -1563,20 +1598,31 @@ async fn send_test_message(
     .to_string();
 
     let output = tauri::async_runtime::spawn_blocking(move || {
-        let metadata = curl_get_json::<PersonalAccessTokenMetadata>(
-            PERSONAL_ACCESS_TOKEN_METADATA_URL,
-            &token,
-            None,
-            false,
-        )
-        .map_err(|error| format!("Token 校验失败：{error}"))?;
+        // PAT 账号运行时经 whoami 获取 account_id / fedramp；at 账号用存库值。
+        let (account_id, fedramp) = if let Some(id) = account_id {
+            (Some(id), fedramp)
+        } else if needs_whoami {
+            let metadata = curl_get_json::<PersonalAccessTokenMetadata>(
+                PERSONAL_ACCESS_TOKEN_METADATA_URL,
+                &bearer,
+                None,
+                false,
+            )
+            .map_err(|error| format!("Token 校验失败：{error}"))?;
+            (
+                Some(metadata.chatgpt_account_id),
+                metadata.chatgpt_account_is_fedramp,
+            )
+        } else {
+            (None, fedramp)
+        };
         curl_post_stream(
             &app,
             CODEX_RESPONSES_URL,
-            &token,
-            &metadata.chatgpt_account_id,
+            &bearer,
+            account_id.as_deref().unwrap_or(""),
             &id,
-            metadata.chatgpt_account_is_fedramp,
+            fedramp,
             &request_body,
         )
     })
@@ -2115,11 +2161,14 @@ async fn check_oauth_callback(state: State<'_, AppState>) -> Result<Option<RtTok
     };
 
     let info = tauri::async_runtime::spawn_blocking(move || {
-        exchange_oauth_code(
+        let mut info = exchange_oauth_code(
             &code,
             &redirect_uri.unwrap_or_default(),
             &verifier.unwrap_or_default(),
-        )
+        )?;
+        // Team 等账号的 JWT 可能不带订阅类型：尽力从额度接口补全，徽标立即显示。
+        backfill_plan_from_usage(&mut info);
+        Ok::<RtTokenInfo, String>(info)
     })
     .await
     .map_err(|e| format!("OAuth 兑换任务失败：{e}"))??;
@@ -2152,7 +2201,14 @@ async fn complete_oauth_login(
     }
 
     let info = tauri::async_runtime::spawn_blocking(move || {
-        exchange_oauth_code(&code, &redirect_uri.unwrap_or_default(), &verifier.unwrap_or_default())
+        let mut info = exchange_oauth_code(
+            &code,
+            &redirect_uri.unwrap_or_default(),
+            &verifier.unwrap_or_default(),
+        )?;
+        // Team 等账号的 JWT 可能不带订阅类型：尽力从额度接口补全，徽标立即显示。
+        backfill_plan_from_usage(&mut info);
+        Ok::<RtTokenInfo, String>(info)
     })
     .await
     .map_err(|e| format!("OAuth 兑换任务失败：{e}"))??;
@@ -2211,6 +2267,20 @@ async fn validate_personal_token(token: String) -> Result<TokenInfo, String> {
     })
 }
 
+/// at 的 JWT 里可能没有订阅类型（如部分 Team 账号），尽力从额度接口（只读）补全。
+fn backfill_plan_from_usage(info: &mut RtTokenInfo) {
+    if info.chatgpt_plan_type.is_some() {
+        return;
+    }
+    let at = info.access_token.clone();
+    let account_id = info.chatgpt_account_id.clone();
+    if let Ok(usage) = fetch_account_usage(&at, account_id.as_deref(), false, false) {
+        if let Some(plan) = usage.plan_type {
+            info.chatgpt_plan_type = Some(plan);
+        }
+    }
+}
+
 /// 用 Refresh Token（rt）兑换 access_token（at）并解码账号信息。
 /// 输入可为 JSON（自动提取 refresh_token）或原始 rt；rt 一次性使用，兑换后返回新的 rt。
 #[tauri::command]
@@ -2218,17 +2288,7 @@ async fn exchange_refresh_token(input: String) -> Result<RtTokenInfo, String> {
     let rt = extract_refresh_token(&input)?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut info = exchange_rt_for_at(&rt)?;
-        // at 的 JWT 里可能没有订阅类型，尽力从额度接口（只读）补全。
-        if let Ok(usage) = fetch_account_usage(
-            &info.access_token,
-            info.chatgpt_account_id.as_deref(),
-            false,
-            false,
-        ) {
-            if let Some(plan) = usage.plan_type {
-                info.chatgpt_plan_type = Some(plan);
-            }
-        }
+        backfill_plan_from_usage(&mut info);
         Ok::<RtTokenInfo, String>(info)
     })
     .await
@@ -3218,8 +3278,22 @@ fn macos_cli_search_path() -> Option<std::ffi::OsString> {
             home_dir.join(".asdf/shims"),
             home_dir.join(".local/share/mise/shims"),
             home_dir.join(".bun/bin"),
+            home_dir.join(".cargo/bin"),
+            home_dir.join(".local/share/pnpm/bin"),
         ] {
             add_existing_cli_path(&mut paths, path);
+        }
+
+        // nvm 安装的 node 全局 bin（~/.nvm/versions/node/<version>/bin），
+        // `npm i -g @openai/codex` 的常见落点。
+        if let Ok(entries) =
+            std::fs::read_dir(home_dir.join(".nvm").join("versions").join("node"))
+        {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    add_existing_cli_path(&mut paths, entry.path().join("bin"));
+                }
+            }
         }
     }
 
@@ -3235,6 +3309,26 @@ fn macos_cli_search_path() -> Option<std::ffi::OsString> {
     std::env::join_paths(paths).ok()
 }
 
+/// macOS 上桌面应用捆绑的 Codex CLI 绝对路径候选（含用户级 ~/Applications 安装）。
+#[cfg(target_os = "macos")]
+fn codex_executable_candidates() -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        for base in [PathBuf::from("/Applications"), home.join("Applications")] {
+            for app in ["ChatGPT.app", "Codex.app"] {
+                candidates.push(base.join(app).join("Contents").join("Resources").join("codex"));
+            }
+        }
+    }
+    candidates
+}
+
+#[cfg(not(target_os = "macos"))]
+fn codex_executable_candidates() -> Vec<PathBuf> {
+    // 其他平台：GUI 进程继承完整用户 PATH，走 PATH 查找即可。
+    Vec::new()
+}
+
 fn codex_command() -> Command {
     let mut command = Command::new("codex");
 
@@ -3246,25 +3340,35 @@ fn codex_command() -> Command {
     command
 }
 
-/// 读取本机 Codex CLI 版本号（失败返回 None）。
-/// `codex --version` 输出形如 "codex-cli 0.147.0"，这里只提取版本号。
-fn local_codex_version() -> Option<String> {
-    let output = codex_command().arg("--version").output().ok()?;
-    if output.status.success() {
-        let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if raw.is_empty() {
-            None
-        } else {
-            Some(
-                raw.split_whitespace()
-                    .last()
-                    .map(str::to_string)
-                    .unwrap_or(raw),
-            )
-        }
-    } else {
-        None
+/// 执行 `codex --version` 并提取版本号（失败返回 None）。
+/// 输出形如 "codex-cli 0.147.0"，取最后一个非空字段；stdout 为空时回退 stderr
+/// （部分桌面版捆绑的 CLI 把版本输出到 stderr）。
+fn run_codex_version(mut command: Command) -> Option<String> {
+    let output = command.arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
     }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let raw = if raw.is_empty() {
+        String::from_utf8_lossy(&output.stderr).trim().to_string()
+    } else {
+        raw
+    };
+    if raw.is_empty() {
+        return None;
+    }
+    Some(raw.split_whitespace().last().map(str::to_string).unwrap_or(raw))
+}
+
+/// 读取本机 Codex CLI 版本号（失败返回 None）。
+/// 优先探测桌面应用捆绑的绝对路径（不依赖 PATH），其次在扩展 PATH 中查找 `codex`。
+fn local_codex_version() -> Option<String> {
+    for executable in codex_executable_candidates() {
+        if let Some(version) = run_codex_version(Command::new(executable)) {
+            return Some(version);
+        }
+    }
+    run_codex_version(codex_command())
 }
 
 fn get_config_value(db: &Connection, key: &str) -> Option<String> {
@@ -3303,13 +3407,25 @@ fn sync_codex_version(state: &AppState) {
     }
 }
 
-/// 返回 Codex CLI 版本号：从数据库读取（启动时自动获取并保存），不实时执行。
+/// 返回 Codex CLI 版本号：每次实时检测一次本机（覆盖启动后新装的 CLI），
+/// 检测失败时回退到数据库缓存的版本（启动时获取）。
 #[tauri::command]
 fn get_codex_version(state: State<'_, AppState>) -> Result<String, String> {
+    if let Some(version) = local_codex_version() {
+        let trimmed = version.trim().to_string();
+        let _ = CODEX_VERSION.set(trimmed.clone());
+        if let Ok(db) = state.db.lock() {
+            set_config_value(&db, "codex_version", &trimmed);
+        }
+        return Ok(trimmed);
+    }
     let db = state.db.lock().map_err(|e| e.to_string())?;
     match get_config_value(&db, "codex_version") {
         Some(version) if !version.trim().is_empty() => Ok(version.trim().to_string()),
-        _ => Err("尚未获取到 Codex 版本（应用启动时会自动检测）".to_string()),
+        _ => Err(
+            "未检测到 Codex CLI：请确认已安装 codex（brew / npm / cargo，或 ChatGPT 桌面版内置），重新打开此页面即可重试"
+                .to_string(),
+        ),
     }
 }
 
@@ -3608,14 +3724,28 @@ struct ActivePeriod {
 }
 
 /// 会话感知到的额度快照（token_count 事件随模型请求顺带返回的 rate_limits）。
+/// 短周期（primary，通常 5 小时）字段平铺；长周期（secondary，周限/月限）整体带出，
+/// 事件里为 null（如老版本只有单一窗口）时为 None。
 #[derive(Debug, Clone, Default)]
 struct RateLimitSnapshot {
     used_percent: f64,
     window_minutes: Option<i64>,
     resets_at: Option<i64>,
+    /// 长周期窗口（周限/月限），供额度展示同步；窗口额度统计仍只看 primary。
+    secondary: Option<AccountUsageWindow>,
     plan_type: Option<String>,
     /// 事件时间戳（用于归属账号时段）。
     timestamp: String,
+}
+
+/// 解析 token_count 事件 rate_limits 里的单个窗口。
+/// used_percent 缺失/非数字（含窗口为 null）时返回 None，避免误当 0%（重置回满）。
+fn parse_session_rate_limit_window(window: &Value) -> Option<AccountUsageWindow> {
+    Some(AccountUsageWindow {
+        used_percent: window.get("used_percent").and_then(Value::as_f64)?,
+        window_minutes: window.get("window_minutes").and_then(Value::as_i64),
+        resets_at: window.get("resets_at").and_then(Value::as_i64),
+    })
 }
 
 /// 从会话全文行中解析出的摘要：标题、消息数、模型名与 token 消耗。
@@ -3773,16 +3903,18 @@ fn handle_usage_reset(
 }
 
 /// 用会话感知的额度快照更新账号的剩余额度：
-/// - 合并现有 usage_json（保留 secondary 等字段），只更新 primary 与同步时间；
+/// - 合并现有 usage_json：更新 primary 与 secondary（事件缺 secondary 时保留旧值）及同步时间；
 /// - 会话感知到订阅类型时顺带补全 chatgpt_plan_type；
 /// - **不修改 next_refresh_at**，1 小时自动刷新调度完全不受影响；
-/// - **额度重置检测**：新 used 比旧记录小（剩余变多，如窗口重置回满）→
+/// - **额度重置检测**：只看短周期 primary —— 新 used 比旧记录小（剩余变多，如窗口重置回满）→
 ///   结束当前进行中时段，并从重置时刻开一条新时段（新窗口的起点剩余量）。
+/// 用会话感知的额度更新账号。返回是否实际写入（时间保护跳过旧事件时为 false），
+/// 供同步结束后通知前端刷新对应账号的额度展示。
 fn update_account_usage_from_session(
     tx: &rusqlite::Transaction<'_>,
     account_id: &str,
     rl: &RateLimitSnapshot,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     // 时间顺序保护：会话按 read_dir 无序处理，事件时间不晚于时段内上次感知时间的
     // 旧事件直接跳过（不应用额度、不触发重置、不倒退 syncedAt），
     // 避免乱序回放（含 force_full 重放历史会话）造成假重置与显示倒退。
@@ -3796,7 +3928,7 @@ fn update_account_usage_from_session(
         .flatten();
     if let Some(last) = last_sensed_at {
         if !last.is_empty() && rl.timestamp.as_str() <= last.as_str() {
-            return Ok(());
+            return Ok(false);
         }
     }
 
@@ -3859,6 +3991,11 @@ fn update_account_usage_from_session(
         window_minutes: rl.window_minutes,
         resets_at: rl.resets_at,
     });
+    // 长周期窗口（周限/月限）：事件带 secondary 时一并更新，否则保留既有缓存。
+    // 只更新 primary 会让周额度停在上次手动/启动刷新的旧值，而 syncedAt 却在前进。
+    if let Some(secondary) = rl.secondary.clone() {
+        usage.secondary = Some(secondary);
+    }
     usage.synced_at = rl.timestamp.clone();
     let json = serde_json::to_string(&usage).map_err(|e| e.to_string())?;
     tx.execute(
@@ -3866,7 +4003,7 @@ fn update_account_usage_from_session(
         params![json, rl.timestamp, rl.plan_type, account_id],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(true)
 }
 
 /// 加载全部账号活跃时段（token 按账号归属用）。
@@ -4055,18 +4192,20 @@ fn extract_session_summary<S: AsRef<str>>(
                                 if let Some(primary) = rl.get("primary") {
                                     // used_percent 缺失/非数字：不更新额度快照，
                                     // 避免误当 0%（重置回满）触发假重置。
-                                    let Some(used_percent) = primary
-                                        .get("used_percent")
-                                        .and_then(Value::as_f64)
+                                    let Some(primary_window) =
+                                        parse_session_rate_limit_window(primary)
                                     else {
                                         continue;
                                     };
                                     summary.rate_limit = Some(RateLimitSnapshot {
-                                        used_percent,
-                                        window_minutes: primary
-                                            .get("window_minutes")
-                                            .and_then(Value::as_i64),
-                                        resets_at: primary.get("resets_at").and_then(Value::as_i64),
+                                        used_percent: primary_window.used_percent,
+                                        window_minutes: primary_window.window_minutes,
+                                        resets_at: primary_window.resets_at,
+                                        // 长周期窗口（周限/月限）：事件里为 null 时保持 None，
+                                        // 由后续合并逻辑保留既有缓存。
+                                        secondary: rl
+                                            .get("secondary")
+                                            .and_then(parse_session_rate_limit_window),
                                         plan_type: rl
                                             .get("plan_type")
                                             .and_then(Value::as_str)
@@ -4141,6 +4280,8 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
         let mut updated = 0usize;
         let mut skipped = 0usize;
         let mut failed = 0usize;
+        // 本次同步中额度被会话感知实际更新的账号（结束后通知前端刷新展示）。
+        let mut usage_updated_accounts: HashSet<String> = HashSet::new();
         let now = Utc::now().to_rfc3339();
 
         let state = app.state::<AppState>();
@@ -4246,8 +4387,12 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
                         DateTime::parse_from_rfc3339(&rl.timestamp).map(|t| t.timestamp())
                     {
                         if let Some(account_id) = active_period_account(&periods, ts_secs) {
-                            update_account_usage_from_session(&tx, &account_id, rl)
-                                .map_err(|e| e.to_string())?;
+                            if update_account_usage_from_session(&tx, &account_id, rl)
+                                .map_err(|e| e.to_string())?
+                            {
+                                // 实际写入了额度：同步结束后通知前端刷新该账号展示。
+                                usage_updated_accounts.insert(account_id);
+                            }
                         }
                     }
                 }
@@ -4441,6 +4586,16 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
             "INSERT INTO configs (key, content) VALUES ('sessions_schema_version', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
             params![SESSIONS_SCHEMA_VERSION],
         );
+
+        // 额度被会话感知更新的账号 → 通知前端刷新展示（复用额度刷新事件）。
+        for account_id in &usage_updated_accounts {
+            let _ = app.emit(
+                "usage-updated",
+                AccountRefreshEvent {
+                    account_id: account_id.clone(),
+                },
+            );
+        }
 
         Ok::<SessionSyncResult, String>(SessionSyncResult {
             total,
@@ -6142,6 +6297,74 @@ mod tests {
         assert!(parsed.rate_limit.is_none());
     }
 
+    /// 现网格式：primary = 5 小时窗口，secondary = 周限窗口（老版本 secondary 为 null）。
+    fn token_count_line_with_dual_rate_limit(
+        ts: &str,
+        primary_used: f64,
+        secondary_used: Option<f64>,
+    ) -> String {
+        serde_json::json!({
+            "timestamp": ts,
+            "ordinal": 20,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 1000,
+                        "cached_input_tokens": 500,
+                        "output_tokens": 100,
+                        "reasoning_output_tokens": 50,
+                        "total_tokens": 1150
+                    }
+                },
+                "rate_limits": {
+                    "limit_id": "codex",
+                    "primary": {
+                        "used_percent": primary_used,
+                        "window_minutes": 300,
+                        "resets_at": 1787726223
+                    },
+                    "secondary": secondary_used.map(|used| serde_json::json!({
+                        "used_percent": used,
+                        "window_minutes": 10080,
+                        "resets_at": 1788313023
+                    })),
+                    "plan_type": "team"
+                }
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn extract_rate_limit_takes_secondary_window() {
+        let lines = vec![
+            meta_line("/tmp/p"),
+            token_count_line_with_dual_rate_limit("2026-08-26T05:36:06Z", 4.0, Some(15.0)),
+        ];
+        let parsed = extract_session_summary(&lines, &[]);
+        let rl = parsed.rate_limit.expect("应提取到额度快照");
+        assert_eq!(rl.used_percent, 4.0);
+        assert_eq!(rl.window_minutes, Some(300));
+        let secondary = rl.secondary.expect("应提取到周限窗口");
+        assert_eq!(secondary.used_percent, 15.0);
+        assert_eq!(secondary.window_minutes, Some(10080));
+        assert_eq!(secondary.resets_at, Some(1788313023));
+    }
+
+    #[test]
+    fn extract_rate_limit_secondary_null_is_none() {
+        let lines = vec![
+            meta_line("/tmp/p"),
+            token_count_line_with_dual_rate_limit("2026-08-26T05:36:06Z", 4.0, None),
+        ];
+        let parsed = extract_session_summary(&lines, &[]);
+        let rl = parsed.rate_limit.expect("应提取到额度快照");
+        assert_eq!(rl.used_percent, 4.0);
+        assert!(rl.secondary.is_none());
+    }
+
     #[test]
     fn session_usage_update_merges_and_keeps_schedule() {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -6181,6 +6404,7 @@ mod tests {
             used_percent: 71.0,
             window_minutes: Some(10080),
             resets_at: Some(1787134079),
+            secondary: None,
             plan_type: Some("team".to_string()),
             timestamp: "2026-08-14T03:20:00Z".to_string(),
         };
@@ -6205,6 +6429,73 @@ mod tests {
         assert_eq!(next_refresh.as_deref(), Some("2026-08-13T11:00:00Z"));
         // 订阅类型顺带补全。
         assert_eq!(plan.as_deref(), Some("team"));
+    }
+
+    #[test]
+    fn session_usage_update_writes_secondary_window() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                usage_json TEXT,
+                usage_updated_at TEXT,
+                chatgpt_plan_type TEXT
+            );
+            CREATE TABLE account_active_periods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                start_used_percent REAL,
+                last_used_percent REAL,
+                last_sensed_at TEXT
+            );",
+        )
+        .unwrap();
+        // 旧缓存里的周限是启动刷新时的陈旧值。
+        let existing = serde_json::json!({
+            "primary": { "usedPercent": 20.0, "windowMinutes": 300, "resetsAt": 1787726223 },
+            "secondary": { "usedPercent": 3.0, "windowMinutes": 10080, "resetsAt": 1788313023 },
+            "syncedAt": "2026-08-26T01:00:00Z"
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, usage_json, usage_updated_at) VALUES ('acc-a', ?1, '2026-08-26T01:00:00Z')",
+            params![existing],
+        )
+        .unwrap();
+
+        let rl = RateLimitSnapshot {
+            used_percent: 94.0,
+            window_minutes: Some(300),
+            resets_at: Some(1787726207),
+            secondary: Some(AccountUsageWindow {
+                used_percent: 15.0,
+                window_minutes: Some(10_080),
+                resets_at: Some(1788313007),
+            }),
+            plan_type: Some("team".to_string()),
+            timestamp: "2026-08-26T03:45:48Z".to_string(),
+        };
+        let tx = conn.transaction().unwrap();
+        update_account_usage_from_session(&tx, "acc-a", &rl).unwrap();
+        tx.commit().unwrap();
+
+        let json: String = conn
+            .query_row(
+                "SELECT usage_json FROM accounts WHERE id = 'acc-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let usage: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(usage["primary"]["usedPercent"], 94.0);
+        assert_eq!(usage["primary"]["windowMinutes"], 300);
+        // 周限随会话同步一起更新（此前会停留在 3.0）。
+        assert_eq!(usage["secondary"]["usedPercent"], 15.0);
+        assert_eq!(usage["secondary"]["windowMinutes"], 10080);
+        assert_eq!(usage["secondary"]["resetsAt"], 1788313007i64);
+        assert_eq!(usage["syncedAt"], "2026-08-26T03:45:48Z");
     }
 
     #[test]
@@ -6278,6 +6569,7 @@ mod tests {
             used_percent: 5.0,
             window_minutes: Some(10080),
             resets_at: Some(1787200000),
+            secondary: None,
             plan_type: Some("team".to_string()),
             timestamp: "2026-08-14T04:00:00Z".to_string(),
         };
@@ -6357,6 +6649,7 @@ mod tests {
             used_percent: 5.0,
             window_minutes: Some(10080),
             resets_at: None,
+            secondary: None,
             plan_type: None,
             timestamp: "2026-08-14T04:00:00Z".to_string(),
         };
@@ -6416,6 +6709,7 @@ mod tests {
             used_percent: 0.0,
             window_minutes: Some(10080),
             resets_at: Some(1787200000),
+            secondary: None,
             plan_type: Some("team".to_string()),
             timestamp: "2026-08-17T01:37:00Z".to_string(),
         };

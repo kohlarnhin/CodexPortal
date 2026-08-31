@@ -3,7 +3,6 @@ import { Account, AccountUsageWindow } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import PlanBadge from './PlanBadge';
 import {
-  formatNextRefreshAt,
   formatUsageResetAt,
   formatUsageSyncedAt,
   formatUsageWindowLabel,
@@ -110,7 +109,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
               <button
                 onClick={() => onTest(account)}
                 disabled={!account.canRefreshUsage}
-                title={account.canRefreshUsage ? '测试额度（调用模型接口）' : '仅 Personal Access Token 账号支持额度测试'}
+                title={account.canRefreshUsage ? '测试额度（调用模型接口）' : '该账号暂无可用认证，无法测试额度'}
                 aria-label="测试额度"
                 className="w-7 h-7 flex items-center justify-center rounded text-[#888888] hover:bg-[#F5F5F5] hover:text-black transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
               >
@@ -119,7 +118,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
               <button
                 onClick={() => onRefreshUsage(account.id)}
                 disabled={!account.canRefreshUsage || isUsageRefreshing}
-                title={account.canRefreshUsage ? '刷新额度' : '仅 Personal Access Token 账号支持额度刷新'}
+                title={account.canRefreshUsage ? '刷新额度' : '该账号暂无可用认证，无法刷新额度'}
                 aria-label="刷新额度"
                 className="w-7 h-7 flex items-center justify-center rounded text-[#888888] hover:bg-[#F5F5F5] hover:text-black transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
               >
@@ -186,12 +185,12 @@ const AccountCard: React.FC<AccountCardProps> = ({
               </div>
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold text-[#555555]">
-                  {account.canRefreshUsage ? '尚未同步额度' : '暂不支持额度同步'}
+                  {account.canRefreshUsage ? '尚未同步额度' : '暂无可用认证，无法同步额度'}
                 </p>
                 <p className="mt-0.5 truncate text-[10px] text-[#999999]">
                   {account.canRefreshUsage
                     ? '点击刷新按钮获取最新额度'
-                    : '仅 Personal Access Token 账号支持'}
+                    : '请为该账号配置 PAT 或完成 OAuth 登录'}
                 </p>
               </div>
             </div>
@@ -217,11 +216,6 @@ const AccountCard: React.FC<AccountCardProps> = ({
                 ? formatUsageSyncedAt(account.usage.syncedAt)
                 : `账号更新于 ${new Date(account.updatedAt).toLocaleDateString()}`}
             </span>
-            {account.usage && (
-              <span className="rounded-full border border-[#EAEAEA] bg-[#FAFAFA] px-2 py-0.5 text-[10px] font-medium text-[#666666]">
-                {formatNextRefreshAt(account.nextRefreshAt, account.usage)}
-              </span>
-            )}
           </div>
         </div>
       </div>

@@ -4,6 +4,9 @@ import { listen } from '@tauri-apps/api/event';
 import { Account, AccountUsage, TestMessageResult } from '../types/account';
 import { useConfig } from '../hooks/useConfig';
 
+/** Free 账号自动使用的测试模型（免费档不可用配置里的 model，额度测试自动切换）。 */
+const FREE_PLAN_TEST_MODEL = 'gpt-5.6-terra';
+
 interface TestAccountModalProps {
   account: Account;
   onClose: () => void;
@@ -21,8 +24,11 @@ export default function TestAccountModal({
   const [isSending, setIsSending] = useState(false);
   const [streamedText, setStreamedText] = useState('');
 
-  const model = config?.model?.trim() || '';
-  const canSend = !isConfigLoading && !configError && !!model && !isSending;
+  // Free 账号自动切换为免费测试模型；其他账号用配置里的 model。
+  const isFreePlan = (account.chatgptPlanType || '').toLowerCase() === 'free';
+  const configuredModel = config?.model?.trim() || '';
+  const model = isFreePlan ? FREE_PLAN_TEST_MODEL : configuredModel;
+  const canSend = !isSending && (isFreePlan || (!isConfigLoading && !configError && !!configuredModel));
 
   // 监听后端流式推送的文本增量，实时追加显示
   useEffect(() => {
@@ -106,11 +112,13 @@ export default function TestAccountModal({
             <div className="flex items-center gap-3">
               <span className="w-20 shrink-0 text-[12px] font-medium text-[#888888]">模型</span>
               <span className="min-w-0 flex-1 font-mono text-[13px] font-medium text-black break-all select-text">
-                {isConfigLoading
-                  ? '读取模型配置中...'
-                  : configError
-                    ? '配置读取失败'
-                    : result?.model || model || '未配置'}
+                {isFreePlan
+                  ? result?.model || model
+                  : isConfigLoading
+                    ? '读取模型配置中...'
+                    : configError
+                      ? '配置读取失败'
+                      : result?.model || model || '未配置'}
               </span>
             </div>
 
@@ -153,7 +161,10 @@ export default function TestAccountModal({
 
             <div className="flex items-center gap-2 rounded-lg border border-[#EAEAEA] bg-[#F9F9F9] px-3.5 py-2.5 text-[11px] text-[#777777]">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-              本次测试会消耗该账号额度，发送成功后已自动刷新额度。
+              <span>
+                本次测试会消耗该账号额度，发送成功后已自动刷新额度。
+                {isFreePlan && ` Free 账号自动使用 ${FREE_PLAN_TEST_MODEL} 进行测试。`}
+              </span>
             </div>
           </div>
         </div>

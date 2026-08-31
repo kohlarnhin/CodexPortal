@@ -7,7 +7,6 @@ import { formatTokens } from '../utils/format';
 import { formatDateTime } from '../utils/time';
 import { calcSnapshotCost, formatCost } from '../utils/modelPricing';
 import {
-  formatNextRefreshAt,
   formatUsageResetAt,
   formatUsageSyncedAt,
   formatUsageWindowLabel,
@@ -183,16 +182,18 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   };
 
   return (
-    <div className="max-w-4xl mx-auto w-full pt-4 h-full flex flex-col">
-      <div className="mb-8 shrink-0">
+    // 整页不滚动：卡片按可用高度收缩，只有「最近窗口额度」列表在装不下时内部滚动。
+    // 这样底部边框始终可见，窗口高度/备注长度/快照条数变化都不会出现整页滚动条。
+    <div className="max-w-4xl mx-auto w-full h-full min-h-0 flex flex-col pt-4 pb-1">
+      <div className="mb-6 shrink-0">
         <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">当前账号</h2>
         <p className="text-[14px] text-[#666666]">当前正在生效的 Codex 认证配置。</p>
       </div>
 
-      <div className="bg-white border border-[#EAEAEA] rounded-2xl overflow-hidden shadow-sm relative shrink-0">
-        <div className="p-8">
-          <div className="flex items-center gap-5 mb-10">
-            <div className="w-16 h-16 shrink-0 bg-[#F9F9F9] rounded-full flex items-center justify-center border border-[#EAEAEA]">
+      <div className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white shadow-sm">
+        <div className="flex min-h-0 flex-col p-6">
+          <div className="flex shrink-0 items-center gap-5 mb-6">
+            <div className="w-14 h-14 shrink-0 bg-[#F9F9F9] rounded-full flex items-center justify-center border border-[#EAEAEA]">
               <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#111111" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             </div>
             <div className="min-w-0 flex-1">
@@ -203,20 +204,16 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                 <span className="shrink-0 px-2 py-1 bg-black text-white text-[10px] font-bold rounded-md uppercase tracking-wider">Active</span>
                 <PlanBadge planType={activeAccount.chatgptPlanType} />
               </div>
-              <p className="text-[14px] text-[#666666]">{activeAccount.notes || '无备注信息'}</p>
+              <p className="truncate text-[14px] text-[#666666]">{activeAccount.notes || '无备注信息'}</p>
             </div>
           </div>
 
-          <div className="pt-2">
-            <div className="mb-6 flex items-center justify-between gap-4">
+          <div className="flex min-h-0 flex-col">
+            <div className="mb-4 flex shrink-0 items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <label className="block text-[13px] font-semibold uppercase tracking-wider text-black">
                   最新额度
                 </label>
-                <span className="flex items-center gap-1 rounded-full border border-[#EAEAEA] bg-[#F7F7F7] px-2.5 py-0.5 text-[10px] font-medium text-[#777777]">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                  {formatNextRefreshAt(activeAccount.nextRefreshAt, activeAccount.usage)}
-                </span>
               </div>
               <div className="flex items-center gap-3">
                 {activeAccount.usage && (
@@ -228,7 +225,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                   type="button"
                   onClick={() => void handleRefreshUsage()}
                   disabled={!activeAccount.canRefreshUsage || usageRefreshing}
-                  title={activeAccount.canRefreshUsage ? '立即刷新额度' : '仅 Personal Access Token 账号支持额度刷新'}
+                  title={activeAccount.canRefreshUsage ? '立即刷新额度' : '该账号暂无可用认证，无法刷新额度'}
                   className="flex h-8 items-center gap-1.5 rounded-md border border-[#E0E0E0] bg-white px-3 text-[11px] font-medium text-[#555555] shadow-sm transition-all hover:border-[#C8C8C8] hover:text-black disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <svg
@@ -252,20 +249,20 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
             </div>
 
             {usageError && (
-              <div className="mb-4 flex items-center gap-2 rounded-lg border border-[#FFD0D0] bg-[#FFF5F5] px-3.5 py-2.5 text-[11px] text-[#C62828]">
+              <div className="mb-4 flex shrink-0 items-center gap-2 rounded-lg border border-[#FFD0D0] bg-[#FFF5F5] px-3.5 py-2.5 text-[11px] text-[#C62828]">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
                 <span className="break-all">{usageError}</span>
               </div>
             )}
 
             {usageWindows.length > 0 ? (
-              <div className="flex flex-col gap-6 rounded-xl border border-[#EAEAEA] bg-white p-6 shadow-sm">
+              <div className="flex shrink-0 flex-col gap-5 rounded-xl border border-[#EAEAEA] bg-white p-5 shadow-sm">
                 {usageWindows.map(({ window, kind }) => (
                   <LinearProgress key={kind} window={window} kind={kind} />
                 ))}
               </div>
             ) : (
-              <div className="flex min-h-[126px] items-center justify-center rounded-xl border border-dashed border-[#D8D8D8] bg-[#FAFAFA] px-6 text-center">
+              <div className="flex min-h-[126px] shrink-0 items-center justify-center rounded-xl border border-dashed border-[#D8D8D8] bg-[#FAFAFA] px-6 text-center">
                 <div>
                   <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-[#EAEAEA] bg-white text-[#777777] shadow-sm">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 4-7"/></svg>
@@ -275,37 +272,37 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                       ? activeAccount.usage
                         ? '接口暂未返回额度窗口'
                         : '尚未同步额度'
-                      : '当前认证格式暂不支持额度同步'}
+                      : '暂无可用认证，无法同步额度'}
                   </p>
                   <p className="mt-1 text-[11px] text-[#999999]">
                     {activeAccount.canRefreshUsage
                       ? '系统会自动更新，也可以点击右上角立即刷新'
-                      : '请使用 Personal Access Token 账号获取额度'}
+                      : '请为该账号配置 PAT 或完成 OAuth 登录'}
                   </p>
                 </div>
               </div>
             )}
 
             {/* 最近窗口额度（进行中的当前窗口实时计算 + 历史切换快照，最多 3 个） */}
-            <div className="mt-6 pt-6 border-t border-[#EAEAEA]">
-              <div className="mb-3 flex items-center justify-between gap-4">
+            <div className="mt-5 flex min-h-0 flex-col border-t border-[#EAEAEA] pt-5">
+              <div className="mb-3 flex shrink-0 items-center justify-between gap-4">
                 <label className="block text-[13px] font-semibold uppercase tracking-wider text-black">
                   最近窗口额度
                 </label>
                 <span className="text-[10px] text-[#999999]">按使用周期估算 · 金额按 API 标准价估算</span>
               </div>
               {snapshotsLoading ? (
-                <div className="h-10 rounded-lg bg-[#F7F7F7] animate-pulse" />
+                <div className="h-10 shrink-0 rounded-lg bg-[#F7F7F7] animate-pulse" />
               ) : snapshots.length === 0 ? (
-                <div className="flex h-10 items-center justify-center rounded-lg border border-dashed border-[#D8D8D8] bg-[#FAFAFA] text-[12px] text-[#999999]">
+                <div className="flex h-10 shrink-0 items-center justify-center rounded-lg border border-dashed border-[#D8D8D8] bg-[#FAFAFA] text-[12px] text-[#999999]">
                   -
                 </div>
               ) : (
-                <div className="flex flex-col overflow-hidden rounded-xl border border-[#EAEAEA]">
+                <div className="flex min-h-0 flex-col overflow-y-auto rounded-xl border border-[#EAEAEA]">
                   {snapshots.map((snapshot, index) => (
                     <div
                       key={index}
-                      className={`flex items-center gap-4 px-4 py-2.5 ${index > 0 ? 'border-t border-[#F0F0F0]' : ''}`}
+                      className={`flex shrink-0 items-center gap-4 px-4 py-2 ${index > 0 ? 'border-t border-[#F0F0F0]' : ''}`}
                     >
                       <div className="w-32 shrink-0">
                         {snapshot.isActive ? (

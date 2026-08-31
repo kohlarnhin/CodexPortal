@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 export default function CodexInfo() {
@@ -6,36 +6,48 @@ export default function CodexInfo() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchInfo = async () => {
-      try {
-        setIsLoading(true);
-        // Invoke the Rust command
-        const v = await invoke<string>('get_codex_version');
-        
-        // Clean up the output if it contains warnings
-        const lines = v.split('\n');
-        const cleanLines = lines.filter(line => !line.startsWith('WARNING:'));
-        
-        setVersionInfo(cleanLines.join('\n').trim() || v);
-      } catch (err: any) {
-        console.error('Failed to get codex version', err);
-        setError(err.toString());
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    fetchInfo();
+  const fetchInfo = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      // 后端每次实时检测：覆盖应用启动后才安装/更新 codex 的情况
+      const v = await invoke<string>('get_codex_version');
+
+      // Clean up the output if it contains warnings
+      const lines = v.split('\n');
+      const cleanLines = lines.filter(line => !line.startsWith('WARNING:'));
+
+      setVersionInfo(cleanLines.join('\n').trim() || v);
+    } catch (err: any) {
+      console.error('Failed to get codex version', err);
+      setError(err.toString());
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void fetchInfo();
+  }, [fetchInfo]);
 
   return (
     <div className="max-w-4xl mx-auto w-full pt-4 pb-12 flex flex-col h-full">
       <div className="flex items-center justify-between mb-8 shrink-0">
         <div>
           <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">Codex 信息</h2>
-          <p className="text-[13px] text-[#666666]">查看应用启动时检测并保存的 Codex 引擎版本。</p>
+          <p className="text-[13px] text-[#666666]">实时检测本机的 Codex 引擎版本（覆盖独立安装与桌面版内置）。</p>
         </div>
+        <button
+          type="button"
+          onClick={() => void fetchInfo()}
+          disabled={isLoading}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-medium text-white bg-black rounded-md hover:bg-[#333333] transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+        >
+          {isLoading && (
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          )}
+          {isLoading ? '检测中...' : '重新检测'}
+        </button>
       </div>
 
       <div className="flex-1">
