@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import PlanBadge from './PlanBadge';
@@ -104,13 +105,14 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
     }
   }, [refresh, usageRevision]);
 
-  // 加载当前账号最近 3 个窗口额度快照，并每 1 分钟自动静默刷新（进行中窗口实时累计）。
+  // 加载当前账号最近的真实额度窗口；仅在 Session 同步或现有额度刷新后读取本地统计。
   useEffect(() => {
     if (!activeAccountId) {
       setSnapshots([]);
       return;
     }
     let cancelled = false;
+    let unlisten: (() => void) | undefined;
     const loadSnapshots = (showLoading: boolean) => {
       if (showLoading) setSnapshotsLoading(true);
       getAccountWindowSnapshots(activeAccountId, 2)
@@ -122,15 +124,21 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
         })
         .finally(() => {
           if (!cancelled && showLoading) setSnapshotsLoading(false);
-        });
+      });
     };
     loadSnapshots(true);
-    const timer = window.setInterval(() => loadSnapshots(false), 60_000);
+    void listen('session-sync-completed', () => loadSnapshots(false)).then((resolved) => {
+      if (cancelled) {
+        resolved();
+      } else {
+        unlisten = resolved;
+      }
+    });
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      unlisten?.();
     };
-  }, [activeAccountId, getAccountWindowSnapshots]);
+  }, [activeAccountId, getAccountWindowSnapshots, usageRevision]);
 
   useEffect(() => {
     setUsageError(null);
@@ -283,13 +291,13 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               </div>
             )}
 
-            {/* 最近窗口额度（进行中的当前窗口实时计算 + 历史切换快照，最多 3 个） */}
+            {/* 最近窗口额度（resetsAt 定义窗口，Session token_count 累计本机消耗） */}
             <div className="mt-5 flex min-h-0 flex-col border-t border-[#EAEAEA] pt-5">
               <div className="mb-3 flex shrink-0 items-center justify-between gap-4">
                 <label className="block text-[13px] font-semibold uppercase tracking-wider text-black">
                   最近窗口额度
                 </label>
-                <span className="text-[10px] text-[#999999]">按使用周期估算 · 金额按 API 标准价估算</span>
+                <span className="text-[10px] text-[#999999]">本机 Session 统计 · 金额按 API 标准价估算</span>
               </div>
               {snapshotsLoading ? (
                 <div className="h-10 shrink-0 rounded-lg bg-[#F7F7F7] animate-pulse" />
@@ -321,7 +329,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                         <span className="block truncate text-[10px] text-[#AAAAAA]">
                           {snapshot.isActive
                             ? `自 ${formatDateTime(snapshot.switchedAt)}`
-                            : `→ ${formatDateTime(snapshot.switchedAt)}`}
+                            : `→ ${formatDateTime(snapshot.windowEndAt || snapshot.switchedAt)}`}
                         </span>
                       </div>
                       <span className="shrink-0 rounded-full border border-[#EAEAEA] bg-[#F5F5F5] px-2 py-0.5 text-[10px] font-medium text-[#666666]">

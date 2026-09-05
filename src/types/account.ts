@@ -86,8 +86,9 @@ export interface TestMessageResult {
   output: string;
 }
 
-/** 账号窗口额度（进行中的当前窗口实时计算，其余为切换快照，均按周期增量展示）。 */
+/** 账号真实短周期窗口：额度响应确定 resetsAt，Session 事件累计本机 Token。 */
 export interface AccountWindowSnapshot {
+  /** 兼容字段；新数据中等于窗口开始时间。 */
   switchedAt: string;
   planType: string | null;
   totalTokens: number;
@@ -97,10 +98,12 @@ export interface AccountWindowSnapshot {
   reasoningTokens: number;
   /** 是否为进行中的当前窗口。 */
   isActive: boolean;
-  /** 窗口起点 used_percent（进行中窗口为开段时的额度）。 */
+  /** 首次观测时的剩余额度百分比。 */
   startUsedPercent: number | null;
-  /** 保存的推算窗口总额（USD，历史快照；进行中窗口为 null 由前端实时推算）。 */
+  /** 历史窗口推算总额（USD）；进行中窗口由前端实时推算。 */
   windowTotalCost: number | null;
-  /** 窗口开始时间（历史快照；进行中窗口为 null）。 */
+  /** 根据 resetsAt - windowMinutes 得到的窗口开始时间。 */
   windowStartAt: string | null;
+  /** 额度响应中的 resetsAt。 */
+  windowEndAt: string | null;
 }

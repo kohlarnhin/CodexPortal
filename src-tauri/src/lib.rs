@@ -292,7 +292,58 @@ impl AppState {
             [],
         )?;
 
-        // 切换账号时的窗口额度快照（切换时间、订阅类型、该账号累计消耗 token、推算的窗口总额）。
+        // 账号短周期额度窗口：额度接口和 session 自带的 rate_limits 都只负责提供窗口锚点。
+        // resets_at 是同一账号下的稳定窗口标识；账号切换不会结束或拆分窗口。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS account_quota_windows (
+                account_id TEXT NOT NULL,
+                resets_at INTEGER NOT NULL,
+                window_minutes INTEGER,
+                first_observed_at TEXT NOT NULL,
+                first_observed_at_secs INTEGER NOT NULL,
+                last_observed_at TEXT NOT NULL,
+                last_observed_at_secs INTEGER NOT NULL,
+                first_used_percent REAL NOT NULL,
+                last_used_percent REAL NOT NULL,
+                plan_type TEXT,
+                PRIMARY KEY (account_id, resets_at)
+            )",
+            [],
+        )?;
+
+        // Session token 事件账本：一条 token_count 对应一条不可变增量记录。
+        // (session_id, event_index) 保证重复扫描幂等；窗口为空的旧事件会在获得额度锚点后补归属。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS account_token_events (
+                session_id TEXT NOT NULL,
+                event_index INTEGER NOT NULL,
+                account_id TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                occurred_at_secs INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                window_resets_at INTEGER,
+                window_minutes INTEGER,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, event_index)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_token_events_window
+             ON account_token_events (account_id, window_resets_at)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_token_events_unassigned
+             ON account_token_events (account_id, occurred_at_secs)",
+            [],
+        )?;
+
+        // 旧版切换快照，仅供升级期间兼容读取；新数据统一写入真实窗口与 token 事件表。
         conn.execute(
             "CREATE TABLE IF NOT EXISTS account_window_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -374,6 +425,43 @@ impl AppState {
             )",
             [],
         )?;
+
+        // 升级迁移：把账号表里已有的额度缓存作为窗口锚点复用，不发起任何网络请求。
+        let cached_windows: Vec<(String, String, String, Option<String>)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, usage_json, COALESCE(usage_updated_at, ''), chatgpt_plan_type
+                 FROM accounts WHERE usage_json IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?;
+            rows.flatten().collect()
+        };
+        for (account_id, usage_json, observed_at, plan_type) in cached_windows {
+            let Some(usage) = serde_json::from_str::<AccountUsage>(&usage_json).ok() else {
+                continue;
+            };
+            let Some(primary) = usage.primary.as_ref() else {
+                continue;
+            };
+            let observed_at = if observed_at.is_empty() {
+                usage.synced_at.as_str()
+            } else {
+                observed_at.as_str()
+            };
+            let _ = record_account_quota_window(
+                conn,
+                &account_id,
+                primary,
+                observed_at,
+                plan_type.as_deref(),
+            );
+        }
         Ok(())
     }
 }
@@ -994,12 +1082,21 @@ fn persist_account_usage(
     let rows_affected = db
         .execute(
             "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?3, plan_type = ?4, chatgpt_plan_type = ?5 WHERE id = ?6",
-            params![usage_json, usage.synced_at, next_refresh_at, plan_type, chatgpt_plan_type, account_id],
+            params![usage_json, usage.synced_at, next_refresh_at, plan_type, chatgpt_plan_type.as_deref(), account_id],
         )
         .map_err(|e| e.to_string())?;
 
     if rows_affected == 0 {
         return Err("Account not found".to_string());
+    }
+    if let Some(primary) = usage.primary.as_ref() {
+        record_account_quota_window(
+            db,
+            account_id,
+            primary,
+            &usage.synced_at,
+            chatgpt_plan_type.as_deref(),
+        )?;
     }
     Ok(())
 }
@@ -2863,7 +2960,8 @@ fn set_active_account(state: State<'_, AppState>, id: String) -> Result<(), Stri
         )
         .map_err(|_| "Account not found".to_string())?;
 
-    // 记录账号活跃时段：关闭旧账号的进行中时段 + 记切换快照 + 开启新账号时段。
+    // 记录账号活跃时段：只负责 token 的账号归属。
+    // 额度窗口由 resets_at 标识，账号切换不会结束或拆分窗口。
     let now = Utc::now().to_rfc3339();
     let previous_id: Option<String> = tx
         .query_row(
@@ -2875,73 +2973,14 @@ fn set_active_account(state: State<'_, AppState>, id: String) -> Result<(), Stri
         .map_err(|e| e.to_string())?;
 
     if let Some(previous_id) = previous_id {
-        // 被关闭时段的起点剩余（窗口总额推算用，需在关段前读取）。
-        let start_remaining: Option<f64> = tx
-            .query_row(
-                "SELECT start_used_percent FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
-                params![previous_id],
-                |row| row.get::<_, Option<f64>>(0),
-            )
-            .ok()
-            .flatten();
         tx.execute(
             "UPDATE account_active_periods SET ended_at = ?1 WHERE account_id = ?2 AND ended_at IS NULL",
             params![now, previous_id],
         )
         .map_err(|e| e.to_string())?;
-
-        // 切换快照：旧账号自记录以来的累计消耗（供窗口额度估算）。
-        let plan_type: Option<String> = tx
-            .query_row(
-                "SELECT chatgpt_plan_type FROM accounts WHERE id = ?1",
-                params![previous_id],
-                |row| row.get(0),
-            )
-            .ok();
-        let (total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens) = tx
-            .query_row(
-                "SELECT COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(cached_input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(reasoning_tokens), 0) FROM account_token_usage WHERE account_id = ?1",
-                params![previous_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
-            )
-            .unwrap_or((0, 0, 0, 0, 0));
-
-        // 周期增量 = 当前累计 − 上一条快照累计；窗口总额 = 周期金额 × 100 ÷ 消耗百分点。
-        let prev: (i64, i64, i64, i64, i64) = tx
-            .query_row(
-                "SELECT COALESCE(MAX(total_tokens), 0), COALESCE(MAX(input_tokens), 0), COALESCE(MAX(cached_input_tokens), 0), COALESCE(MAX(output_tokens), 0), COALESCE(MAX(reasoning_tokens), 0) FROM account_window_snapshots WHERE account_id = ?1",
-                params![previous_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
-            )
-            .unwrap_or((0, 0, 0, 0, 0));
-        let (_d_total, d_input, d_cached, d_output, d_reasoning) = (
-            (total_tokens - prev.0).max(0),
-            (input_tokens - prev.1).max(0),
-            (cached_input_tokens - prev.2).max(0),
-            (output_tokens - prev.3).max(0),
-            (reasoning_tokens - prev.4).max(0),
-        );
-        let period_cost =
-            estimate_token_cost(d_input, d_cached, d_output, d_reasoning);
-        // 切换时刻的当前 used：账号缓存的 usedPercent。
-        let current_used: Option<f64> = tx
-            .query_row(
-                "SELECT json_extract(usage_json, '$.primary.usedPercent') FROM accounts WHERE id = ?1",
-                params![previous_id],
-                |row| row.get::<_, Option<f64>>(0),
-            )
-            .ok()
-            .flatten();
-        let window_total = estimate_window_total(start_remaining, current_used, period_cost);
-
-        tx.execute(
-            "INSERT INTO account_window_snapshots (account_id, switched_at, plan_type, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, window_total_cost) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![previous_id, now, plan_type, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, window_total],
-        )
-        .map_err(|e| e.to_string())?;
     }
 
-    // 新账号窗口起点额度：切换时刻缓存的最新 used_percent（切换成功后前端会刷新）。
+    // 新账号时段保留切换时刻的剩余额度，仅供旧版快照迁移期间兼容展示。
     tx.execute(
         "INSERT INTO account_active_periods (account_id, started_at, start_used_percent) VALUES (?1, ?2, ?3)",
         params![id, now, cached_used_percent(&tx, &id)],
@@ -3005,64 +3044,9 @@ fn ensure_active_account_period(conn: &Connection) -> Result<Option<String>, Str
 }
 
 /// 应用启动时整理账号活跃时段：
-/// - 上次进行中的时段与当前活跃账号相同 → 直接续接（不关闭，时间段保持连续，
-///   app 重启前后的消耗归属到同一条时段）；
-/// - 不同或无进行中时段 → 关闭旧段并给当前账号开新段（关闭时段内的消耗归未知）。
-/// 为关闭的进行中时段记录窗口快照（累计 + 推算窗口总额），避免窗口边界丢失。
-/// 供启动整理时段关闭段时调用（与切换/重置走同一套推算）。
-fn record_period_close_snapshot(conn: &Connection, account_id: &str, timestamp: &str) {
-    let start_remaining: Option<f64> = conn
-        .query_row(
-            "SELECT start_used_percent FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
-            params![account_id],
-            |row| row.get::<_, Option<f64>>(0),
-        )
-        .ok()
-        .flatten();
-    let current_used: Option<f64> = conn
-        .query_row(
-            "SELECT json_extract(usage_json, '$.primary.usedPercent') FROM accounts WHERE id = ?1",
-            params![account_id],
-            |row| row.get::<_, Option<f64>>(0),
-        )
-        .ok()
-        .flatten();
-    let plan_type: Option<String> = conn
-        .query_row(
-            "SELECT chatgpt_plan_type FROM accounts WHERE id = ?1",
-            params![account_id],
-            |row| row.get(0),
-        )
-        .ok();
-    let (total, input, cached, output, reasoning) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(cached_input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(reasoning_tokens), 0) FROM account_token_usage WHERE account_id = ?1",
-            params![account_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
-        )
-        .unwrap_or((0, 0, 0, 0, 0));
-    let prev: (i64, i64, i64, i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(MAX(total_tokens), 0), COALESCE(MAX(input_tokens), 0), COALESCE(MAX(cached_input_tokens), 0), COALESCE(MAX(output_tokens), 0), COALESCE(MAX(reasoning_tokens), 0) FROM account_window_snapshots WHERE account_id = ?1",
-            params![account_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
-        )
-        .unwrap_or((0, 0, 0, 0, 0));
-    let (_d_total, d_input, d_cached, d_output, d_reasoning) = (
-        (total - prev.0).max(0),
-        (input - prev.1).max(0),
-        (cached - prev.2).max(0),
-        (output - prev.3).max(0),
-        (reasoning - prev.4).max(0),
-    );
-    let period_cost = estimate_token_cost(d_input, d_cached, d_output, d_reasoning);
-    let window_total = estimate_window_total(start_remaining, current_used, period_cost);
-    let _ = conn.execute(
-        "INSERT INTO account_window_snapshots (account_id, switched_at, plan_type, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, window_total_cost) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![account_id, timestamp, plan_type, total, input, cached, output, reasoning, window_total],
-    );
-}
-
+/// - 上次进行中的时段与当前活跃账号相同 → 直接续接；
+/// - 不同或无进行中时段 → 关闭旧段并给当前账号开新段。
+/// 活跃时段只负责 token 的账号归属，不再充当额度窗口边界。
 fn ensure_account_period(conn: &Connection, active_id: Option<&str>, now: &str) {
     let last_open: Option<(i64, String)> = conn
         .query_row(
@@ -3086,10 +3070,6 @@ fn ensure_account_period(conn: &Connection, active_id: Option<&str>, now: &str) 
             );
         }
         None => {
-            // 关闭前为进行中时段记录快照（窗口边界不丢失）。
-            if let Some((_, account)) = &last_open {
-                record_period_close_snapshot(conn, account, now);
-            }
             let _ = conn.execute(
                 "UPDATE account_active_periods SET ended_at = ?1 WHERE ended_at IS NULL",
                 params![now],
@@ -3433,10 +3413,20 @@ fn get_codex_version(state: State<'_, AppState>) -> Result<String, String> {
 
 /// 自动同步间隔：每 5 分钟增量扫描一次 sessions 目录。
 const SESSION_SYNC_INTERVAL_SECONDS: i64 = 5 * 60;
-/// 会话入库/解析规则版本：修改解析逻辑（如标题提取规则）后递增。
-/// 仅在**手动**同步时检测：版本不一致会对已有会话重解析一次元数据（不重写内容），
-/// 自动同步始终是纯增量，不做全量重解析。
-const SESSIONS_SCHEMA_VERSION: &str = "4";
+/// 会话入库/解析规则版本：修改解析逻辑后递增。
+/// 版本不一致时后台同步会一次性重解析已有会话，以回填 token 事件账本；
+/// 完成后仍恢复为按 mtime/size 判断的纯增量同步。
+const SESSIONS_SCHEMA_VERSION: &str = "5";
+
+fn sessions_schema_needs_reparse(db: &Connection) -> bool {
+    db.query_row(
+        "SELECT content FROM configs WHERE key = 'sessions_schema_version'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .map(|stored| stored != SESSIONS_SCHEMA_VERSION)
+    .unwrap_or(true)
+}
 
 /// 判断当前是否需要同步：从未同步 / 记录无效 / 已到下一次同步时间 → 需要同步。
 /// 重启后若下次同步时间在未来，则跳过，等到了那个时间点再同步。
@@ -3763,6 +3753,8 @@ struct SessionParsedSummary {
     daily: HashMap<String, SessionDailyTokens>,
     /// 按 (日期, 账号) 汇总的 token 增量（账号时段归属，供账号窗口额度估算）。
     account_daily: HashMap<(String, String), SessionDailyTokens>,
+    /// 逐条 token_count 的本机增量账本；窗口按同一事件携带的 resets_at 归属。
+    account_events: Vec<AccountTokenEvent>,
     /// 最后一次 token_count 的额度快照（供账号剩余额度更新）。
     rate_limit: Option<RateLimitSnapshot>,
 }
@@ -3778,16 +3770,69 @@ struct TokenUsageSnapshot {
 }
 
 impl TokenUsageSnapshot {
-    /// 相对上一条累计值的增量；累计值理论上单调，异常时按 0 计。
-    fn delta(&self, prev: &TokenUsageSnapshot) -> TokenUsageSnapshot {
+    fn from_value(usage: &Value) -> TokenUsageSnapshot {
         TokenUsageSnapshot {
-            input: (self.input - prev.input).max(0),
-            cached_input: (self.cached_input - prev.cached_input).max(0),
-            output: (self.output - prev.output).max(0),
-            reasoning: (self.reasoning - prev.reasoning).max(0),
-            total: (self.total - prev.total).max(0),
+            input: usage
+                .get("input_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            cached_input: usage
+                .get("cached_input_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            output: usage
+                .get("output_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            reasoning: usage
+                .get("reasoning_output_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            total: usage
+                .get("total_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
         }
     }
+
+    /// 相对上一条累计值的增量。任一累计维度回退时视为新计数 epoch，
+    /// 该维度直接采用当前值，避免 compaction/恢复会话后把本次消耗吞成 0。
+    fn delta(&self, prev: &TokenUsageSnapshot) -> TokenUsageSnapshot {
+        fn component(current: i64, previous: i64) -> i64 {
+            if current >= previous {
+                current - previous
+            } else {
+                current.max(0)
+            }
+        }
+        TokenUsageSnapshot {
+            input: component(self.input, prev.input),
+            cached_input: component(self.cached_input, prev.cached_input),
+            output: component(self.output, prev.output),
+            reasoning: component(self.reasoning, prev.reasoning),
+            total: component(self.total, prev.total),
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.input == 0
+            && self.cached_input == 0
+            && self.output == 0
+            && self.reasoning == 0
+            && self.total == 0
+    }
+}
+
+/// 账号维度的单条本机 token 消耗事件。
+#[derive(Debug, Clone)]
+struct AccountTokenEvent {
+    event_index: i64,
+    account_id: String,
+    occurred_at: String,
+    occurred_at_secs: i64,
+    date: String,
+    rate_limit: Option<RateLimitSnapshot>,
+    usage: TokenUsageSnapshot,
 }
 
 /// 单个会话在某一日期的 token 增量。
@@ -3816,98 +3861,139 @@ fn estimate_token_cost(input: i64, cached: i64, output: i64, reasoning: i64) -> 
         / 1_000_000.0
 }
 
-/// 推算窗口总额：周期消耗金额 × 100 ÷ 消耗百分点（起点剩余 − 切换时刻剩余）。
-/// 起点或当前额度缺失、差值过小时返回 None。
-fn estimate_window_total(
-    start_remaining: Option<f64>,
-    current_used: Option<f64>,
-    period_cost: f64,
+/// 推算窗口总额：本机事件成本 × 100 ÷ 同一 resets_at 窗口内观测到的 used 增量。
+fn estimate_window_total_from_observations(
+    first_used: f64,
+    last_used: f64,
+    token_cost: f64,
 ) -> Option<f64> {
-    let start = start_remaining?;
-    let current = current_used?;
-    let consumed = start - (100.0 - current);
+    let consumed = last_used - first_used;
     if consumed <= 0.5 {
         return None;
     }
-    Some(period_cost * 100.0 / consumed)
+    Some(token_cost * 100.0 / consumed)
 }
 
-/// 额度重置处理（窗口重置回满时统一调用）：
-/// 1. 记录一条切换快照（当前累计，作为新窗口周期增量的基准）；
-/// 2. 关闭进行中时段；
-/// 3. 从重置时刻开新段（起点剩余量 = 100 − 新 used）。
-/// 额度重置处理。
-/// `pre_reset_used`：重置前的 used（旧窗口的已用百分比，窗口总额推算用）——
-/// 注意不能传重置后的 new_used，否则消耗百分点按新窗口剩余计算会恒错。
-fn handle_usage_reset(
+fn rfc3339_timestamp_secs(timestamp: &str) -> Option<i64> {
+    DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|time| time.timestamp())
+}
+
+fn timestamp_is_not_after(candidate: &str, previous: &str) -> bool {
+    match (
+        DateTime::parse_from_rfc3339(candidate),
+        DateTime::parse_from_rfc3339(previous),
+    ) {
+        (Ok(candidate), Ok(previous)) => candidate <= previous,
+        _ => candidate <= previous,
+    }
+}
+
+/// 把尚未携带窗口标识的旧 token 事件归入新获得的额度窗口。
+fn reconcile_unassigned_token_events(
     conn: &Connection,
     account_id: &str,
-    timestamp: &str,
-    plan_type: Option<&str>,
-    new_used: f64,
-    pre_reset_used: Option<f64>,
+    resets_at: i64,
+    window_minutes: Option<i64>,
 ) -> Result<(), String> {
-    // 被关闭时段的起点剩余（窗口总额推算用）。
-    let start_remaining: Option<f64> = conn
-        .query_row(
-            "SELECT start_used_percent FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
-            params![account_id],
-            |row| row.get::<_, Option<f64>>(0),
-        )
-        .ok()
-        .flatten();
-
-    let (total, input, cached, output, reasoning) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(cached_input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(reasoning_tokens), 0) FROM account_token_usage WHERE account_id = ?1",
-            params![account_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
-        )
-        .unwrap_or((0, 0, 0, 0, 0));
-
-    // 周期增量 = 当前累计 − 上一条快照累计（各维度）。
-    let prev: (i64, i64, i64, i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(MAX(total_tokens), 0), COALESCE(MAX(input_tokens), 0), COALESCE(MAX(cached_input_tokens), 0), COALESCE(MAX(output_tokens), 0), COALESCE(MAX(reasoning_tokens), 0) FROM account_window_snapshots WHERE account_id = ?1",
-            params![account_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
-        )
-        .unwrap_or((0, 0, 0, 0, 0));
-    let (_d_total, d_input, d_cached, d_output, d_reasoning) = (
-        (total - prev.0).max(0),
-        (input - prev.1).max(0),
-        (cached - prev.2).max(0),
-        (output - prev.3).max(0),
-        (reasoning - prev.4).max(0),
-    );
-    let period_cost = estimate_token_cost(d_input, d_cached, d_output, d_reasoning);
-    // 窗口总额按"旧窗口"的消耗百分点推算（重置前 used）。
-    let window_total = estimate_window_total(start_remaining, pre_reset_used, period_cost);
-
+    let Some(minutes) = window_minutes.filter(|minutes| *minutes > 0) else {
+        return Ok(());
+    };
+    let starts_at = resets_at.saturating_sub(minutes.saturating_mul(60));
     conn.execute(
-        "INSERT INTO account_window_snapshots (account_id, switched_at, plan_type, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, window_total_cost) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![account_id, timestamp, plan_type, total, input, cached, output, reasoning, window_total],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE account_active_periods SET ended_at = ?1 WHERE account_id = ?2 AND ended_at IS NULL",
-        params![timestamp, account_id],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT INTO account_active_periods (account_id, started_at, start_used_percent, last_used_percent, last_sensed_at) VALUES (?1, ?2, ?3, ?3, ?4)",
-        params![account_id, timestamp, (100.0 - new_used).clamp(0.0, 100.0), timestamp],
+        "UPDATE account_token_events
+         SET window_resets_at = ?1, window_minutes = ?2
+         WHERE account_id = ?3
+           AND window_resets_at IS NULL
+           AND occurred_at_secs >= ?4
+           AND occurred_at_secs <= ?1",
+        params![resets_at, minutes, account_id, starts_at],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 记录额度响应提供的短周期窗口锚点。相同 (account_id, resets_at) 只更新时间范围，
+/// 因此账号切换、自动刷新和 session 感知都不会制造重复窗口。
+fn record_account_quota_window(
+    conn: &Connection,
+    account_id: &str,
+    window: &AccountUsageWindow,
+    observed_at: &str,
+    plan_type: Option<&str>,
+) -> Result<(), String> {
+    let Some(resets_at) = window.resets_at else {
+        return Ok(());
+    };
+    let Some(observed_at_secs) = rfc3339_timestamp_secs(observed_at) else {
+        return Ok(());
+    };
+    conn.execute(
+        "INSERT INTO account_quota_windows (
+             account_id, resets_at, window_minutes,
+             first_observed_at, first_observed_at_secs,
+             last_observed_at, last_observed_at_secs,
+             first_used_percent, last_used_percent, plan_type
+         ) VALUES (?1,?2,?3,?4,?5,?4,?5,?6,?6,?7)
+         ON CONFLICT(account_id, resets_at) DO UPDATE SET
+             window_minutes = COALESCE(excluded.window_minutes, account_quota_windows.window_minutes),
+             first_observed_at = CASE
+                 WHEN excluded.first_observed_at_secs < account_quota_windows.first_observed_at_secs
+                 THEN excluded.first_observed_at ELSE account_quota_windows.first_observed_at END,
+             first_used_percent = CASE
+                 WHEN excluded.first_observed_at_secs < account_quota_windows.first_observed_at_secs
+                 THEN excluded.first_used_percent ELSE account_quota_windows.first_used_percent END,
+             first_observed_at_secs = MIN(account_quota_windows.first_observed_at_secs, excluded.first_observed_at_secs),
+             last_observed_at = CASE
+                 WHEN excluded.last_observed_at_secs >= account_quota_windows.last_observed_at_secs
+                 THEN excluded.last_observed_at ELSE account_quota_windows.last_observed_at END,
+             last_used_percent = CASE
+                 WHEN excluded.last_observed_at_secs >= account_quota_windows.last_observed_at_secs
+                 THEN excluded.last_used_percent ELSE account_quota_windows.last_used_percent END,
+             last_observed_at_secs = MAX(account_quota_windows.last_observed_at_secs, excluded.last_observed_at_secs),
+             plan_type = COALESCE(excluded.plan_type, account_quota_windows.plan_type)",
+        params![
+            account_id,
+            resets_at,
+            window.window_minutes,
+            observed_at,
+            observed_at_secs,
+            window.used_percent,
+            plan_type,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    reconcile_unassigned_token_events(conn, account_id, resets_at, window.window_minutes)
+}
+
+/// 没有随事件返回 rate_limits 时，使用已经存在的额度锚点补充窗口归属。
+fn infer_account_quota_window(
+    conn: &Connection,
+    account_id: &str,
+    occurred_at_secs: i64,
+) -> Option<(i64, Option<i64>)> {
+    conn.query_row(
+        "SELECT resets_at, window_minutes
+         FROM account_quota_windows
+         WHERE account_id = ?1
+           AND resets_at >= ?2
+           AND window_minutes IS NOT NULL
+           AND window_minutes > 0
+           AND resets_at - (window_minutes * 60) <= ?2
+         ORDER BY resets_at ASC
+         LIMIT 1",
+        params![account_id, occurred_at_secs],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .ok()
 }
 
 /// 用会话感知的额度快照更新账号的剩余额度：
 /// - 合并现有 usage_json：更新 primary 与 secondary（事件缺 secondary 时保留旧值）及同步时间；
 /// - 会话感知到订阅类型时顺带补全 chatgpt_plan_type；
 /// - **不修改 next_refresh_at**，1 小时自动刷新调度完全不受影响；
-/// - **额度重置检测**：只看短周期 primary —— 新 used 比旧记录小（剩余变多，如窗口重置回满）→
-///   结束当前进行中时段，并从重置时刻开一条新时段（新窗口的起点剩余量）。
+/// - 短周期窗口按 resets_at 单独记录；额度变化不再关闭账号活跃时段；
 /// 用会话感知的额度更新账号。返回是否实际写入（时间保护跳过旧事件时为 false），
 /// 供同步结束后通知前端刷新对应账号的额度展示。
 fn update_account_usage_from_session(
@@ -3915,6 +4001,20 @@ fn update_account_usage_from_session(
     account_id: &str,
     rl: &RateLimitSnapshot,
 ) -> Result<bool, String> {
+    let primary = AccountUsageWindow {
+        used_percent: rl.used_percent,
+        window_minutes: rl.window_minutes,
+        resets_at: rl.resets_at,
+    };
+    // 即使是历史回放，也先补齐真实窗口锚点；显示缓存仍受下面的时间顺序保护。
+    record_account_quota_window(
+        tx,
+        account_id,
+        &primary,
+        &rl.timestamp,
+        rl.plan_type.as_deref(),
+    )?;
+
     // 时间顺序保护：会话按 read_dir 无序处理，事件时间不晚于时段内上次感知时间的
     // 旧事件直接跳过（不应用额度、不触发重置、不倒退 syncedAt），
     // 避免乱序回放（含 force_full 重放历史会话）造成假重置与显示倒退。
@@ -3927,7 +4027,23 @@ fn update_account_usage_from_session(
         .ok()
         .flatten();
     if let Some(last) = last_sensed_at {
-        if !last.is_empty() && rl.timestamp.as_str() <= last.as_str() {
+        if !last.is_empty() && timestamp_is_not_after(&rl.timestamp, &last) {
+            return Ok(false);
+        }
+    }
+
+    // 官方额度刷新可能比待回放的 session 更新；历史 session 只能补窗口账本，
+    // 不能把账号卡片上的最新额度缓存倒退。
+    let usage_updated_at: Option<String> = tx
+        .query_row(
+            "SELECT usage_updated_at FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    if let Some(last) = usage_updated_at {
+        if !last.is_empty() && timestamp_is_not_after(&rl.timestamp, &last) {
             return Ok(false);
         }
     }
@@ -3939,39 +4055,7 @@ fn update_account_usage_from_session(
             |row| row.get(0),
         )
         .ok();
-    // 重置检测的旧值：优先用时段内"上次感知的 used"（感知历史记在时段上，
-    // 不依赖 usage_json 是否有 wham 缓存）；时段无记录时回退 usage_json。
-    let period_old: Option<f64> = tx
-        .query_row(
-            "SELECT last_used_percent FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
-            params![account_id],
-            |row| row.get::<_, Option<f64>>(0),
-        )
-        .ok()
-        .flatten();
-    let old_used: Option<f64> = period_old.or_else(|| {
-        existing
-            .as_deref()
-            .and_then(|json| serde_json::from_str::<AccountUsage>(json).ok())
-            .and_then(|usage| usage.primary.as_ref().map(|window| window.used_percent))
-    });
-
-    // 额度重置：used 下降超过容差（正常消耗只会上升，下降即窗口重置/回满）。
-    // 窗口总额按重置前 used（旧窗口消耗百分点）推算。
-    if let Some(old) = old_used {
-        if rl.used_percent < old - 0.5 {
-            handle_usage_reset(
-                tx,
-                account_id,
-                &rl.timestamp,
-                rl.plan_type.as_deref(),
-                rl.used_percent,
-                Some(old),
-            )?;
-        }
-    }
-
-    // 更新进行中时段的"最近感知 used 与时间"（重置后新段已由 handle_usage_reset 写入）。
+    // 活跃时段只记录最近感知值，绝不因额度窗口变化而分段。
     tx.execute(
         "UPDATE account_active_periods SET last_used_percent = ?1, last_sensed_at = ?2 WHERE account_id = ?3 AND ended_at IS NULL",
         params![rl.used_percent, rl.timestamp, account_id],
@@ -3986,11 +4070,7 @@ fn update_account_usage_from_session(
             synced_at: rl.timestamp.clone(),
             plan_type: None,
         });
-    usage.primary = Some(AccountUsageWindow {
-        used_percent: rl.used_percent,
-        window_minutes: rl.window_minutes,
-        resets_at: rl.resets_at,
-    });
+    usage.primary = Some(primary);
     // 长周期窗口（周限/月限）：事件带 secondary 时一并更新，否则保留既有缓存。
     // 只更新 primary 会让周额度停在上次手动/启动刷新的旧值，而 syncedAt 却在前进。
     if let Some(secondary) = rl.secondary.clone() {
@@ -4068,7 +4148,7 @@ fn utc_ts_to_local_date(ts: &str) -> Option<String> {
 /// - 标题：跳过 AGENTS.md / Skill 指令注入，取第一条真实用户消息；
 /// - 消息数：response_item 数量；
 /// - 模型名：最后一个 thread_settings_applied 的 thread_settings.model；
-/// - token：最后一个 token_count 事件的 total_token_usage（会话累计值）；
+/// - token：优先采用可校验的 last_token_usage，否则对 total_token_usage 做累计差分；
 /// - 账号归属：每条 token 增量按事件时间戳匹配账号活跃时段（periods 为空则不归属）。
 fn extract_session_summary<S: AsRef<str>>(
     lines: &[S],
@@ -4080,7 +4160,7 @@ fn extract_session_summary<S: AsRef<str>>(
     };
     let mut title: Option<String> = None;
     let mut prev_usage: Option<TokenUsageSnapshot> = None;
-    for line in lines {
+    for (event_index, line) in lines.iter().enumerate() {
         let line = line.as_ref();
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -4116,108 +4196,111 @@ fn extract_session_summary<S: AsRef<str>>(
                 let payload = event.get("payload");
                 match payload.and_then(|p| p.get("type")).and_then(Value::as_str) {
                     Some("token_count") => {
-                        // total_token_usage 是会话累计值，取最后一个即最终消耗。
-                        let usage = payload
-                            .and_then(|p| p.get("info"))
-                            .and_then(|info| info.get("total_token_usage"));
-                        if let Some(usage) = usage {
-                            let current = TokenUsageSnapshot {
-                                input: usage
-                                    .get("input_tokens")
-                                    .and_then(Value::as_i64)
-                                    .unwrap_or(0),
-                                cached_input: usage
-                                    .get("cached_input_tokens")
-                                    .and_then(Value::as_i64)
-                                    .unwrap_or(0),
-                                output: usage
-                                    .get("output_tokens")
-                                    .and_then(Value::as_i64)
-                                    .unwrap_or(0),
-                                reasoning: usage
-                                    .get("reasoning_output_tokens")
-                                    .and_then(Value::as_i64)
-                                    .unwrap_or(0),
-                                total: usage
-                                    .get("total_tokens")
-                                    .and_then(Value::as_i64)
-                                    .unwrap_or(0),
-                            };
-                            summary.input_tokens = current.input;
-                            summary.cached_input_tokens = current.cached_input;
-                            summary.output_tokens = current.output;
-                            summary.reasoning_tokens = current.reasoning;
-                            summary.total_tokens = current.total;
+                        let timestamp = event
+                            .get("timestamp")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
 
-                            // 增量差分 → 按事件时间戳归属到本地日期（resume 跨天自动拆分）。
-                            let delta = match &prev_usage {
-                                Some(prev) => current.delta(prev),
-                                None => current.clone(),
-                            };
-                            if let Some(ts) = event.get("timestamp").and_then(Value::as_str) {
-                                if let Some(date) = utc_ts_to_local_date(ts) {
-                                    let entry = summary.daily.entry(date.clone()).or_default();
-                                    entry.input_tokens += delta.input;
-                                    entry.cached_input_tokens += delta.cached_input;
-                                    entry.output_tokens += delta.output;
-                                    entry.reasoning_tokens += delta.reasoning;
-                                    entry.total_tokens += delta.total;
+                        // rate_limits 与 token_count 同一事件返回，不产生任何额外请求。
+                        let rate_limit = payload
+                            .and_then(|p| p.get("rate_limits"))
+                            .and_then(|rl| {
+                                let primary = rl
+                                    .get("primary")
+                                    .and_then(parse_session_rate_limit_window)?;
+                                Some(RateLimitSnapshot {
+                                    used_percent: primary.used_percent,
+                                    window_minutes: primary.window_minutes,
+                                    resets_at: primary.resets_at,
+                                    secondary: rl
+                                        .get("secondary")
+                                        .and_then(parse_session_rate_limit_window),
+                                    plan_type: rl
+                                        .get("plan_type")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_string),
+                                    timestamp: timestamp.clone(),
+                                })
+                            });
+                        if let Some(snapshot) = rate_limit.clone() {
+                            summary.rate_limit = Some(snapshot);
+                        }
 
-                                    // 账号时段归属：增量落在哪个活跃时段 → 归该账号。
-                                    if !periods.is_empty() {
-                                        if let Ok(ts_secs) =
-                                            DateTime::parse_from_rfc3339(ts).map(|t| t.timestamp())
-                                        {
-                                            if let Some(account_id) =
-                                                active_period_account(periods, ts_secs)
-                                            {
-                                                let account_entry = summary
-                                                    .account_daily
-                                                    .entry((date, account_id))
-                                                    .or_default();
-                                                account_entry.input_tokens += delta.input;
-                                                account_entry.cached_input_tokens += delta.cached_input;
-                                                account_entry.output_tokens += delta.output;
-                                                account_entry.reasoning_tokens += delta.reasoning;
-                                                account_entry.total_tokens += delta.total;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        let info = payload.and_then(|p| p.get("info"));
+                        let current = info
+                            .and_then(|value| value.get("total_token_usage"))
+                            .map(TokenUsageSnapshot::from_value);
+                        let last = info
+                            .and_then(|value| value.get("last_token_usage"))
+                            .map(TokenUsageSnapshot::from_value);
+
+                        let cumulative_delta = current.as_ref().map(|usage| match &prev_usage {
+                            Some(previous) => usage.delta(previous),
+                            None => usage.clone(),
+                        });
+                        let counter_rolled_back = match (&current, &prev_usage) {
+                            (Some(usage), Some(previous)) => usage.total < previous.total,
+                            _ => false,
+                        };
+                        // last_token_usage 能处理累计计数器换 epoch；正常情况下只有当它与
+                        // 累计差分一致时才采用，避免重复 token_count 把同一 turn 计算两次。
+                        let delta = match (last, cumulative_delta) {
+                            (Some(last), Some(_)) if counter_rolled_back => last,
+                            (Some(last), Some(diff)) if last.total == diff.total => last,
+                            (_, Some(diff)) => diff,
+                            (Some(last), None) => last,
+                            (None, None) => TokenUsageSnapshot::default(),
+                        };
+                        if let Some(current) = current {
                             prev_usage = Some(current);
+                        }
 
-                            // 记录最后一次的额度快照（随模型请求返回，无额外请求）。
-                            if let Some(rl) = payload.and_then(|p| p.get("rate_limits")) {
-                                if let Some(primary) = rl.get("primary") {
-                                    // used_percent 缺失/非数字：不更新额度快照，
-                                    // 避免误当 0%（重置回满）触发假重置。
-                                    let Some(primary_window) =
-                                        parse_session_rate_limit_window(primary)
-                                    else {
-                                        continue;
-                                    };
-                                    summary.rate_limit = Some(RateLimitSnapshot {
-                                        used_percent: primary_window.used_percent,
-                                        window_minutes: primary_window.window_minutes,
-                                        resets_at: primary_window.resets_at,
-                                        // 长周期窗口（周限/月限）：事件里为 null 时保持 None，
-                                        // 由后续合并逻辑保留既有缓存。
-                                        secondary: rl
-                                            .get("secondary")
-                                            .and_then(parse_session_rate_limit_window),
-                                        plan_type: rl
-                                            .get("plan_type")
-                                            .and_then(Value::as_str)
-                                            .map(str::to_string),
-                                        timestamp: event
-                                            .get("timestamp")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("")
-                                            .to_string(),
-                                    });
-                                }
+                        // 会话总量也按事件增量累加，累计计数器回退时不会丢失历史消耗。
+                        summary.input_tokens += delta.input;
+                        summary.cached_input_tokens += delta.cached_input;
+                        summary.output_tokens += delta.output;
+                        summary.reasoning_tokens += delta.reasoning;
+                        summary.total_tokens += delta.total;
+
+                        let Some(ts_secs) = rfc3339_timestamp_secs(&timestamp) else {
+                            continue;
+                        };
+                        let Some(date) = utc_ts_to_local_date(&timestamp) else {
+                            continue;
+                        };
+                        if !delta.is_zero() {
+                            let entry = summary.daily.entry(date.clone()).or_default();
+                            entry.input_tokens += delta.input;
+                            entry.cached_input_tokens += delta.cached_input;
+                            entry.output_tokens += delta.output;
+                            entry.reasoning_tokens += delta.reasoning;
+                            entry.total_tokens += delta.total;
+                        }
+
+                        // 账号时段只负责账号归属；窗口由当前 token_count 的 resets_at 决定。
+                        if let Some(account_id) = active_period_account(periods, ts_secs) {
+                            if !delta.is_zero() {
+                                let account_entry = summary
+                                    .account_daily
+                                    .entry((date.clone(), account_id.clone()))
+                                    .or_default();
+                                account_entry.input_tokens += delta.input;
+                                account_entry.cached_input_tokens += delta.cached_input;
+                                account_entry.output_tokens += delta.output;
+                                account_entry.reasoning_tokens += delta.reasoning;
+                                account_entry.total_tokens += delta.total;
                             }
+                            // 零增量事件仍保留其 rate_limits，用于补齐窗口锚点。
+                            summary.account_events.push(AccountTokenEvent {
+                                event_index: event_index as i64,
+                                account_id,
+                                occurred_at: timestamp,
+                                occurred_at_secs: ts_secs,
+                                date,
+                                rate_limit,
+                                usage: delta,
+                            });
                         }
                     }
                     Some("thread_settings_applied") => {
@@ -4380,6 +4463,74 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
                 .map_err(|e| e.to_string())?;
             }
 
+            // 先写本会话带回的所有额度窗口锚点，再写 token 事件；这样缺少
+            // rate_limits 的旧事件也可以用相同账号的已有锚点立即补归属。
+            for token_event in &parsed.account_events {
+                if let Some(rl) = token_event.rate_limit.as_ref() {
+                    let primary = AccountUsageWindow {
+                        used_percent: rl.used_percent,
+                        window_minutes: rl.window_minutes,
+                        resets_at: rl.resets_at,
+                    };
+                    record_account_quota_window(
+                        &tx,
+                        &token_event.account_id,
+                        &primary,
+                        &token_event.occurred_at,
+                        rl.plan_type.as_deref(),
+                    )?;
+                }
+            }
+
+            // 逐事件账本按 (session_id, event_index) 幂等重建；账号切换不会改变窗口键。
+            tx.execute(
+                "DELETE FROM account_token_events WHERE session_id = ?1",
+                params![meta.id],
+            )
+            .map_err(|e| e.to_string())?;
+            for token_event in &parsed.account_events {
+                if token_event.usage.is_zero() {
+                    continue;
+                }
+                let direct_window = token_event.rate_limit.as_ref().and_then(|rl| {
+                    rl.resets_at
+                        .map(|resets_at| (resets_at, rl.window_minutes))
+                });
+                let (window_resets_at, window_minutes) = direct_window
+                    .or_else(|| {
+                        infer_account_quota_window(
+                            &tx,
+                            &token_event.account_id,
+                            token_event.occurred_at_secs,
+                        )
+                    })
+                    .map(|(resets_at, minutes)| (Some(resets_at), minutes))
+                    .unwrap_or((None, None));
+                tx.execute(
+                    "INSERT INTO account_token_events (
+                         session_id, event_index, account_id, occurred_at, occurred_at_secs, date,
+                         window_resets_at, window_minutes, input_tokens, cached_input_tokens,
+                         output_tokens, reasoning_tokens, total_tokens
+                     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                    params![
+                        meta.id,
+                        token_event.event_index,
+                        token_event.account_id,
+                        token_event.occurred_at,
+                        token_event.occurred_at_secs,
+                        token_event.date,
+                        window_resets_at,
+                        window_minutes,
+                        token_event.usage.input,
+                        token_event.usage.cached_input,
+                        token_event.usage.output,
+                        token_event.usage.reasoning,
+                        token_event.usage.total,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
             // 会话感知的额度 → 按时段归属账号，更新其剩余额度（不影响 1 小时刷新调度）。
             if let Some(rl) = &parsed.rate_limit {
                 if !rl.timestamp.is_empty() {
@@ -4503,6 +4654,11 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
                             params![session_id],
                         )
                         .map_err(|e| e.to_string())?;
+                        tx.execute(
+                            "DELETE FROM account_token_events WHERE session_id = ?1",
+                            params![session_id],
+                        )
+                        .map_err(|e| e.to_string())?;
                     }
                     tx.execute(
                         "DELETE FROM sessions WHERE file_path = ?1",
@@ -4621,10 +4777,10 @@ fn sync_sessions_inner(app: &tauri::AppHandle, force_full: bool) -> Result<Sessi
 /// 自动同步调度器：同步时间与下次同步时间持久化在数据库中。
 /// - 重启后：下次同步时间在未来 → 跳过同步，睡到那个时间点（最多 5 分钟醒一次检查）；
 /// - 从未同步 / 已到下次同步时间 → 同步（首次全量入库或增量），完成后刷新两个时间。
-/// 始终是纯增量（force_full = false），不做全量重解析，快速且不阻塞界面。
+/// 入库规则升级时自动做一次全量重解析以完成迁移；其余时间始终纯增量。
 fn start_session_sync_scheduler(app: tauri::AppHandle) {
     thread::spawn(move || loop {
-        let (due, sleep_secs) = {
+        let (due, sleep_secs, force_full) = {
             let state = app.state::<AppState>();
             let locked = state.db.lock();
             match locked {
@@ -4637,17 +4793,19 @@ fn start_session_sync_scheduler(app: tauri::AppHandle) {
                         )
                         .ok();
                     let now = Utc::now();
+                    let force_full = sessions_schema_needs_reparse(&db);
                     (
-                        session_sync_due(next_sync_at.as_deref(), now),
+                        force_full || session_sync_due(next_sync_at.as_deref(), now),
                         session_sync_sleep_secs(next_sync_at.as_deref(), now),
+                        force_full,
                     )
                 }
-                Err(_) => (false, 30),
+                Err(_) => (false, 30, false),
             }
         };
 
         if due {
-            match sync_sessions_inner(&app, false) {
+            match sync_sessions_inner(&app, force_full) {
                 Ok(result) => {
                     eprintln!(
                         "[session-sync] 同步完成：新增 {}，更新 {}，删除 {}，跳过 {}，失败 {}，共 {} 个项目",
@@ -4678,14 +4836,7 @@ async fn sync_sessions(app: tauri::AppHandle) -> Result<SessionSyncResult, Strin
         let state = app.state::<AppState>();
         let locked = state.db.lock();
         match locked {
-            Ok(db) => db
-                .query_row(
-                    "SELECT content FROM configs WHERE key = 'sessions_schema_version'",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .map(|stored| stored != SESSIONS_SCHEMA_VERSION)
-                .unwrap_or(true),
+            Ok(db) => sessions_schema_needs_reparse(&db),
             Err(_) => true,
         }
     };
@@ -5041,18 +5192,21 @@ pub struct AccountWindowSnapshot {
     pub output_tokens: i64,
     #[serde(rename = "reasoningTokens")]
     pub reasoning_tokens: i64,
-    /// 是否为进行中的当前窗口（未切换，实时累计）。
+    /// 是否与账号缓存中的当前 primary.resets_at 一致且尚未到期。
     #[serde(rename = "isActive")]
     pub is_active: bool,
-    /// 窗口起点 used_percent（进行中窗口为开段时的额度，历史快照为空）。
+    /// 首次观测时的剩余额度百分比；旧快照兼容数据可能为空。
     #[serde(rename = "startUsedPercent")]
     pub start_used_percent: Option<f64>,
-    /// 保存的推算窗口总额（USD，切换/重置时入库；进行中窗口由前端实时推算，为空）。
+    /// 历史窗口推算总额（USD）；进行中窗口由前端使用最新 usedPercent 实时推算。
     #[serde(rename = "windowTotalCost")]
     pub window_total_cost: Option<f64>,
-    /// 窗口开始时间（历史快照为该窗口时段的起点；进行中窗口为空，前端用 switchedAt 显示"自"）。
+    /// 真实窗口开始时间（resets_at - window_minutes）；旧快照沿用原有时段起点。
     #[serde(rename = "windowStartAt")]
     pub window_start_at: Option<String>,
+    /// 真实额度窗口结束时间（primary.resets_at）；旧快照兼容数据为空。
+    #[serde(rename = "windowEndAt")]
+    pub window_end_at: Option<String>,
 }
 
 /// 各维度 token 累计值（用于计算周期增量）。
@@ -5077,20 +5231,15 @@ impl TokenCumulative {
     }
 }
 
-/// 账号最近 N 个窗口额度：
+/// 旧版切换快照读取，仅在 token 事件账本尚未完成一次性回填时兼容使用。
 /// - 第一条为**进行中的当前窗口**（实时累计 − 上次快照累计 = 本次使用周期的消耗），
 ///   标注 isActive；无进行中时段则不返回该条；
 /// - 其余为历史切换快照，均转换为"周期增量"（快照累计 − 上一条快照累计）。
-/// 默认最近 3 条（含进行中）。
-#[tauri::command]
-fn get_account_window_snapshots(
-    state: State<'_, AppState>,
-    account_id: String,
-    limit: Option<i64>,
+fn get_legacy_account_window_snapshots(
+    db: &Connection,
+    account_id: &str,
+    limit: i64,
 ) -> Result<Vec<AccountWindowSnapshot>, String> {
-    let limit = limit.unwrap_or(2).clamp(1, 10);
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
     // 历史切换快照（升序，原始累计值）。
     let mut snapshots: Vec<(String, Option<String>, TokenCumulative, Option<f64>)> = Vec::new();
     {
@@ -5129,23 +5278,7 @@ fn get_account_window_snapshots(
         )
         .ok();
 
-    // 进行中的时段起点（无则说明当前账号无进行中窗口）。
-    // 查询时懒补开一段（幂等）：打开"当前账号"页即可看到进行中窗口，归属随增量同步写入。
-    let has_open: i64 = db
-        .query_row(
-            "SELECT COUNT(*) FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL",
-            params![account_id],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    if has_open == 0 {
-        let now = Utc::now().to_rfc3339();
-        // 懒补段带起点剩余基线（与其它开段点一致），保证窗口总额可推算。
-        let _ = db.execute(
-            "INSERT INTO account_active_periods (account_id, started_at, start_used_percent) VALUES (?1, ?2, ?3)",
-            params![account_id, now, cached_used_percent(&db, &account_id)],
-        );
-    }
+    // 进行中的账号活跃时段起点（仅用于旧数据展示，不再懒创建或充当窗口边界）。
     let active_started: Option<(String, Option<f64>)> = db
         .query_row(
             "SELECT started_at, start_used_percent FROM account_active_periods WHERE account_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
@@ -5198,6 +5331,7 @@ fn get_account_window_snapshots(
             start_used_percent: None,
             window_total_cost: *window_total_cost,
             window_start_at: prev_switched.clone().or_else(|| earliest_start.clone()),
+            window_end_at: None,
         });
         prev_cum = Some(*cum);
         prev_switched = Some(switched_at.clone());
@@ -5220,6 +5354,7 @@ fn get_account_window_snapshots(
             start_used_percent,
             window_total_cost: None,
             window_start_at: None,
+            window_end_at: None,
         });
     }
     // 历史快照倒序（最新的在前）追加。
@@ -5227,6 +5362,144 @@ fn get_account_window_snapshots(
     result.truncate(limit as usize);
 
     Ok(result)
+}
+
+/// 账号最近 N 个真实短周期窗口：额度响应用 resets_at 定义窗口，Session 事件负责累计本机 token。
+/// 该查询只读本地 SQLite，不会触发额度或其它网络请求。
+#[tauri::command]
+fn get_account_window_snapshots(
+    state: State<'_, AppState>,
+    account_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<AccountWindowSnapshot>, String> {
+    let limit = limit.unwrap_or(2).clamp(1, 10);
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    // 升级后的首次后台全量解析完成前继续读旧快照，避免迁移中的半量事件造成跳变。
+    if sessions_schema_needs_reparse(&db) {
+        return get_legacy_account_window_snapshots(&db, &account_id, limit);
+    }
+
+    let current_resets_at: Option<i64> = db
+        .query_row(
+            "SELECT usage_json FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<AccountUsage>(&json).ok())
+        .and_then(|usage| usage.primary.and_then(|window| window.resets_at));
+
+    let mut stmt = db
+        .prepare(
+            "SELECT
+                 q.resets_at,
+                 q.window_minutes,
+                 q.first_observed_at,
+                 q.first_used_percent,
+                 q.last_used_percent,
+                 COALESCE(q.plan_type, a.chatgpt_plan_type),
+                 COALESCE(SUM(e.total_tokens), 0),
+                 COALESCE(SUM(e.input_tokens), 0),
+                 COALESCE(SUM(e.cached_input_tokens), 0),
+                 COALESCE(SUM(e.output_tokens), 0),
+                 COALESCE(SUM(e.reasoning_tokens), 0)
+             FROM account_quota_windows q
+             LEFT JOIN accounts a ON a.id = q.account_id
+             LEFT JOIN account_token_events e
+               ON e.account_id = q.account_id
+              AND e.window_resets_at = q.resets_at
+             WHERE q.account_id = ?1
+             GROUP BY
+                 q.account_id, q.resets_at, q.window_minutes, q.first_observed_at,
+                 q.first_used_percent, q.last_used_percent, q.plan_type, a.chatgpt_plan_type
+             ORDER BY q.resets_at DESC
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![account_id, limit], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                TokenCumulative {
+                    total: row.get(6)?,
+                    input: row.get(7)?,
+                    cached_input: row.get(8)?,
+                    output: row.get(9)?,
+                    reasoning: row.get(10)?,
+                },
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let now = Utc::now().timestamp();
+    let mut result = Vec::new();
+    for row in rows {
+        let (
+            resets_at,
+            window_minutes,
+            first_observed_at,
+            first_used_percent,
+            last_used_percent,
+            plan_type,
+            tokens,
+        ) = row.map_err(|e| e.to_string())?;
+        let window_end_at = DateTime::from_timestamp(resets_at, 0).map(|time| time.to_rfc3339());
+        let window_start_at = window_minutes
+            .filter(|minutes| *minutes > 0)
+            .and_then(|minutes| {
+                DateTime::from_timestamp(
+                    resets_at.saturating_sub(minutes.saturating_mul(60)),
+                    0,
+                )
+            })
+            .map(|time| time.to_rfc3339())
+            .or_else(|| Some(first_observed_at.clone()));
+        let is_active = current_resets_at == Some(resets_at) && resets_at > now;
+        let token_cost = estimate_token_cost(
+            tokens.input,
+            tokens.cached_input,
+            tokens.output,
+            tokens.reasoning,
+        );
+        let window_total_cost = if is_active {
+            None
+        } else {
+            estimate_window_total_from_observations(
+                first_used_percent,
+                last_used_percent,
+                token_cost,
+            )
+        };
+        result.push(AccountWindowSnapshot {
+            switched_at: window_start_at
+                .clone()
+                .unwrap_or_else(|| first_observed_at.clone()),
+            plan_type,
+            total_tokens: tokens.total,
+            input_tokens: tokens.input,
+            cached_input_tokens: tokens.cached_input,
+            output_tokens: tokens.output,
+            reasoning_tokens: tokens.reasoning,
+            is_active,
+            start_used_percent: Some((100.0 - first_used_percent).clamp(0.0, 100.0)),
+            window_total_cost,
+            window_start_at,
+            window_end_at,
+        });
+    }
+
+    if result.is_empty() {
+        get_legacy_account_window_snapshots(&db, &account_id, limit)
+    } else {
+        Ok(result)
+    }
 }
 
 // ==================== Skills（~/.agents/skills）管理 ====================
@@ -5671,6 +5944,41 @@ mod tests {
             .with_timezone(&Utc)
     }
 
+    fn create_quota_test_tables(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE account_quota_windows (
+                account_id TEXT NOT NULL,
+                resets_at INTEGER NOT NULL,
+                window_minutes INTEGER,
+                first_observed_at TEXT NOT NULL,
+                first_observed_at_secs INTEGER NOT NULL,
+                last_observed_at TEXT NOT NULL,
+                last_observed_at_secs INTEGER NOT NULL,
+                first_used_percent REAL NOT NULL,
+                last_used_percent REAL NOT NULL,
+                plan_type TEXT,
+                PRIMARY KEY (account_id, resets_at)
+             );
+             CREATE TABLE account_token_events (
+                session_id TEXT NOT NULL,
+                event_index INTEGER NOT NULL,
+                account_id TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                occurred_at_secs INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                window_resets_at INTEGER,
+                window_minutes INTEGER,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, event_index)
+             );",
+        )
+        .unwrap();
+    }
+
     fn usage(used_percent: f64, resets_at: Option<i64>) -> AccountUsage {
         AccountUsage {
             primary: Some(AccountUsageWindow {
@@ -5883,6 +6191,7 @@ mod tests {
             )",
         )
         .unwrap();
+        create_quota_test_tables(&conn);
         let auth = r#"{"personal_access_token": "sk-test-token"}"#;
         conn.execute(
             "INSERT INTO accounts (id, auth_json_content) VALUES (?1, ?2)",
@@ -6229,8 +6538,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_daily_tokens_clamps_negative_delta() {
-        // 累计值异常回退（不应发生，防御）：差分为负时按 0 计。
+    fn extract_daily_tokens_starts_new_epoch_after_counter_reset() {
+        // 累计值回退代表计数器进入新 epoch：当前值应作为本次增量，不能吞成 0。
         let lines = vec![
             meta_line("/tmp/p"),
             token_count_line_ts("2026-08-11T10:00:00Z", 1500, 300, 100, 1900),
@@ -6239,9 +6548,111 @@ mod tests {
         let parsed = extract_session_summary(&lines, &[]);
         let day = utc_ts_to_local_date("2026-08-11T11:00:00Z").unwrap();
         let d = parsed.daily.get(&day).unwrap();
-        // 第一条为会话起始增量（自身 1900），第二条负增量被 clamp 为 0。
-        assert_eq!(d.total_tokens, 1900);
-        assert_eq!(d.input_tokens, 1500);
+        // 第一段 1900 + 新 epoch 首条 1250。
+        assert_eq!(d.total_tokens, 3150);
+        assert_eq!(d.input_tokens, 2500);
+        assert_eq!(parsed.total_tokens, 3150);
+    }
+
+    #[test]
+    fn extract_tokens_prefers_last_usage_when_counter_epoch_changes() {
+        let reset_with_last = serde_json::json!({
+            "timestamp": "2026-08-11T11:00:00Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 1000,
+                        "cached_input_tokens": 500,
+                        "output_tokens": 200,
+                        "reasoning_output_tokens": 50,
+                        "total_tokens": 1250
+                    },
+                    "last_token_usage": {
+                        "input_tokens": 200,
+                        "cached_input_tokens": 100,
+                        "output_tokens": 30,
+                        "reasoning_output_tokens": 20,
+                        "total_tokens": 250
+                    }
+                }
+            }
+        })
+        .to_string();
+        let lines = vec![
+            meta_line("/tmp/p"),
+            token_count_line_ts("2026-08-11T10:00:00Z", 1500, 300, 100, 1900),
+            reset_with_last,
+        ];
+        let parsed = extract_session_summary(&lines, &[]);
+        assert_eq!(parsed.total_tokens, 2150);
+        assert_eq!(parsed.input_tokens, 1700);
+        assert_eq!(parsed.output_tokens, 330);
+        assert_eq!(parsed.reasoning_tokens, 120);
+    }
+
+    #[test]
+    fn quota_window_upsert_reconciles_unassigned_events() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_quota_test_tables(&conn);
+        let occurred_at = "2026-08-31T09:00:00Z";
+        let occurred_at_secs = rfc3339_timestamp_secs(occurred_at).unwrap();
+        conn.execute(
+            "INSERT INTO account_token_events (
+                 session_id, event_index, account_id, occurred_at, occurred_at_secs, date,
+                 total_tokens
+             ) VALUES ('s1', 1, 'acc-a', ?1, ?2, '2026-08-31', 1200)",
+            params![occurred_at, occurred_at_secs],
+        )
+        .unwrap();
+
+        let resets_at = occurred_at_secs + 60 * 60;
+        let window = AccountUsageWindow {
+            used_percent: 12.0,
+            window_minutes: Some(300),
+            resets_at: Some(resets_at),
+        };
+        record_account_quota_window(
+            &conn,
+            "acc-a",
+            &window,
+            "2026-08-31T09:05:00Z",
+            Some("plus"),
+        )
+        .unwrap();
+        let later = AccountUsageWindow {
+            used_percent: 18.0,
+            ..window
+        };
+        record_account_quota_window(
+            &conn,
+            "acc-a",
+            &later,
+            "2026-08-31T09:30:00Z",
+            Some("plus"),
+        )
+        .unwrap();
+
+        let (count, first_used, last_used): (i64, f64, f64) = conn
+            .query_row(
+                "SELECT COUNT(*), MIN(first_used_percent), MAX(last_used_percent)
+                 FROM account_quota_windows WHERE account_id = 'acc-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(first_used, 12.0);
+        assert_eq!(last_used, 18.0);
+        let assigned: Option<i64> = conn
+            .query_row(
+                "SELECT window_resets_at FROM account_token_events WHERE session_id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(assigned, Some(resets_at));
     }
 
     fn token_count_line_with_rate_limit(ts: &str, used_percent: f64, plan: &str) -> String {
@@ -6387,6 +6798,7 @@ mod tests {
             );",
         )
         .unwrap();
+        create_quota_test_tables(&conn);
         // 已有 wham 缓存（含 secondary）+ 调度计划。
         let existing = serde_json::json!({
             "primary": { "usedPercent": 55.0, "windowMinutes": 10080, "resetsAt": 1787134079 },
@@ -6452,6 +6864,7 @@ mod tests {
             );",
         )
         .unwrap();
+        create_quota_test_tables(&conn);
         // 旧缓存里的周限是启动刷新时的陈旧值。
         let existing = serde_json::json!({
             "primary": { "usedPercent": 20.0, "windowMinutes": 300, "resetsAt": 1787726223 },
@@ -6499,7 +6912,7 @@ mod tests {
     }
 
     #[test]
-    fn session_usage_reset_closes_period_and_opens_new() {
+    fn session_usage_window_change_does_not_split_account_period() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE accounts (
@@ -6542,6 +6955,7 @@ mod tests {
             );",
         )
         .unwrap();
+        create_quota_test_tables(&conn);
         let existing = serde_json::json!({
             "primary": { "usedPercent": 71.0, "windowMinutes": 10080, "resetsAt": 1787134079 },
             "syncedAt": "2026-08-14T03:00:00Z"
@@ -6557,14 +6971,14 @@ mod tests {
             [],
         )
         .unwrap();
-        // 重置前的账号累计（新窗口周期增量以此为基准）。
+        // 旧实现会依赖账号累计创建切换快照；新实现不再使用它划分额度窗口。
         conn.execute(
             "INSERT INTO account_token_usage (account_id, date, session_id, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens) VALUES ('acc-a', '2026-08-14', 's1', 70000000, 68000000, 65000000, 1000000, 1000000)",
             [],
         )
         .unwrap();
 
-        // 额度重置：used 从 71 降到 5（剩余从 29% 回到 95%）。
+        // resets_at 变化代表新窗口；used 同时从 71 降到 5。
         let rl = RateLimitSnapshot {
             used_percent: 5.0,
             window_minutes: Some(10080),
@@ -6577,7 +6991,7 @@ mod tests {
         update_account_usage_from_session(&tx, "acc-a", &rl).unwrap();
         tx.commit().unwrap();
 
-        // 旧时段已关闭，新时段开启且起点剩余 = 95%。
+        // 账号没有发生切换，因此活跃时段必须保持为同一条。
         let periods: Vec<(String, Option<String>, Option<f64>)> = {
             let mut stmt = conn
                 .prepare("SELECT started_at, ended_at, start_used_percent FROM account_active_periods ORDER BY id")
@@ -6589,11 +7003,9 @@ mod tests {
                 .unwrap();
             rows.flatten().collect()
         };
-        assert_eq!(periods.len(), 2, "应关闭旧段并开新段");
-        assert_eq!(periods[0].1.as_deref(), Some("2026-08-14T04:00:00Z"), "旧段应在重置时刻关闭");
-        assert_eq!(periods[1].0, "2026-08-14T04:00:00Z", "新段从重置时刻开始");
-        assert!(periods[1].1.is_none(), "新段应进行中");
-        assert!((periods[1].2.unwrap() - 95.0).abs() < 0.01, "新段起点剩余应为 95%");
+        assert_eq!(periods.len(), 1, "额度窗口变化不应拆分账号时段");
+        assert!(periods[0].1.is_none(), "原账号时段应继续进行");
+        assert_eq!(periods[0].0, "2026-08-14T02:00:00Z");
 
         // usage_json 已更新为新值。
         let used: f64 = conn
@@ -6605,16 +7017,16 @@ mod tests {
             .unwrap();
         assert_eq!(used, 5.0);
 
-        // 重置时刻记了快照（新窗口周期增量的基准 = 重置前累计 70M）。
-        let (snapshot_count, snapshot_total): (i64, i64) = conn
+        // 新窗口按稳定的 resets_at 单独入库，不再写账号切换快照。
+        let (window_count, reset): (i64, i64) = conn
             .query_row(
-                "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0) FROM account_window_snapshots WHERE account_id = 'acc-a'",
+                "SELECT COUNT(*), COALESCE(MAX(resets_at), 0) FROM account_quota_windows WHERE account_id = 'acc-a'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(snapshot_count, 1, "重置时应记录一条快照");
-        assert_eq!(snapshot_total, 70_000_000, "快照应记录重置前的累计作为基准");
+        assert_eq!(window_count, 1);
+        assert_eq!(reset, 1_787_200_000);
     }
 
     #[test]
@@ -6633,6 +7045,7 @@ mod tests {
              );",
         )
         .unwrap();
+        create_quota_test_tables(&conn);
         conn.execute(
             "INSERT INTO accounts (id, usage_json, usage_updated_at) VALUES ('acc-a', NULL, NULL)",
             [],
@@ -6664,9 +7077,9 @@ mod tests {
     }
 
     #[test]
-    fn reset_detected_via_period_last_used_without_usage_json() {
-        // 关键场景：账号从未 wham 刷新（usage_json 为空），但时段内已有感知历史
-        // （如昨天感知 used=95）→ 今天感知 used=0 应触发重置。
+    fn usage_drop_records_new_window_without_splitting_period() {
+        // 账号从未 wham 刷新，但时段内已有感知历史；used 下降也只更新窗口锚点，
+        // 不能再把额度变化误认为账号切换。
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE accounts (id TEXT PRIMARY KEY, usage_json TEXT, usage_updated_at TEXT, chatgpt_plan_type TEXT);
@@ -6693,6 +7106,7 @@ mod tests {
              );",
         )
         .unwrap();
+        create_quota_test_tables(&conn);
         conn.execute(
             "INSERT INTO accounts (id, usage_json, usage_updated_at) VALUES ('acc-a', NULL, NULL)",
             [],
@@ -6717,7 +7131,7 @@ mod tests {
         update_account_usage_from_session(&tx, "acc-a", &rl).unwrap();
         tx.commit().unwrap();
 
-        // 重置触发：旧段关闭 + 新段开启（起点剩余 100）。
+        // 活跃账号没有变化，仍然只有原时段。
         let periods: Vec<(Option<String>, Option<f64>)> = {
             let mut stmt = conn
                 .prepare("SELECT ended_at, start_used_percent FROM account_active_periods ORDER BY id")
@@ -6729,9 +7143,18 @@ mod tests {
                 .unwrap();
             rows.flatten().collect()
         };
-        assert_eq!(periods.len(), 2);
-        assert_eq!(periods[0].0.as_deref(), Some("2026-08-17T01:37:00Z"), "旧段应关闭");
-        assert!((periods[1].1.unwrap() - 100.0).abs() < 0.01, "新段起点剩余 100");
+        assert_eq!(periods.len(), 1);
+        assert!(periods[0].0.is_none());
+        assert!((periods[0].1.unwrap() - 5.0).abs() < 0.01);
+
+        let resets_at: i64 = conn
+            .query_row(
+                "SELECT resets_at FROM account_quota_windows WHERE account_id = 'acc-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(resets_at, 1_787_200_000);
     }
 
     #[test]
