@@ -231,11 +231,11 @@ const TokenUsagePage: React.FC = () => {
               <StatCard label="输出" value={formatTokens(totals.outputTokens)} />
               <div
                 className="flex-1 min-w-0 rounded-xl border border-[#EAEAEA] bg-white px-4 py-3"
-                title="按 OpenAI API 标准价估算（非缓存输入×单价 + 缓存输入×缓存价 + 输出×单价）"
+                title="按当前 API 标准短上下文价格估算；推理已包含在输出中，未计入长上下文、Fast 模式和缓存写入溢价"
               >
                 <p className="text-[11px] font-medium text-[#888888] mb-1">金额</p>
                 <p className="text-[18px] font-bold tracking-tight text-black">{formatCost(totalCost)}</p>
-                <p className="mt-0.5 text-[10px] text-[#AAAAAA]">按 API 标准价估算</p>
+                <p className="mt-0.5 text-[10px] text-[#AAAAAA]">标准短上下文估算</p>
               </div>
             </div>
 

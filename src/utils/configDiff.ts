@@ -1,74 +1,51 @@
-import { parse, stringify } from 'smol-toml';
+type ConfigObject = Record<string, unknown>;
 
-/**
- * 配置合并/差异相关的公共逻辑。
- * 信任类配置（[projects] 的 trust_level、trusted_sources）以本机文件（云端）为准，
- * 应用不覆盖它们 —— 保存/同步时这些键的差异一律忽略。
- */
-export const IGNORED_CONFIG_KEYS = ['projects', 'trusted_sources'];
-
-/** 合并：用户编辑内容（db）为基础，信任类键以云端（本机文件）为准。 */
-export function mergeConfigWithCloud(dbContent: string, cloudContent: string): string {
-  let db: Record<string, unknown>;
-  let cloud: Record<string, unknown>;
-  try {
-    db = parse(dbContent) as Record<string, unknown>;
-  } catch {
-    return cloudContent; // 数据库内容解析失败：以云端为准
-  }
-  try {
-    cloud = parse(cloudContent) as Record<string, unknown>;
-  } catch {
-    return dbContent; // 云端解析失败：无法合并，以数据库为准
-  }
-  for (const key of IGNORED_CONFIG_KEYS) {
-    if (cloud[key] !== undefined) {
-      db[key] = cloud[key]; // 信任类配置保留云端值
-    } else {
-      delete db[key]; // 云端没有 → 不写入
-    }
-  }
-  return stringify(db);
+function isObject(value: unknown): value is ConfigObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
 }
 
-/** 结构化差异项（忽略键顺序与信任类配置）。 */
+function equivalent(left: unknown, right: unknown): boolean {
+  if (isObject(left) && isObject(right)) {
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    return [...keys].every(key => equivalent(left[key], right[key]));
+  }
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, i) => equivalent(value, right[i]));
+  }
+  if (left instanceof Date && right instanceof Date) return left.toISOString() === right.toISOString();
+  return Object.is(left, right);
+}
+
 export interface ConfigDiffItem {
   path: string;
-  db: unknown;
-  cloud: unknown;
+  oldValue: unknown;
+  newValue: unknown;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** 递归比较两边配置对象，返回差异路径列表（信任类键忽略）。 */
-export function collectConfigDiffs(
-  db: Record<string, unknown>,
-  cloud: Record<string, unknown>,
-  prefix = '',
-): ConfigDiffItem[] {
-  const diffs: ConfigDiffItem[] = [];
-  const keys = new Set([...Object.keys(db), ...Object.keys(cloud)]);
-  for (const key of keys) {
-    if (IGNORED_CONFIG_KEYS.includes(key)) continue;
+export function collectConfigDiffs(before: ConfigObject, after: ConfigObject, prefix = ''): ConfigDiffItem[] {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].flatMap(key => {
     const path = prefix ? `${prefix}.${key}` : key;
-    const dbValue = db[key];
-    const cloudValue = cloud[key];
-    if (isPlainObject(dbValue) && isPlainObject(cloudValue)) {
-      diffs.push(...collectConfigDiffs(dbValue, cloudValue, path));
-    } else if (JSON.stringify(dbValue) !== JSON.stringify(cloudValue)) {
-      diffs.push({ path, db: dbValue, cloud: cloudValue });
+    if (isObject(before[key]) && isObject(after[key])) {
+      return collectConfigDiffs(before[key], after[key], path);
     }
-  }
-  return diffs;
+    return equivalent(before[key], after[key]) ? [] : [{ path, oldValue: before[key], newValue: after[key] }];
+  });
 }
 
-/** 展示用：值格式化（对象/数组紧凑 JSON，标量原样）。 */
-export function formatConfigValue(value: unknown): string {
-  if (value === undefined) return '（无）';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (typeof value === 'number') return String(value);
-  return JSON.stringify(value);
+/** 仅将本次编辑应用到最新文件；其他字段保留，冲突字段拒绝覆盖。 */
+export function mergeConfigChanges(base: ConfigObject, edited: ConfigObject, latest: ConfigObject): ConfigObject {
+  function merge(before: unknown, after: unknown, current: unknown, path: string): unknown {
+    if (equivalent(before, after)) return current;
+    if (equivalent(current, after) || equivalent(current, before)) return after;
+    if ((isObject(before) || before === undefined) && isObject(after) && isObject(current)) {
+      const original = isObject(before) ? before : {};
+      return Object.fromEntries(
+        [...new Set([...Object.keys(original), ...Object.keys(after), ...Object.keys(current)])]
+          .map(key => [key, merge(original[key], after[key], current[key], path ? `${path}.${key}` : key)])
+          .filter(([, value]) => value !== undefined),
+      );
+    }
+    throw new Error(`本地配置中的 ${path} 已被外部修改，请重新载入后再保存。`);
+  }
+  return merge(base, edited, latest, '') as ConfigObject;
 }

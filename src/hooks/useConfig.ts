@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { parse, stringify } from 'smol-toml';
-import { mergeConfigWithCloud } from '../utils/configDiff';
+import { parse, stringify, TomlError } from 'smol-toml';
+import { collectConfigDiffs, mergeConfigChanges } from '../utils/configDiff';
 
 export interface MCPServer {
   command?: string;
@@ -11,176 +11,123 @@ export interface MCPServer {
   disabled?: boolean;
 }
 
-export interface ModelProvider {
-  base_url?: string;
-  api_key?: string;
-  [key: string]: any;
-}
-
 export interface CodexConfig {
   sandbox_mode?: string;
-  approval_policy?: string;
+  approval_policy?: string | { granular: Record<string, boolean> };
   personality?: string;
   model_reasoning_effort?: string;
   model?: string;
   suppress_unstable_features_warning?: boolean;
   features?: Record<string, boolean>;
   mcp_servers?: Record<string, MCPServer>;
-  model_provider?: ModelProvider;
   [key: string]: any;
 }
 
-export interface ConsistencyCheckResult {
-  is_consistent: boolean;
-  db_content: string | null;
-  local_content: string | null;
-}
-
-const IGNORED_CODEX_SYNC_ROOT_KEYS = new Set(['projects', 'trusted_sources']);
-
-function normalizeConfigValue(value: unknown, isRoot = false): unknown {
-  if (Array.isArray(value)) {
-    return value.map(item => normalizeConfigValue(item));
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const keys = Object.keys(record)
-      .filter(key => !isRoot || !IGNORED_CODEX_SYNC_ROOT_KEYS.has(key))
-      .sort();
-
-    return Object.fromEntries(
-      keys.map(key => [key, normalizeConfigValue(record[key])])
-    );
-  }
-
-  return value;
-}
-
-function normalizeConfigText(content: string) {
-  return content.replace(/\r\n?/g, '\n').trimEnd();
-}
-
-function areCodexConfigsEquivalent(dbContent: string | null, localContent: string | null) {
-  if (dbContent === localContent) return true;
-  if (dbContent === null || localContent === null) return false;
-
+export function parseConfig(content: string): CodexConfig {
   try {
-    const dbConfig = normalizeConfigValue(parse(dbContent), true);
-    const localConfig = normalizeConfigValue(parse(localContent), true);
-    return JSON.stringify(dbConfig) === JSON.stringify(localConfig);
-  } catch {
-    return normalizeConfigText(dbContent) === normalizeConfigText(localContent);
+    return parse(content) as CodexConfig;
+  } catch (err) {
+    const position = err instanceof TomlError ? `（第 ${err.line} 行，第 ${err.column} 列）` : '';
+    throw new Error(`TOML 格式无效${position}，请在高级配置中修正后保存。`);
   }
 }
 
-export function useConfig() {
-  const [config, setConfig] = useState<CodexConfig | null>(null);
-  const [rawToml, setRawToml] = useState<string>('');
+export function useConfig(live = false) {
+  const [snapshot, setSnapshot] = useState<{ config: CodexConfig | null; rawToml: string }>({ config: null, rawToml: '' });
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasLoadedFile, setHasLoadedFile] = useState(false);
+  const loading = useRef(false);
+  const saving = useRef(false);
+  const revision = useRef(0);
 
   const loadConfig = useCallback(async () => {
+    if (loading.current || saving.current) return;
+    loading.current = true;
+    const request = ++revision.current;
+    setIsRefreshing(true);
     try {
-      setIsLoading(true);
-      setError(null);
-      const tomlString = await invoke<string>('get_codex_config');
-      setRawToml(tomlString);
-      
+      const rawToml = await invoke<string>('get_codex_config');
+      if (request !== revision.current) return;
+      setHasLoadedFile(true);
       try {
-        const parsed = parse(tomlString) as CodexConfig;
-        setConfig(parsed);
-      } catch (parseErr) {
-        console.error('Failed to parse TOML:', parseErr);
+        const config = parseConfig(rawToml);
+        setSnapshot(previous => previous.config && previous.rawToml === rawToml ? previous : { config, rawToml });
+        setError(null);
+      } catch (err) {
+        setSnapshot({ config: null, rawToml });
+        setError(String(err));
       }
-    } catch (err: any) {
-      console.error('Failed to load config:', err);
-      setError(err?.toString() || 'Failed to load config.toml');
+    } catch (err) {
+      if (request === revision.current) {
+        setHasLoadedFile(false);
+        setSnapshot({ config: null, rawToml: '' });
+        setError(String(err));
+      }
     } finally {
-      setIsLoading(false);
+      loading.current = false;
+      if (request === revision.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    loadConfig();
-  }, [loadConfig]);
-
-  /** 保存前与本机文件（云端）合并：信任类配置（[projects]/trusted_sources）保留云端值，
-   *  避免全覆盖把用户信任的目录等配置冲掉。 */
-  const mergeWithCloud = async (content: string): Promise<string> => {
-    try {
-      const res = await invoke<{ local_content: string | null }>('check_config_consistency', {
-        configType: 'codex',
-      });
-      if (res.local_content) return mergeConfigWithCloud(content, res.local_content);
-    } catch {
-      // 拿不到云端内容时按原样保存
+    void loadConfig();
+    // 只在可见页面轮询本地文件；窗口恢复焦点时立即读取。
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') void loadConfig();
+    };
+    if (live) {
+      window.addEventListener('focus', refreshVisible);
+      document.addEventListener('visibilitychange', refreshVisible);
     }
-    return content;
-  };
+    const timer = live ? window.setInterval(refreshVisible, 1500) : undefined;
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
+  }, [live, loadConfig]);
 
-  const saveConfig = async (updatedConfig: CodexConfig) => {
+  const saveConfig = async (updatedConfig: CodexConfig, baseConfig = snapshot.config) => {
+    if (!baseConfig) throw new Error('请先读取有效的本地配置。');
+    if (saving.current) throw new Error('正在保存配置，请稍候。');
+    saving.current = true;
+    ++revision.current;
+    setIsRefreshing(false);
     try {
-      const tomlString = stringify(updatedConfig);
-      const merged = await mergeWithCloud(tomlString);
-      await invoke('save_codex_config', { content: merged });
-      setRawToml(merged);
-      try {
-        setConfig(parse(merged) as CodexConfig);
-      } catch {
-        setConfig(updatedConfig);
-      }
-    } catch (err: any) {
-      console.error('Failed to save config:', err);
-      throw err;
-    }
-  };
-
-  const saveRawConfig = async (tomlString: string) => {
-    try {
-      // Validate TOML first
-      const parsed = parse(tomlString) as CodexConfig;
-      const merged = await mergeWithCloud(tomlString);
-      await invoke('save_codex_config', { content: merged });
-      setRawToml(merged);
-      try {
-        setConfig(parse(merged) as CodexConfig);
-      } catch {
-        setConfig(parsed);
-      }
-    } catch (err: any) {
-      console.error('Failed to save raw config:', err);
-      throw err;
+      const expectedContent = await invoke<string>('get_codex_config');
+      const latest = parseConfig(expectedContent);
+      const merged = mergeConfigChanges(baseConfig, updatedConfig, latest) as CodexConfig;
+      const content = collectConfigDiffs(latest, merged).length === 0 ? expectedContent : stringify(merged);
+      await invoke('save_codex_config', { content, expectedContent });
+      setSnapshot({ config: parseConfig(content), rawToml: content });
+      setHasLoadedFile(true);
+      setError(null);
+    } finally {
+      saving.current = false;
     }
   };
 
-  const checkConsistency = async (configType: 'codex' | 'mcp' = 'codex'): Promise<ConsistencyCheckResult> => {
+  // 原文编辑按预览时的文件内容校验，直接写入用户文本，保留注释、顺序和格式。
+  const saveRawConfig = async (content: string, expectedContent: string) => {
+    const config = parseConfig(content);
+    if (saving.current) throw new Error('正在保存配置，请稍候。');
+    saving.current = true;
+    ++revision.current;
+    setIsRefreshing(false);
     try {
-      const result = await invoke<ConsistencyCheckResult>('check_config_consistency', { configType });
-      if (configType !== 'codex') return result;
-
-      return {
-        ...result,
-        is_consistent: areCodexConfigsEquivalent(result.db_content, result.local_content),
-      };
-    } catch (err: any) {
-      console.error('Failed to check consistency:', err);
-      throw err;
+      await invoke('save_codex_config', { content, expectedContent });
+      setSnapshot({ config, rawToml: content });
+      setHasLoadedFile(true);
+      setError(null);
+    } finally {
+      saving.current = false;
     }
   };
 
-  return {
-    config,
-    rawToml,
-    isLoading,
-    error,
-    saveConfig,
-    saveRawConfig,
-    checkConsistency,
-    refresh: loadConfig
-  };
+  return { ...snapshot, isLoading, isRefreshing, error, hasLoadedFile, saveConfig, saveRawConfig, refresh: loadConfig };
 }

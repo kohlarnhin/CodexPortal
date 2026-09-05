@@ -1,23 +1,26 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Account, AccountStore, AccountFormData, AccountWindowSnapshot, OAuthLoginInfo, ResetCreditsInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
+import { Account, AccountStore, AccountFormData, OAuthLoginInfo, ResetCreditsInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
 
 export function useAccounts() {
   const [store, setStore] = useState<AccountStore>({ activeAccountId: null, accounts: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const requestRevision = useRef(0);
+
   const loadAccounts = useCallback(async (showLoading: boolean = true) => {
+    const revision = ++requestRevision.current;
     try {
       if (showLoading) setIsLoading(true);
       setError(null);
       const data = await invoke<AccountStore>('get_accounts');
-      setStore(data);
+      if (revision === requestRevision.current) setStore(data);
     } catch (err: any) {
       console.error('Failed to load accounts:', err);
-      setError(err?.toString() || 'Failed to load accounts');
+      if (revision === requestRevision.current) setError(err?.toString() || 'Failed to load accounts');
     } finally {
-      if (showLoading) setIsLoading(false);
+      if (revision === requestRevision.current) setIsLoading(false);
     }
   }, []);
 
@@ -102,16 +105,6 @@ export function useAccounts() {
     return await invoke<ResetCreditsInfo>('get_reset_credits', { id, force });
   };
 
-  const getAccountWindowSnapshots = useCallback(async (
-    id: string,
-    limit = 2,
-  ): Promise<AccountWindowSnapshot[]> => {
-    return await invoke<AccountWindowSnapshot[]>('get_account_window_snapshots', {
-      accountId: id,
-      limit,
-    });
-  }, []);
-
   const consumeResetCredit = useCallback(async (id: string, creditId: string): Promise<ResetCreditsInfo> => {
     try {
       const info = await invoke<ResetCreditsInfo>('consume_reset_credit', { id, creditId });
@@ -161,7 +154,6 @@ export function useAccounts() {
     setAccountAccessToken,
     getResetCredits,
     consumeResetCredit,
-    getAccountWindowSnapshots,
     refresh: loadAccounts
   };
 }

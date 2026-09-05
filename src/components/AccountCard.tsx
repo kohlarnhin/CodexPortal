@@ -71,6 +71,12 @@ const AccountCard: React.FC<AccountCardProps> = ({
   onShowReset,
   isUsageRefreshing,
 }) => {
+  const canActivate = (() => {
+    try {
+      const token: unknown = JSON.parse(account.authJsonContent).personal_access_token;
+      return typeof token === 'string' && token.trim().length > 0;
+    } catch { return false; }
+  })();
   const usageWindows: Array<{
     window: AccountUsageWindow;
     kind: 'primary' | 'secondary';
@@ -155,18 +161,24 @@ const AccountCard: React.FC<AccountCardProps> = ({
             </div>
             <div className="w-[1px] h-4 bg-[#EAEAEA]"></div>
             <div className="flex items-center gap-2">
-              <div 
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isActive}
+                aria-label="切换当前账号"
+                disabled={!canActivate}
+                title={canActivate ? '切换当前账号' : '需补充 PAT 才能切换本地账号；仍可管理额度'}
                 onClick={() => {
                   if (!isActive) onSetActive(account.id);
                 }}
-                className={`relative inline-block w-10 h-5 rounded-full transition-colors duration-200 ease-in-out cursor-pointer ${
+                className={`relative inline-block w-10 h-5 rounded-full transition-colors duration-200 ease-in-out cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
                   isActive ? 'bg-black' : 'bg-[#E0E0E0] hover:bg-[#D0D0D0]'
                 }`}
               >
                 <span className={`absolute left-[2px] top-[2px] bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-200 ease-in-out ${
                   isActive ? 'translate-x-5' : 'translate-x-0'
                 }`} />
-              </div>
+              </button>
             </div>
           </div>
         </div>

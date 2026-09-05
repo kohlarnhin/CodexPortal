@@ -6,8 +6,8 @@ import { AccountUsage } from '../types/account';
 /**
  * 账号额度刷新调度。
  *
- * 自动刷新已由后端后台调度器驱动（启动全量逐个刷新 + 按 next_refresh_at 精确触发），
- * 前端仅监听事件刷新 UI；手动刷新仍直接调用后端命令。
+ * 后端每 5 分钟同步会话，并保存会话返回的账号额度。
+ * 同步完成后重新读取本地账号缓存；启动补刷、重置到期和手动刷新使用额度接口。
  */
 export function useAccountUsageScheduler() {
   const [usageRevision, setUsageRevision] = useState(0);
@@ -38,21 +38,37 @@ export function useAccountUsageScheduler() {
       });
     };
 
-    void Promise.all([
+    void Promise.allSettled([
       listen('usage-updated', handleUsageUpdated),
+      listen('accounts-updated', handleUsageUpdated),
+      listen('session-sync-completed', handleUsageUpdated),
       listen<{ accountId: string }>('usage-refresh-started', handleRefreshStarted),
       listen<{ accountId: string }>('usage-refresh-finished', handleRefreshFinished),
     ]).then((resolved) => {
-      if (disposed) {
-        resolved.forEach((unlisten) => unlisten());
-        return;
+      for (const result of resolved) {
+        if (result.status === 'fulfilled') {
+          if (disposed) result.value();
+          else unlisteners.push(result.value);
+        } else {
+          console.error('Failed to listen for account usage updates:', result.reason);
+        }
       }
-      unlisteners.push(...resolved);
+      // 补读监听注册期间已同步的额度，避免首次加载与后台同步交错时漏掉更新。
+      handleUsageUpdated();
     });
+
+    // 应用从后台恢复时补读本地缓存，不额外请求额度接口。
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') handleUsageUpdated();
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
 
     return () => {
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, []);
 

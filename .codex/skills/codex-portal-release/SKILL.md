@@ -16,13 +16,15 @@ Treat saved `auth.json` content, tokens, account email addresses, and the local 
 1. Inspect the current branch and worktree with `git status --short` before editing.
 2. Preserve all existing user changes and avoid unrelated rewrites.
 3. Resolve implementation details from the repository when the requested behavior is sufficiently determined. Ask one concise question only when different interpretations would materially change behavior.
-4. Keep React UI changes consistent with the existing compact monochrome desktop design and keep Tauri commands and data access in `src-tauri/src/lib.rs`.
+4. Keep React UI changes consistent with the existing compact monochrome desktop design. Organize Rust commands and data access by business module; keep `src-tauri/src/lib.rs` focused on application startup, shared-state initialization, and command registration.
 
 Do not create or switch branches, commit, push, tag, or open a pull request unless the user asks for that Git operation.
 
 ## Implement Changes
 
 - Keep frontend pages and components in `src/`, shared hooks in `src/hooks/`, utilities in `src/utils/`, and account types in `src/types/`.
+- Under `src-tauri/src/`, keep account management in `accounts/`, authentication in `auth/`, session parsing/sync/statistics in `sessions/`, and Codex configuration/version detection in `codex/`. Keep shared runtime state in `state.rs`, database initialization in `db.rs`, common HTTP and timestamp helpers in `http.rs` and `time.rs`, and skill/update management in `skills.rs` and `updates.rs`.
+- Keep module dependencies explicit and expose only the types and functions needed by callers. Keep unit tests with their owning module. During structural refactors, preserve Tauri command names and serialized fields, database migrations, transaction/lock boundaries, scheduler behavior, and credential handling.
 - Preserve raw account and authentication data. Apply masking or formatting only at the presentation boundary unless the user explicitly requests a data migration.
 - Prefer browser-native APIs and existing dependencies. Do not install packages merely for small parsing, formatting, or state-persistence tasks.
 - Persist application-only UI preferences separately from Codex's `config.toml`; do not mix portal preferences into the user's Codex configuration.

@@ -1,233 +1,169 @@
-import React, { useState, useEffect } from 'react';
-import { useConfig, CodexConfig } from '../hooks/useConfig';
-import { parse as parseToml } from 'smol-toml';
+import React, { useState } from 'react';
+import { useConfig, parseConfig, CodexConfig } from '../hooks/useConfig';
+import { stringify } from 'smol-toml';
 import Select from './Select';
 import DiffModal, { DiffItem } from './DiffModal';
 import { OFFICIAL_FEATURES, OFFICIAL_FEATURE_KEYS } from '../utils/codexFeatures';
-import { collectConfigDiffs, formatConfigValue, type ConfigDiffItem } from '../utils/configDiff';
+import { collectConfigDiffs } from '../utils/configDiff';
+import { PRICED_MODELS } from '../utils/modelPricing';
 
-/** 结构化差异视图：
- *  左 = 本地配置（数据库），右 = 云端配置（本机文件 ~/.codex/config.toml）。
- *  差异按"键值"比较（忽略顺序与 [projects]/[trusted_sources] 信任类配置），
- *  以差异条目列表展示（本地/云端各自的取值），左右框仅作完整内容参考。 */
-const SyncDiffView: React.FC<{ dbContent: string | null; localContent: string | null }> = ({
-  dbContent,
-  localContent,
-}) => {
-  const dbLines = (dbContent || '').split('\n');
-  const localLines = (localContent || '').split('\n');
+interface ConfigDraft {
+  base: CodexConfig | null;
+  baseToml: string;
+  value: CodexConfig | null;
+  toml: string;
+  raw: boolean;
+}
 
-  let diffs: ConfigDiffItem[] = [];
-  try {
-    diffs = collectConfigDiffs(
-      parseToml(dbContent || '{}') as Record<string, unknown>,
-      parseToml(localContent || '{}') as Record<string, unknown>,
-    );
-  } catch {
-    diffs = [];
-  }
+type PendingSave =
+  | { kind: 'raw'; content: string; expectedContent: string }
+  | { kind: 'structured'; value: CodexConfig; base: CodexConfig };
 
-  const renderPanel = (lines: string[]) => (
-    <div className="w-full h-[220px] overflow-y-auto bg-white border border-[#EAEAEA] rounded-md font-mono text-[12px] text-[#333]">
-      {lines.map((line, i) => (
-        <div key={i} className="px-3 py-px whitespace-pre">
-          {line}
-        </div>
-      ))}
-    </div>
-  );
-
-  return (
-    <div className="flex flex-col gap-4 min-h-0">
-      {diffs.length > 0 ? (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[12px] font-semibold text-[#888] uppercase">
-            配置差异（{diffs.length} 项）
-          </div>
-          {diffs.map(diff => (
-            <div key={diff.path} className="flex items-start gap-3 rounded-md bg-[#FAFAFA] border border-[#EAEAEA] px-3 py-2">
-              <span className="w-44 shrink-0 truncate font-mono text-[12px] font-semibold text-black" title={diff.path}>
-                {diff.path}
-              </span>
-              <span className="flex-1 min-w-0 text-[12px] text-[#888888] truncate" title={formatConfigValue(diff.cloud)}>
-                云端：{formatConfigValue(diff.cloud)}
-              </span>
-              <span className="flex-1 min-w-0 text-[12px] text-[#888888] truncate" title={formatConfigValue(diff.db)}>
-                本地：{formatConfigValue(diff.db)}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-[12px] text-[#888888]">配置键值一致（信任类配置差异已忽略）</p>
-      )}
-
-      <div className="grid grid-cols-2 gap-4 min-h-0">
-        <div className="flex flex-col gap-2 min-h-0">
-          <div className="text-[12px] font-semibold text-[#888] uppercase">
-            本地配置 <span className="font-normal">(数据库)</span>
-          </div>
-          {renderPanel(dbLines)}
-        </div>
-        <div className="flex flex-col gap-2 min-h-0">
-          <div className="text-[12px] font-semibold text-[#888] uppercase">
-            云端配置 <span className="font-normal">(~/.codex/config.toml)</span>
-          </div>
-          {renderPanel(localLines)}
-        </div>
-      </div>
-    </div>
-  );
-};
+function configDiffItems(before: CodexConfig, after: CodexConfig): DiffItem[] {
+  const displayValue = (value: unknown, path: string): unknown => {
+    if (/api_key|token|secret|authorization/i.test(path)) return value === undefined ? undefined : '••••••';
+    if (Array.isArray(value)) return value.map(item => displayValue(item, path));
+    if (value instanceof Date) return value.toISOString();
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, displayValue(item, `${path}.${key}`)]));
+    }
+    return value;
+  };
+  return collectConfigDiffs(before, after).map(diff => ({
+    key: diff.path,
+    oldVal: displayValue(diff.oldValue, diff.path),
+    newVal: displayValue(diff.newValue, diff.path),
+  }));
+}
 
 export default function Settings() {
-  const { config, rawToml, isLoading, error, saveConfig, saveRawConfig, checkConsistency } = useConfig();
+  const { config, rawToml, isLoading, isRefreshing, error, hasLoadedFile, saveConfig, saveRawConfig, refresh } = useConfig(true);
   const [activeTab, setActiveTab] = useState<'general' | 'features' | 'advanced'>('general');
-  const [localConfig, setLocalConfig] = useState<CodexConfig | null>(null);
-  const [localRaw, setLocalRaw] = useState<string>('');
+  const [draft, setDraft] = useState<ConfigDraft | null>(null);
+  const [tomlError, setTomlError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [pendingDiffs, setPendingDiffs] = useState<DiffItem[]>([]);
-  const [pendingSaveSource, setPendingSaveSource] = useState<'general' | 'raw' | null>(null);
-  const [isCheckingSync, setIsCheckingSync] = useState(false);
-  const [syncCheckResult, setSyncCheckResult] = useState<{ isConsistent: boolean, dbContent: string | null, localContent: string | null } | null>(null);
+  const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
+  const localConfig = draft ? draft.value : config;
+  const localToml = draft?.toml ?? rawToml;
+  const editingDisabled = isSaving || showDiffModal || !hasLoadedFile;
 
-  useEffect(() => {
-    if (config) setLocalConfig(config);
-    if (rawToml) setLocalRaw(rawToml);
-  }, [config, rawToml]);
-
-  const handleSaveGeneral = () => {
-    if (!localConfig || !config) return;
-    
-    // Compute differences
-    const diffs: DiffItem[] = [];
-    const keys = ['model', 'sandbox_mode', 'approval_policy', 'model_reasoning_effort'];
-    keys.forEach(k => {
-      if (config[k] !== localConfig[k]) {
-        diffs.push({ key: k, oldVal: config[k], newVal: localConfig[k] });
-      }
-    });
-
-    if (JSON.stringify(config.model_provider) !== JSON.stringify(localConfig.model_provider)) {
-      diffs.push({ 
-        key: 'model_provider', 
-        oldVal: config.model_provider ? '第三方服务' : '官方默认服务', 
-        newVal: localConfig.model_provider ? '第三方服务' : '官方默认服务' 
-      });
+  const setLocalConfig = (value: CodexConfig) => {
+    if (!localConfig || editingDisabled || (!draft?.raw && !!error)) return;
+    try {
+      const toml = stringify(value);
+      setDraft(previous => ({
+        base: previous ? previous.base : config,
+        baseToml: previous?.baseToml ?? rawToml,
+        value,
+        toml,
+        raw: previous?.raw ?? false,
+      }));
+      setTomlError(null);
+      setSaveMessage(null);
+    } catch {
+      setSaveMessage({ type: 'error', text: '无法生成 TOML，请检查配置值。' });
     }
+  };
 
-    const oldF = config.features || {};
-    const newF = localConfig.features || {};
-    const allFeatures = Array.from(new Set([...Object.keys(oldF), ...Object.keys(newF)]));
-    allFeatures.forEach(k => {
-      if (oldF[k] !== newF[k]) {
-        diffs.push({ key: `features.${k}`, oldVal: oldF[k], newVal: newF[k] });
+  const setLocalToml = (toml: string) => {
+    if (editingDisabled) return;
+    let value: CodexConfig | null = null;
+    try {
+      value = parseConfig(toml);
+      setTomlError(null);
+    } catch (err) {
+      setTomlError(err instanceof Error ? err.message : String(err));
+    }
+    setDraft(previous => ({
+      base: previous ? previous.base : config,
+      baseToml: previous?.baseToml ?? rawToml,
+      value,
+      toml,
+      raw: true,
+    }));
+    setSaveMessage(null);
+  };
+
+  const discardDraft = () => {
+    setDraft(null);
+    setTomlError(null);
+    setSaveMessage(null);
+    void refresh();
+  };
+
+  const updateSetting = (key: 'sandbox_mode' | 'approval_policy' | 'model_reasoning_effort', value: string) => {
+    if (!localConfig || value === '__custom__') return;
+    const updated = { ...localConfig };
+    if (value) updated[key] = value;
+    else delete updated[key];
+    setLocalConfig(updated);
+  };
+
+  const handleSave = () => {
+    if (!draft || editingDisabled) return;
+    setSaveMessage(null);
+    if (draft.raw) {
+      try {
+        parseConfig(draft.toml);
+      } catch (err) {
+        setTomlError(err instanceof Error ? err.message : String(err));
+        setActiveTab('advanced');
+        return;
       }
-    });
-
-    if (diffs.length === 0) {
-      setSaveMessage({ type: 'success', text: '无任何更改' });
-      setTimeout(() => setSaveMessage(null), 2000);
+      if (draft.toml === draft.baseToml) {
+        setDraft(null);
+        setTomlError(null);
+        setSaveMessage({ type: 'success', text: '无任何更改' });
+        return;
+      }
+      if (draft.baseToml !== rawToml) {
+        setSaveMessage({ type: 'error', text: '本地配置已被外部修改，编辑内容已保留。请先复制需要保留的内容，再重新载入后编辑。' });
+        return;
+      }
+      const diffs = draft.base && draft.value ? configDiffItems(draft.base, draft.value) : [{
+        key: 'TOML 格式', oldVal: '格式无效', newVal: '已修正',
+      }];
+      setPendingDiffs(diffs.length ? diffs : [{
+        key: '注释与格式', oldVal: '原文本', newVal: '已修改（配置值未变）',
+      }]);
+      setPendingSave({ kind: 'raw', content: draft.toml, expectedContent: draft.baseToml });
+      setShowDiffModal(true);
       return;
     }
-
-    setPendingSaveSource('general');
+    if (!draft.base || !draft.value || error) return;
+    const diffs = configDiffItems(draft.base, draft.value);
+    if (diffs.length === 0) {
+      setDraft(null);
+      setSaveMessage({ type: 'success', text: '无任何更改' });
+      return;
+    }
     setPendingDiffs(diffs);
+    setPendingSave({ kind: 'structured', value: draft.value, base: draft.base });
     setShowDiffModal(true);
   };
 
   const confirmSave = async () => {
-    if (!localConfig && pendingSaveSource !== 'raw') return;
+    if (!pendingSave || isSaving) return;
+    setShowDiffModal(false);
+    setIsSaving(true);
+    setSaveMessage(null);
     try {
-      setShowDiffModal(false);
-      setIsSaving(true);
-      setSaveMessage(null);
-      if (pendingSaveSource === 'raw') {
-        await saveRawConfig(localRaw);
+      if (pendingSave.kind === 'raw') {
+        await saveRawConfig(pendingSave.content, pendingSave.expectedContent);
       } else {
-        await saveConfig(localConfig!);
+        await saveConfig(pendingSave.value, pendingSave.base);
       }
-      setSaveMessage({ type: 'success', text: '保存成功' });
-      setTimeout(() => setSaveMessage(null), 3000);
-    } catch (err: any) {
-      setSaveMessage({ type: 'error', text: err.toString() });
+      setDraft(null);
+      setTomlError(null);
+      setPendingSave(null);
+      setSaveMessage({ type: 'success', text: '已保存到本地 config.toml' });
+    } catch (err) {
+      setSaveMessage({ type: 'error', text: err instanceof Error ? err.message : String(err) });
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleSaveRaw = async () => {
-    // 计算本次 TOML 变更（结构化对比当前配置 vs 编辑内容），弹窗二次确认。
-    const diffs: DiffItem[] = [];
-    try {
-      const found = collectConfigDiffs(
-        parseToml(rawToml || '{}') as Record<string, unknown>,
-        parseToml(localRaw || '{}') as Record<string, unknown>,
-      );
-      found.forEach(d => {
-        diffs.push({ key: d.path, oldVal: formatConfigValue(d.db), newVal: formatConfigValue(d.cloud) });
-      });
-    } catch {
-      // 解析失败：回退到文本比较（按行差异）
-      const oldLines = (rawToml || '').split('\n');
-      const newLines = (localRaw || '').split('\n');
-      const max = Math.max(oldLines.length, newLines.length);
-      for (let i = 0; i < max; i++) {
-        if (oldLines[i] !== newLines[i]) {
-          diffs.push({ key: `行 ${i + 1}`, oldVal: oldLines[i] ?? '（无）', newVal: newLines[i] ?? '（无）' });
-        }
-      }
-    }
-
-    if (diffs.length === 0) {
-      setSaveMessage({ type: 'success', text: '无任何更改' });
-      setTimeout(() => setSaveMessage(null), 2000);
-      return;
-    }
-    setPendingSaveSource('raw');
-    setPendingDiffs(diffs);
-    setShowDiffModal(true);
-  };
-
-  const handleCheckSync = async () => {
-    try {
-      setIsCheckingSync(true);
-      // 仅比较数据库与本机文件（官方开关未配置不算差异，只是页面展示为关闭）。
-      const res = await checkConsistency('codex');
-      if (res.is_consistent) {
-        setSaveMessage({ type: 'success', text: '数据库与本机配置一致' });
-        setTimeout(() => setSaveMessage(null), 3000);
-      } else {
-        setSyncCheckResult({
-          isConsistent: false,
-          dbContent: res.db_content,
-          localContent: res.local_content
-        });
-      }
-    } catch (err: any) {
-      setSaveMessage({ type: 'error', text: '检查同步失败: ' + err.toString() });
-      setTimeout(() => setSaveMessage(null), 3000);
-    } finally {
-      setIsCheckingSync(false);
-    }
-  };
-
-  const forceSync = async () => {
-    if (syncCheckResult?.dbContent) {
-      try {
-        setIsSaving(true);
-        await saveRawConfig(syncCheckResult.dbContent);
-        setSyncCheckResult(null);
-        setSaveMessage({ type: 'success', text: '强制同步成功' });
-        setTimeout(() => setSaveMessage(null), 3000);
-      } catch (err: any) {
-        setSaveMessage({ type: 'error', text: '强制同步失败: ' + err.toString() });
-        setTimeout(() => setSaveMessage(null), 3000);
-      } finally {
-        setIsSaving(false);
-      }
     }
   };
 
@@ -243,17 +179,6 @@ export default function Settings() {
     );
   }
 
-  if (error && !localConfig) {
-    return (
-      <div className="max-w-4xl mx-auto w-full pt-10">
-        <div className="bg-[#FFF0F0] border border-[#FFD0D0] text-[#D32F2F] p-5 rounded-xl flex flex-col gap-2">
-          <h3 className="font-semibold text-[15px]">读取配置失败</h3>
-          <p className="text-[14px]">{error}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-4xl mx-auto w-full h-full flex flex-col">
       <div className="flex items-center justify-between mb-6 shrink-0 relative z-10">
@@ -261,18 +186,18 @@ export default function Settings() {
           <h2 className="text-[20px] font-semibold text-black tracking-tight mb-1.5 flex items-center gap-3">
             配置管理
             <button 
-              onClick={handleCheckSync}
-              disabled={isCheckingSync}
+              onClick={() => { void refresh(); }}
+              disabled={isRefreshing || isSaving || showDiffModal}
               className="text-[12px] px-2.5 py-1 rounded-full border border-[#EAEAEA] bg-[#F9F9F9] text-[#666666] hover:text-black hover:bg-white hover:shadow-sm transition-all flex items-center gap-1.5 font-normal disabled:opacity-50"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={isCheckingSync ? 'animate-spin' : ''}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-              {isCheckingSync ? '检查中...' : '检查同步'}
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={isRefreshing ? 'animate-spin' : ''}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              {isRefreshing ? '读取中...' : '刷新'}
             </button>
           </h2>
-          <p className="text-[14px] text-[#666666]">可视化编辑底层 Codex 核心配置。</p>
+          <p className="text-[14px] text-[#666666]">仅支持 OpenAI 官方订阅，配置修改后保存到本地 config.toml。</p>
         </div>
         {saveMessage && (
-          <div className={`px-3 py-1.5 rounded-md text-[13px] font-medium animate-fade-in ${
+          <div role={saveMessage.type === 'error' ? 'alert' : 'status'} className={`max-w-sm break-words px-3 py-1.5 rounded-md text-[13px] font-medium animate-fade-in ${
             saveMessage.type === 'success' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-[#FFF0F0] text-[#D32F2F] border border-[#FFD0D0]'
           }`}>
             {saveMessage.text}
@@ -288,7 +213,8 @@ export default function Settings() {
         ].map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => { setActiveTab(tab.id as typeof activeTab); void refresh(); }}
+            disabled={isSaving || showDiffModal}
             className={`pb-3 text-[14px] font-medium transition-colors relative ${
               activeTab === tab.id ? 'text-black' : 'text-[#888888] hover:text-black'
             }`}
@@ -301,10 +227,21 @@ export default function Settings() {
         ))}
       </div>
 
+      {error && (!draft?.raw || !hasLoadedFile) && (
+        <div role="alert" className="mb-4 px-4 py-3 rounded-md border border-[#FFD0D0] bg-[#FFF0F0] text-[#D32F2F] text-[13px]">
+          {error}
+        </div>
+      )}
       <div className="animate-fade-in flex-1 flex flex-col min-h-0">
+        {activeTab !== 'advanced' && !localConfig && (
+          <div className="rounded-xl border border-[#EAEAEA] bg-white px-6 py-8 text-center">
+            <p className="mb-4 text-[13px] text-[#777777]">配置格式有效后即可使用快捷设置。</p>
+            <button type="button" onClick={() => setActiveTab('advanced')} className="rounded-md bg-black px-4 py-2 text-[13px] text-white">前往高级配置编辑</button>
+          </div>
+        )}
         {(activeTab === 'general' || activeTab === 'features') && localConfig && (
           <div className="bg-white rounded-xl border border-[#EAEAEA] flex flex-col h-full">
-            <div className="p-6 flex flex-col gap-6 flex-1 overflow-y-scroll relative">
+            <fieldset disabled={editingDisabled || (!draft?.raw && !!error)} className="p-6 flex flex-col gap-6 flex-1 min-h-0 overflow-y-scroll relative">
               {activeTab === 'general' && (
                 <>
                   <div className="grid grid-cols-2 gap-6">
@@ -315,38 +252,47 @@ export default function Settings() {
                         value={localConfig.model || ''}
                         onChange={e => setLocalConfig({...localConfig, model: e.target.value})}
                         className="px-3 py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-md text-[14px] focus:outline-none focus:ring-1 focus:ring-black focus:border-black transition-all"
-                        placeholder="gpt-5.6-sol"
+                        placeholder="gpt-6-astra"
+                        list="codex-models"
                       />
+                      <datalist id="codex-models">
+                        {PRICED_MODELS.map(model => <option key={model} value={model} />)}
+                      </datalist>
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="text-[13px] font-medium text-[#444444]">沙盒模式 (Sandbox Mode)</label>
                       <Select
-                        value={localConfig.sandbox_mode || 'danger-full-access'}
-                        onChange={value => setLocalConfig({...localConfig, sandbox_mode: value})}
+                        value={localConfig.sandbox_mode || ''}
+                        onChange={value => updateSetting('sandbox_mode', value)}
                         options={[
-                          { value: 'danger-full-access', label: 'Danger - Full Access' },
-                          { value: 'standard', label: 'Standard' }
+                          { value: '', label: '使用 Codex 默认设置' },
+                          { value: 'read-only', label: 'Read Only' },
+                          { value: 'workspace-write', label: 'Workspace Write' },
+                          { value: 'danger-full-access', label: 'Danger - Full Access' }
                         ]}
                       />
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="text-[13px] font-medium text-[#444444]">审批策略 (Approval Policy)</label>
                       <Select
-                        value={localConfig.approval_policy || 'never'}
-                        onChange={value => setLocalConfig({...localConfig, approval_policy: value})}
+                        value={typeof localConfig.approval_policy === 'object' ? '__custom__' : localConfig.approval_policy || ''}
+                        onChange={value => updateSetting('approval_policy', value)}
                         options={[
-                          { value: 'never', label: 'Never' },
-                          { value: 'always', label: 'Always' },
-                          { value: 'auto', label: 'Auto' }
+                          { value: '', label: '使用 Codex 默认设置' },
+                          ...(typeof localConfig.approval_policy === 'object' ? [{ value: '__custom__', label: '自定义细粒度审批' }] : []),
+                          { value: 'untrusted', label: 'Untrusted' },
+                          { value: 'on-request', label: 'On Request' },
+                          { value: 'never', label: 'Never' }
                         ]}
                       />
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="text-[13px] font-medium text-[#444444]">思考程度 (Reasoning Effort)</label>
                       <Select
-                        value={localConfig.model_reasoning_effort || 'medium'}
-                        onChange={value => setLocalConfig({...localConfig, model_reasoning_effort: value})}
+                        value={localConfig.model_reasoning_effort || ''}
+                        onChange={value => updateSetting('model_reasoning_effort', value)}
                         options={[
+                          { value: '', label: '使用模型默认设置' },
                           { value: 'low', label: 'Low' },
                           { value: 'medium', label: 'Medium' },
                           { value: 'high', label: 'High' },
@@ -358,90 +304,15 @@ export default function Settings() {
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-4 pt-6 border-t border-[#EAEAEA] mt-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <label className="text-[14px] font-medium text-[#333333]">自定义模型服务 (Model Provider)</label>
-                        <span className="text-[12px] text-[#888888] mt-0.5">
-                          {!!localConfig.model_provider ? '当前正在使用第三方模型服务商' : '当前正在使用官方默认模型服务'}
-                        </span>
-                      </div>
-                      <div 
-                        onClick={() => {
-                          if (localConfig.model_provider) {
-                            const newConfig = { ...localConfig };
-                            delete newConfig.model_provider;
-                            setLocalConfig(newConfig);
-                          } else {
-                            setLocalConfig({
-                              ...localConfig,
-                              model_provider: { base_url: '', api_key: '' }
-                            });
-                          }
-                        }}
-                        className={`relative inline-block w-10 h-5 rounded-full transition-colors duration-200 ease-in-out cursor-pointer ${
-                          !!localConfig.model_provider ? 'bg-black' : 'bg-[#E0E0E0] hover:bg-[#D0D0D0]'
-                        }`}
-                      >
-                        <span className={`absolute left-[2px] top-[2px] bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-200 ease-in-out ${
-                          !!localConfig.model_provider ? 'translate-x-5' : 'translate-x-0'
-                        }`} />
-                      </div>
-                    </div>
-
-                    {!!localConfig.model_provider && (
-                      <div className="flex flex-col gap-4 bg-[#FAFAFA] p-4 rounded-lg border border-[#EAEAEA] animate-fade-in">
-                        <div className="flex flex-col gap-2">
-                          <label className="text-[13px] font-medium text-[#444444]">提供商名称 (Name)</label>
-                          <input 
-                            type="text" 
-                            value={localConfig.model_provider?.name || ''}
-                            onChange={e => setLocalConfig({
-                              ...localConfig, 
-                              model_provider: { ...localConfig.model_provider, name: e.target.value }
-                            })}
-                            className="px-3 py-2 bg-white border border-[#EAEAEA] rounded-md text-[14px] focus:outline-none focus:ring-1 focus:ring-black focus:border-black transition-all"
-                            placeholder="如: DeepSeek"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-2">
-                          <label className="text-[13px] font-medium text-[#444444]">Base URL</label>
-                          <input 
-                            type="text" 
-                            value={localConfig.model_provider?.base_url || ''}
-                            onChange={e => setLocalConfig({
-                              ...localConfig, 
-                              model_provider: { ...localConfig.model_provider, base_url: e.target.value }
-                            })}
-                            className="px-3 py-2 bg-white border border-[#EAEAEA] rounded-md text-[14px] focus:outline-none focus:ring-1 focus:ring-black focus:border-black transition-all"
-                            placeholder="https://api.openai.com/v1"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-2">
-                          <label className="text-[13px] font-medium text-[#444444]">API Key</label>
-                          <input 
-                            type="password" 
-                            value={localConfig.model_provider?.api_key || ''}
-                            onChange={e => setLocalConfig({
-                              ...localConfig, 
-                              model_provider: { ...localConfig.model_provider, api_key: e.target.value }
-                            })}
-                            className="px-3 py-2 bg-white border border-[#EAEAEA] rounded-md text-[14px] focus:outline-none focus:ring-1 focus:ring-black focus:border-black transition-all"
-                            placeholder="sk-..."
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </>
               )}
 
               {activeTab === 'features' && (
                 <div className="grid grid-cols-2 gap-x-12 gap-y-1">
-                  {/* 官方支持的全部开关：本地缺失展示为"关闭"，保存时按差异由用户确认 */}
+                  {/* 官方支持的全部开关：未配置时展示官方默认值，保存只写入实际修改 */}
                   {OFFICIAL_FEATURE_KEYS.map((key) => {
                     const feature = OFFICIAL_FEATURES[key];
-                    const enabled = localConfig.features?.[key] === true;
+                    const enabled = localConfig.features?.[key] ?? feature.defaultEnabled ?? false;
                     return (
                       <div key={key} className="flex items-center justify-between py-2 border-b border-[#F5F5F5] last:border-0">
                         <div className="flex flex-col min-w-0 pr-3">
@@ -483,12 +354,17 @@ export default function Settings() {
                   })}
                 </div>
               )}
-            </div>
-            
-            <div className="bg-[#FAFAFA] border-t border-[#EAEAEA] p-4 flex justify-end mt-auto rounded-b-xl">
+            </fieldset>
+
+            <div className="bg-[#FAFAFA] border-t border-[#EAEAEA] p-4 flex items-center justify-end gap-3 mt-auto rounded-b-xl">
+              {draft && (
+                <button onClick={discardDraft} disabled={editingDisabled} className="text-[13px] text-[#666666] hover:text-black disabled:opacity-50">
+                  放弃修改并重新载入
+                </button>
+              )}
               <button 
-                onClick={handleSaveGeneral}
-                disabled={isSaving}
+                onClick={handleSave}
+                disabled={editingDisabled || !draft || (!draft.raw && !!error)}
                 title="保存修改"
                 className="w-8 h-8 flex items-center justify-center bg-black hover:bg-[#333333] text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
@@ -511,24 +387,41 @@ export default function Settings() {
               </div>
             </div>
             <textarea 
-              value={localRaw}
-              onChange={e => setLocalRaw(e.target.value)}
-              className="flex-1 w-full bg-[#1E1E1E] text-[#D4D4D4] font-mono text-[13px] p-4 focus:outline-none resize-none leading-relaxed selectable"
+              value={localToml}
+              onChange={event => setLocalToml(event.target.value)}
+              onKeyDown={event => {
+                if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+                  event.preventDefault();
+                  handleSave();
+                }
+              }}
+              disabled={editingDisabled}
+              aria-label="编辑 config.toml 配置"
+              aria-describedby={tomlError ? 'toml-error' : 'toml-editor-hint'}
+              aria-invalid={!!tomlError}
+              autoCapitalize="off"
+              autoCorrect="off"
+              wrap="off"
+              className="flex-1 min-h-0 w-full bg-[#1E1E1E] text-[#D4D4D4] font-mono text-[13px] p-4 focus:outline-none resize-none leading-relaxed selectable"
               spellCheck={false}
             />
-            <div className="bg-[#2D2D2D] border-t border-[#444] p-4 flex justify-end mt-auto">
-              <button 
-                onClick={handleSaveRaw}
-                disabled={isSaving}
-                title="保存 TOML"
-                className="w-8 h-8 flex items-center justify-center bg-emerald-600 hover:bg-emerald-500 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-              >
-                {isSaving ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            {tomlError && (
+              <div id="toml-error" role="alert" className="shrink-0 border-t border-[#704343] bg-[#382323] px-4 py-2.5 text-[12px] text-[#FFB4B4]">
+                {tomlError}
+              </div>
+            )}
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#444] bg-[#2D2D2D] px-4 py-3">
+              <p id="toml-editor-hint" className="text-[11px] text-[#A0A0A0]">可编辑完整 TOML · 保存前预览差异{draft ? ' · 有未保存修改' : ''}</p>
+              <div className="flex items-center gap-3">
+                {draft && (
+                  <button type="button" onClick={discardDraft} disabled={editingDisabled} className="text-[12px] text-[#BBBBBB] hover:text-white disabled:opacity-50">
+                    放弃修改并重新载入
+                  </button>
                 )}
-              </button>
+                <button type="button" onClick={handleSave} disabled={editingDisabled || !draft} className="rounded-md bg-white px-4 py-1.5 text-[12px] font-medium text-[#222222] transition-colors hover:bg-[#EAEAEA] disabled:cursor-not-allowed disabled:opacity-40">
+                  {isSaving ? '保存中...' : '保存配置'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -541,43 +434,6 @@ export default function Settings() {
         diffs={pendingDiffs}
       />
 
-      {syncCheckResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl border border-[#EAEAEA] w-full max-w-3xl max-h-[82vh] flex flex-col overflow-hidden animate-modal-in">
-            <div className="px-5 py-4 border-b border-[#EAEAEA] flex items-center justify-between bg-[#FFF9F9]">
-              <h3 className="font-medium text-[15px] text-[#D32F2F] flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                配置不一致警告
-              </h3>
-              <button onClick={() => setSyncCheckResult(null)} className="text-[#F98A8A] hover:text-[#D32F2F] transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </button>
-            </div>
-            
-            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 bg-[#FAFAFA] flex flex-col gap-4">
-              <p className="text-[13px] text-[#666666]">检测到数据库中的配置与本机文件 (<code>~/.codex/config.toml</code>) 不一致。</p>
-
-              <SyncDiffView dbContent={syncCheckResult.dbContent} localContent={syncCheckResult.localContent} />
-            </div>
-
-            <div className="px-5 py-3 border-t border-[#EAEAEA] flex items-center justify-end gap-2 bg-white shrink-0">
-              <button 
-                onClick={() => setSyncCheckResult(null)}
-                className="px-4 py-1.5 text-[13px] font-medium text-[#666666] hover:bg-[#F5F5F5] hover:text-black rounded-md transition-colors"
-              >
-                稍后处理
-              </button>
-              <button 
-                disabled={isSaving}
-                onClick={forceSync}
-                className="px-4 py-1.5 bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-[13px] font-medium rounded-md transition-colors shadow-sm disabled:opacity-50"
-              >
-                {isSaving ? '同步中...' : '以数据库为准，强制覆盖本机'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

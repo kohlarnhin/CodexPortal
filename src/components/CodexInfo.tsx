@@ -1,26 +1,27 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
+interface CodexVersions {
+  cli: string | null;
+  desktop: string | null;
+}
+
+const VERSION_ENTRIES = [
+  { key: 'cli', label: 'Codex CLI', description: '独立安装的命令行版本' },
+  { key: 'desktop', label: '桌面版 Codex', description: 'ChatGPT / Codex 桌面端内置引擎版本' },
+] as const;
+
 export default function CodexInfo() {
-  const [versionInfo, setVersionInfo] = useState<string | null>(null);
+  const [versionInfo, setVersionInfo] = useState<CodexVersions | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const fetchInfo = useCallback(async () => {
+    setIsLoading(true);
+    setVersionInfo(null);
     try {
-      setIsLoading(true);
-      setError(null);
-      // 后端每次实时检测：覆盖应用启动后才安装/更新 codex 的情况
-      const v = await invoke<string>('get_codex_version');
-
-      // Clean up the output if it contains warnings
-      const lines = v.split('\n');
-      const cleanLines = lines.filter(line => !line.startsWith('WARNING:'));
-
-      setVersionInfo(cleanLines.join('\n').trim() || v);
-    } catch (err: any) {
-      console.error('Failed to get codex version', err);
-      setError(err.toString());
+      setVersionInfo(await invoke<CodexVersions>('get_codex_versions'));
+    } catch (err) {
+      console.error('Failed to get Codex versions', err);
     } finally {
       setIsLoading(false);
     }
@@ -35,7 +36,7 @@ export default function CodexInfo() {
       <div className="flex items-center justify-between mb-8 shrink-0">
         <div>
           <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">Codex 信息</h2>
-          <p className="text-[13px] text-[#666666]">实时检测本机的 Codex 引擎版本（覆盖独立安装与桌面版内置）。</p>
+          <p className="text-[13px] text-[#666666]">分别检测 CLI 与桌面端内置 Codex 版本，未检测到时显示未安装。</p>
         </div>
         <button
           type="button"
@@ -63,19 +64,22 @@ export default function CodexInfo() {
               </div>
             </div>
 
-            <div className="space-y-6">
-              <div>
-                <label className="block text-[12px] font-medium text-[#888888] mb-2 uppercase tracking-wider">Codex 版本信息</label>
-                <div className="bg-[#F9F9F9] border border-[#EAEAEA] rounded-md p-4 font-mono text-[13px] text-[#333333] whitespace-pre-wrap shadow-inner relative">
-                  {isLoading ? (
-                    <span className="text-[#888888] animate-pulse">正在查询...</span>
-                  ) : error ? (
-                    <span className="text-[#F92672]">查询失败: {error}</span>
-                  ) : (
-                    versionInfo || '未知版本'
-                  )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              {VERSION_ENTRIES.map(({ key, label, description }) => (
+                <div key={key} className="min-w-0 flex flex-col">
+                  <h4 className="text-[14px] font-medium text-[#333333] mb-1">{label}</h4>
+                  <p className="text-[12px] text-[#888888] mb-3">{description}</p>
+                  <div role="status" aria-live="polite" aria-busy={isLoading} className="mt-auto bg-[#F9F9F9] border border-[#EAEAEA] rounded-md p-4 font-mono text-[13px] text-[#333333] break-all shadow-inner relative">
+                    {isLoading ? (
+                      <span className="text-[#888888] animate-pulse">正在查询...</span>
+                    ) : versionInfo?.[key] ? (
+                      versionInfo[key]
+                    ) : (
+                      <span className="text-[#888888]">未安装</span>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
           </div>
         </div>

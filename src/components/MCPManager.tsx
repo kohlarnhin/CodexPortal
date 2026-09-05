@@ -4,7 +4,7 @@ import ConfirmModal from './ConfirmModal';
 import DiffModal, { DiffItem } from './DiffModal';
 
 export default function MCPManager() {
-  const { config, saveConfig, isLoading } = useConfig();
+  const { config, saveConfig, isLoading, error, refresh } = useConfig();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [deleteConfirmKey, setDeleteConfirmKey] = useState<string | null>(null);
@@ -24,14 +24,20 @@ export default function MCPManager() {
 
   if (isLoading) return <div className="p-8 text-[#666666]">加载中...</div>;
 
+  if (error) return (
+    <div className="p-8 text-[13px] text-[#D32F2F]">
+      <p>{error}</p>
+      <button onClick={() => { void refresh(); }} className="mt-3 text-black underline">重新读取本地配置</button>
+    </div>
+  );
+
   const servers = config?.mcp_servers || {};
   const serverKeys = Object.keys(servers);
 
   const handleToggle = (key: string) => {
     if (!config) return;
     const currentServer = servers[key];
-    const newConfig = { ...config };
-    if (!newConfig.mcp_servers) newConfig.mcp_servers = {};
+    const newConfig = { ...config, mcp_servers: { ...config.mcp_servers } };
     newConfig.mcp_servers[key] = {
       ...currentServer,
       disabled: !currentServer.disabled
@@ -48,8 +54,7 @@ export default function MCPManager() {
 
   const executeDelete = (key: string) => {
     if (!config) return;
-    const newConfig = { ...config };
-    if (!newConfig.mcp_servers) newConfig.mcp_servers = {};
+    const newConfig = { ...config, mcp_servers: { ...config.mcp_servers } };
     const oldServer = newConfig.mcp_servers[key];
     delete newConfig.mcp_servers[key];
 
@@ -112,8 +117,7 @@ export default function MCPManager() {
       if (Object.keys(envObj).length > 0) newServer.env = envObj;
     }
     
-    const newConfig = { ...config };
-    if (!newConfig.mcp_servers) newConfig.mcp_servers = {};
+    const newConfig = { ...config, mcp_servers: { ...config.mcp_servers } };
     
     if (editingKey && editingKey !== formName.trim()) {
       delete newConfig.mcp_servers[editingKey];

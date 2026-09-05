@@ -1,0 +1,27 @@
+{
+  "gpt-6-astra": {
+    "inputPer1M": 10.0,
+    "cachedInputPer1M": 1.0,
+    "outputPer1M": 50.0
+  },
+  "gpt-5.6-sol": {
+    "inputPer1M": 4.0,
+    "cachedInputPer1M": 0.4,
+    "outputPer1M": 20.0
+  },
+  "gpt-5.6-terra": {
+    "inputPer1M": 2.0,
+    "cachedInputPer1M": 0.2,
+    "outputPer1M": 12.0
+  },
+  "gpt-5.6-luna": {
+    "inputPer1M": 0.2,
+    "cachedInputPer1M": 0.02,
+    "outputPer1M": 1.2
+  },
+  "gpt-5.5": {
+    "inputPer1M": 5.0,
+    "cachedInputPer1M": 0.5,
+    "outputPer1M": 30.0
+  }
+}
