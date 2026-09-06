@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Account, AccountFormData, OAuthLoginInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
 import Select from './Select';
@@ -53,7 +53,6 @@ const AccountModal: React.FC<AccountModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [unsupportedFormat, setUnsupportedFormat] = useState(false);
   const [copied, setCopied] = useState(false);
-  const oauthStartedRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -67,7 +66,6 @@ const AccountModal: React.FC<AccountModalProps> = ({
     setIsSubmitting(false);
     setError(null);
     setCopied(false);
-    oauthStartedRef.current = false;
 
     if (editingAccount) {
       setAuthMethod('personal');
@@ -93,30 +91,34 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
   // OAuth 回调轮询：本机浏览器登录成功后自动捕获。
   useEffect(() => {
-    if (step !== 'oauth' || !oauthInfo || oauthStartedRef.current) return;
-    oauthStartedRef.current = true;
+    if (!isOpen || step !== 'oauth' || !oauthInfo) return;
     let disposed = false;
+    let timer: number | undefined;
 
     const poll = async () => {
       if (disposed) return;
       try {
         const info = await onCheckOauth();
-        if (info && !disposed) {
-          setOauthRtInfo(info);
-          setStep('confirm');
+        if (info) {
+          if (!disposed) {
+            setOauthRtInfo(info);
+            setStep('confirm');
+          }
+          return;
         }
       } catch {
         // 轮询中的瞬时错误忽略
       }
+      // 等本次请求完成再继续，避免授权码兑换较慢时产生重叠请求。
+      if (!disposed) timer = window.setTimeout(() => void poll(), 1500);
     };
 
-    void poll();
-    const timer = window.setInterval(() => void poll(), 1500);
+    timer = window.setTimeout(() => void poll(), 0);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
-  }, [step, oauthInfo, onCheckOauth]);
+  }, [isOpen, step, oauthInfo, onCheckOauth]);
 
   if (!isOpen) return null;
 

@@ -20,6 +20,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
+      # 各架构依次更新同一份 latest.json，避免并发覆盖平台条目。
+      max-parallel: 1
       matrix:
         include:
           - target: aarch64-apple-darwin
@@ -86,9 +88,66 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "v${{ steps.tauri.outputs.appVersion }}" "${{ steps.dmg.outputs.path }}" --clobber
 
-  publish-release:
+  build-windows:
     if: github.ref == 'refs/heads/main'
     needs: build-macos
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Windows portable executable
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd 'src-tauri/src/updates/portable-update.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          npm run tauri build -- --target x86_64-pc-windows-msvc --no-bundle
+
+      - name: Prepare portable executable
+        id: portable
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $name = "CodexPortal_${version}_windows_x64.exe"
+          $path = Join-Path $env:RUNNER_TEMP $name
+          Copy-Item 'src-tauri/target/x86_64-pc-windows-msvc/release/codex-portal.exe' $path
+          "path=$path" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Sign portable update
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PORTABLE_PATH: ${{ steps.portable.outputs.path }}
+        run: npm run tauri signer sign -- "$env:PORTABLE_PATH"
+
+      - name: Upload portable executable and signature
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PORTABLE_PATH: ${{ steps.portable.outputs.path }}
+          APP_VERSION: ${{ steps.portable.outputs.version }}
+        run: gh release upload "v$env:APP_VERSION" "$env:PORTABLE_PATH" "$env:PORTABLE_PATH.sig" --clobber
+
+  publish-release:
+    if: github.ref == 'refs/heads/main'
+    needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -98,6 +157,35 @@ jobs:
       - name: Read app version
         id: version
         run: node -e "const fs = require('fs'); const pkg = require('./package.json'); fs.appendFileSync(process.env.GITHUB_OUTPUT, 'value=' + pkg.version + '\n')"
+
+      - name: Add portable update and verify every desktop target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download "v${APP_VERSION}" --pattern latest.json --dir "${RUNNER_TEMP}/updater"
+          gh release download "v${APP_VERSION}" --pattern "CodexPortal_${APP_VERSION}_windows_x64.exe.sig" --dir "${RUNNER_TEMP}/updater"
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const manifestPath = path.join(process.env.RUNNER_TEMP, 'updater', 'latest.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          if (manifest.version !== process.env.APP_VERSION) throw new Error('Updater version mismatch');
+          const filename = `CodexPortal_${process.env.APP_VERSION}_windows_x64.exe`;
+          manifest.platforms['windows-x86_64-portable'] = {
+            signature: fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'updater', `${filename}.sig`), 'utf8').trim(),
+            url: `https://github.com/${process.env.RELEASE_REPOSITORY}/releases/download/v${process.env.APP_VERSION}/${filename}`,
+          };
+          for (const target of ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64-portable']) {
+            const entry = manifest.platforms?.[target];
+            if (!entry?.url || !entry?.signature) throw new Error(`Missing updater artifact: ${target}`);
+          }
+          fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+          gh release upload "v${APP_VERSION}" "${RUNNER_TEMP}/updater/latest.json" --clobber
 
       - name: Publish release
         env:

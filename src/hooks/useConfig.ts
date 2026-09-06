@@ -9,6 +9,7 @@ export interface MCPServer {
   env?: Record<string, string>;
   url?: string;
   disabled?: boolean;
+  [key: string]: unknown;
 }
 
 export interface CodexConfig {

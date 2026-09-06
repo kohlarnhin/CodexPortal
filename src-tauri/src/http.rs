@@ -1,7 +1,6 @@
 use crate::codex::version::codex_cli_user_agent;
 use serde::de::DeserializeOwned;
 use std::io::Write;
-use std::process::Command;
 use std::process::Stdio;
 
 pub(crate) fn curl_config_quote(value: &str) -> String {
@@ -26,13 +25,7 @@ pub(crate) fn append_curl_header(
 
 /// 执行一条 curl 配置并返回响应体与 HTTP 状态码。
 pub(crate) fn run_curl(config: &str) -> Result<(String, u16), String> {
-    let mut command = if cfg!(target_os = "macos") {
-        Command::new("/usr/bin/curl")
-    } else if cfg!(target_os = "windows") {
-        Command::new("curl.exe")
-    } else {
-        Command::new("/usr/bin/curl")
-    };
+    let mut command = crate::process::curl_command();
     let mut child = command
         .arg("--config")
         .arg("-")

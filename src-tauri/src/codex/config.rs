@@ -1,3 +1,4 @@
+use super::paths::codex_home;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -8,8 +9,7 @@ use uuid::Uuid;
 static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 
 fn codex_config_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let path = home.join(".codex").join("config.toml");
+    let path = codex_home()?.join("config.toml");
     // 保留用户通过软链接管理配置的方式，原子替换链接指向的文件。
     if fs::symlink_metadata(&path)
         .map(|metadata| metadata.file_type().is_symlink())
@@ -26,6 +26,11 @@ fn read_codex_config_file(path: &PathBuf) -> Result<String, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(error) => Err(format!("无法读取 config.toml: {error}")),
     }
+}
+
+#[tauri::command]
+pub(crate) fn get_codex_config_path() -> Result<String, String> {
+    Ok(codex_config_path()?.to_string_lossy().into_owned())
 }
 
 #[tauri::command]

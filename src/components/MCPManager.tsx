@@ -101,20 +101,27 @@ export default function MCPManager() {
   const handleSaveModal = async () => {
     if (!formName.trim() || !config) return;
     
-    const newServer: MCPServer = {};
+    // 保留认证头、超时等未在表单中展示的配置，只更新表单负责的字段。
+    const newServer: MCPServer = editingKey ? { ...servers[editingKey] } : {};
     if (formType === 'sse') {
       if (!formUrl.trim()) return;
       newServer.url = formUrl.trim();
+      delete newServer.command;
+      delete newServer.args;
+      delete newServer.env;
     } else {
       if (!formCommand.trim()) return;
+      delete newServer.url;
       newServer.command = formCommand.trim();
       const args = formArgs.split('\n').map(a => a.trim()).filter(a => a);
       if (args.length > 0) newServer.args = args;
+      else delete newServer.args;
       const envObj: Record<string, string> = {};
       formEnv.forEach(e => {
         if (e.key.trim()) envObj[e.key.trim()] = e.value;
       });
       if (Object.keys(envObj).length > 0) newServer.env = envObj;
+      else delete newServer.env;
     }
     
     const newConfig = { ...config, mcp_servers: { ...config.mcp_servers } };
@@ -123,10 +130,6 @@ export default function MCPManager() {
       delete newConfig.mcp_servers[editingKey];
     }
     
-    if (editingKey && config.mcp_servers?.[editingKey]?.disabled !== undefined) {
-      newServer.disabled = config.mcp_servers[editingKey].disabled;
-    }
-
     newConfig.mcp_servers[formName.trim()] = newServer;
     
     const diffs: DiffItem[] = [];

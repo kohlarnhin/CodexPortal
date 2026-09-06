@@ -360,12 +360,10 @@ pub(crate) fn apply_auth_json_if_pat(content: &str) {
 }
 
 pub(crate) fn apply_auth_json(content: &str) -> Result<(), String> {
-    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
-    let codex_dir = home_dir.join(".codex");
+    let codex_dir = crate::codex::paths::codex_home()?;
 
     if !codex_dir.exists() {
-        fs::create_dir_all(&codex_dir)
-            .map_err(|e| format!("Failed to create ~/.codex directory: {}", e))?;
+        fs::create_dir_all(&codex_dir).map_err(|e| format!("无法创建 Codex 数据目录: {e}"))?;
     }
 
     let auth_file_path = codex_dir.join("auth.json");

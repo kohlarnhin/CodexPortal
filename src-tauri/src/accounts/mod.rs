@@ -378,7 +378,7 @@ pub(crate) async fn update_account(
         });
     }
 
-    // PAT 变化：重新走 whoami，清空额度缓存待刷新。
+    // PAT 变化：重新走 whoami，清除旧身份的 OAuth 凭证、重置卡和额度缓存。
     let meta = tauri::async_runtime::spawn_blocking({
         let token = token.clone();
         move || resolve_token_metadata(&token)
@@ -391,7 +391,7 @@ pub(crate) async fn update_account(
 
     let rows_affected = tx
         .execute(
-            "UPDATE accounts SET name = ?1, auth_json_content = ?2, notes = ?3, updated_at = ?4, plan_type = 'weekly', usage_json = NULL, usage_updated_at = NULL, next_refresh_at = NULL, chatgpt_plan_type = ?5, chatgpt_account_id = ?6, chatgpt_account_is_fedramp = ?7 WHERE id = ?8",
+            "UPDATE accounts SET name = ?1, auth_json_content = ?2, notes = ?3, updated_at = ?4, plan_type = 'weekly', usage_json = NULL, usage_updated_at = NULL, next_refresh_at = NULL, access_token = NULL, refresh_token = NULL, at_expires_at = NULL, reset_credits_json = NULL, chatgpt_plan_type = ?5, chatgpt_account_id = ?6, chatgpt_account_is_fedramp = ?7 WHERE id = ?8",
             params![meta.email, auth_json_content, notes, now, meta.chatgpt_plan_type, meta.chatgpt_account_id, meta.chatgpt_account_is_fedramp as i32, id],
         )
         .map_err(|e| e.to_string())?;
@@ -605,8 +605,7 @@ pub(crate) async fn import_account_from_auth_json(
         }
     }
 
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    let auth_path = home.join(".codex").join("auth.json");
+    let auth_path = crate::codex::paths::codex_home()?.join("auth.json");
     let Ok(content) = fs::read_to_string(&auth_path) else {
         return Ok(None); // 无 auth.json：不处理
     };

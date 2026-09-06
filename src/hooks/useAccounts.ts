@@ -69,9 +69,9 @@ export function useAccounts() {
     return await invoke<OAuthLoginInfo>('start_oauth_login');
   };
 
-  const checkOauthCallback = async (): Promise<RtTokenInfo | null> => {
+  const checkOauthCallback = useCallback(async (): Promise<RtTokenInfo | null> => {
     return await invoke<RtTokenInfo | null>('check_oauth_callback');
-  };
+  }, []);
 
   const completeOauthLogin = async (redirectUrl: string): Promise<RtTokenInfo> => {
     return await invoke<RtTokenInfo>('complete_oauth_login', { redirectUrl });

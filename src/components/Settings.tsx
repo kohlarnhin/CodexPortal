@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useConfig, parseConfig, CodexConfig } from '../hooks/useConfig';
 import { stringify } from 'smol-toml';
 import Select from './Select';
@@ -38,6 +39,7 @@ function configDiffItems(before: CodexConfig, after: CodexConfig): DiffItem[] {
 
 export default function Settings() {
   const { config, rawToml, isLoading, isRefreshing, error, hasLoadedFile, saveConfig, saveRawConfig, refresh } = useConfig(true);
+  const [configPath, setConfigPath] = useState('config.toml');
   const [activeTab, setActiveTab] = useState<'general' | 'features' | 'advanced'>('general');
   const [draft, setDraft] = useState<ConfigDraft | null>(null);
   const [tomlError, setTomlError] = useState<string | null>(null);
@@ -49,6 +51,14 @@ export default function Settings() {
   const localConfig = draft ? draft.value : config;
   const localToml = draft?.toml ?? rawToml;
   const editingDisabled = isSaving || showDiffModal || !hasLoadedFile;
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string>('get_codex_config_path').then(path => {
+      if (!cancelled) setConfigPath(path);
+    }).catch(error => console.error('无法读取配置文件路径', error));
+    return () => { cancelled = true; };
+  }, []);
 
   const setLocalConfig = (value: CodexConfig) => {
     if (!localConfig || editingDisabled || (!draft?.raw && !!error)) return;
@@ -381,9 +391,9 @@ export default function Settings() {
         {activeTab === 'advanced' && (
           <div className="bg-[#1E1E1E] rounded-xl border border-[#333] overflow-hidden shadow-sm flex flex-col h-full">
             <div className="bg-[#2D2D2D] border-b border-[#444] px-4 py-3 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2 text-[#A0A0A0] text-[12px] font-mono">
+              <div className="flex min-w-0 items-center gap-2 text-[#A0A0A0] text-[12px] font-mono" title={configPath}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                ~/.codex/config.toml
+                <span className="truncate selectable">{configPath}</span>
               </div>
             </div>
             <textarea 

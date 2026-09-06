@@ -1,13 +1,12 @@
 use crate::db::{get_config_value, set_config_value};
+use crate::process::{command, output_with_timeout};
 use crate::state::AppState;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Stdio;
 use std::sync::OnceLock;
-use std::thread;
 use std::time::Duration;
 
 /// 启动时获取并缓存的 Codex CLI 版本号（用于 User-Agent）。
@@ -97,7 +96,12 @@ fn desktop_codex_executable_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn desktop_codex_executable_candidates() -> Vec<PathBuf> {
+    super::windows::desktop_executable_candidates()
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn desktop_codex_executable_candidates() -> Vec<PathBuf> {
     Vec::new()
 }
@@ -105,27 +109,8 @@ fn desktop_codex_executable_candidates() -> Vec<PathBuf> {
 /// 执行 `codex --version` 并提取版本号（失败返回 None）。
 /// 同时检查 stdout / stderr 的版本行，忽略警告；限制等待时间，避免异常安装一直卡住检测。
 fn run_codex_version(mut command: Command) -> Option<String> {
-    let mut child = command
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
-    let started = std::time::Instant::now();
-    let output = loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break child.wait_with_output().ok()?,
-            Ok(None) if started.elapsed() < Duration::from_secs(5) => {
-                thread::sleep(Duration::from_millis(50));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    };
+    command.arg("--version");
+    let output = output_with_timeout(command, Duration::from_secs(5))?;
     if !output.status.success() {
         return None;
     }
@@ -141,9 +126,9 @@ fn run_codex_version(mut command: Command) -> Option<String> {
     None
 }
 
-fn local_desktop_codex_version() -> Option<String> {
-    for executable in desktop_codex_executable_candidates() {
-        if let Some(version) = run_codex_version(Command::new(executable)) {
+fn local_desktop_codex_version(desktop_executables: &[PathBuf]) -> Option<String> {
+    for executable in desktop_executables {
+        if let Some(version) = run_codex_version(command(executable)) {
             return Some(version);
         }
     }
@@ -151,14 +136,16 @@ fn local_desktop_codex_version() -> Option<String> {
 }
 
 /// 只检测独立 CLI，不把 PATH 中指向桌面内置引擎的软链接当作独立安装。
-fn local_codex_cli_version() -> Option<String> {
+fn local_codex_cli_version(desktop_candidates: &[PathBuf]) -> Option<String> {
     #[cfg(target_os = "macos")]
     let search_path = macos_cli_search_path()?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    let search_path = super::windows::cli_search_path()?;
+    #[cfg(not(any(target_os = "macos", windows)))]
     let search_path = std::env::var_os("PATH")?;
 
-    let desktop_executables: HashSet<PathBuf> = desktop_codex_executable_candidates()
-        .into_iter()
+    let desktop_executables: HashSet<PathBuf> = desktop_candidates
+        .iter()
         .filter_map(|path| fs::canonicalize(path).ok())
         .collect();
     #[cfg(target_os = "windows")]
@@ -179,7 +166,7 @@ fn local_codex_cli_version() -> Option<String> {
             if desktop_executables.contains(&resolved) || !checked.insert(resolved) {
                 continue;
             }
-            let mut command = Command::new(executable);
+            let mut command = command(executable);
             command.env("PATH", &search_path);
             if let Some(version) = run_codex_version(command) {
                 return Some(version);
@@ -191,7 +178,9 @@ fn local_codex_cli_version() -> Option<String> {
 
 /// User-Agent 沿用优先桌面内置引擎、其次独立 CLI 的版本选择方式。
 fn local_codex_version() -> Option<String> {
-    local_desktop_codex_version().or_else(local_codex_cli_version)
+    let desktop_candidates = desktop_codex_executable_candidates();
+    local_desktop_codex_version(&desktop_candidates)
+        .or_else(|| local_codex_cli_version(&desktop_candidates))
 }
 
 /// 启动时获取 Codex CLI 版本号并缓存/入库，供 User-Agent 使用。
@@ -223,8 +212,14 @@ pub(crate) struct CodexVersions {
 /// 两路独立实时检测；未查到返回 null，不使用旧缓存冒充当前安装状态。
 #[tauri::command]
 pub(crate) async fn get_codex_versions() -> CodexVersions {
-    let cli = tauri::async_runtime::spawn_blocking(local_codex_cli_version);
-    let desktop = tauri::async_runtime::spawn_blocking(local_desktop_codex_version);
+    let candidates = tauri::async_runtime::spawn_blocking(desktop_codex_executable_candidates)
+        .await
+        .unwrap_or_default();
+    let cli_candidates = candidates.clone();
+    let cli =
+        tauri::async_runtime::spawn_blocking(move || local_codex_cli_version(&cli_candidates));
+    let desktop =
+        tauri::async_runtime::spawn_blocking(move || local_desktop_codex_version(&candidates));
     CodexVersions {
         cli: cli.await.unwrap_or(None),
         desktop: desktop.await.unwrap_or(None),

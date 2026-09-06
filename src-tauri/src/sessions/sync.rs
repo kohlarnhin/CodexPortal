@@ -72,8 +72,7 @@ fn session_sync_sleep_secs(next_sync_at: Option<&str>, now: DateTime<Utc>) -> u6
 }
 
 fn sessions_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
-    Ok(home.join(".codex").join("sessions"))
+    Ok(crate::codex::paths::codex_home()?.join("sessions"))
 }
 
 /// 读取失败时终止本次扫描，不能将没有读取权限的目录误当成已删除。

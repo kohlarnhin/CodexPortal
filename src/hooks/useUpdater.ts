@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
 
@@ -15,6 +16,7 @@ export type UpdaterStatus =
 
 export interface UpdaterController {
   status: UpdaterStatus;
+  installMode: 'installer' | 'portable';
   update: Update | null;
   error: string | null;
   downloadProgress: number | null;
@@ -41,6 +43,7 @@ function getErrorMessage(error: unknown): string {
 
 export function useUpdater(): UpdaterController {
   const [status, setStatus] = useState<UpdaterStatus>('idle');
+  const [installMode, setInstallMode] = useState<'installer' | 'portable'>('installer');
   const [update, setUpdate] = useState<Update | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
@@ -70,7 +73,11 @@ export function useUpdater(): UpdaterController {
       setError(null);
 
       try {
-        const nextUpdate = await check({ timeout: CHECK_TIMEOUT_MS });
+        const [mode, nextUpdate] = await Promise.all([
+          invoke<'installer' | 'portable'>('get_update_install_mode'),
+          check({ timeout: CHECK_TIMEOUT_MS }),
+        ]);
+        setInstallMode(mode);
         const previousUpdate = updateRef.current;
 
         if (previousUpdate && previousUpdate !== nextUpdate) {
@@ -146,6 +153,25 @@ export function useUpdater(): UpdaterController {
     };
 
     try {
+      if (installMode === 'portable') {
+        const unlisten = await listen<{
+          stage: 'downloading' | 'installing' | 'restarting';
+          downloaded: number;
+          total: number | null;
+        }>('portable-update-progress', ({ payload }) => {
+          setStatus(payload.stage);
+          setDownloadProgress(payload.total && payload.total > 0
+            ? Math.min(payload.stage === 'downloading' ? 99 : 100, Math.round(payload.downloaded / payload.total * 100))
+            : null);
+        });
+        try {
+          await invoke('install_portable_update', { expectedVersion: pendingUpdate.version });
+          setStatus('restarting');
+        } finally {
+          unlisten();
+        }
+        return;
+      }
       await pendingUpdate.downloadAndInstall(handleDownloadEvent, {
         timeout: DOWNLOAD_TIMEOUT_MS,
       });
@@ -154,9 +180,9 @@ export function useUpdater(): UpdaterController {
     } catch (installError) {
       installingRef.current = false;
       setStatus('error');
-      setError(`安装更新失败：${getErrorMessage(installError)}`);
+      setError(`应用更新失败：${getErrorMessage(installError)}`);
     }
-  }, []);
+  }, [installMode]);
 
   const closeModal = useCallback(() => {
     if (installingRef.current) return;
@@ -204,6 +230,7 @@ export function useUpdater(): UpdaterController {
 
   return {
     status,
+    installMode,
     update,
     error,
     downloadProgress,

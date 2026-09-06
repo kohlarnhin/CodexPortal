@@ -197,8 +197,10 @@ async fn load_reset_credits_cached(
         }
     }
 
-    let info = tauri::async_runtime::spawn_blocking(move || {
-        fetch_reset_credits(&at, account_id.as_deref(), is_fedramp)
+    let info = tauri::async_runtime::spawn_blocking({
+        let at = at.clone();
+        let account_id = account_id.clone();
+        move || fetch_reset_credits(&at, account_id.as_deref(), is_fedramp)
     })
     .await
     .map_err(|e| format!("获取重置卡任务失败：{e}"))??;
@@ -206,11 +208,18 @@ async fn load_reset_credits_cached(
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let json = serde_json::to_string(&info).map_err(|e| e.to_string())?;
-        db.execute(
-            "UPDATE accounts SET reset_credits_json = ?1 WHERE id = ?2",
-            params![json, id],
-        )
-        .map_err(|e| e.to_string())?;
+        // 请求期间更换 PAT/AT 后，旧请求不得重新写入已清除的缓存。
+        let changed = db
+            .execute(
+                "UPDATE accounts SET reset_credits_json = ?1
+                 WHERE id = ?2 AND access_token = ?3
+                   AND chatgpt_account_id IS ?4 AND chatgpt_account_is_fedramp = ?5",
+                params![json, id, at, account_id, is_fedramp as i32],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed != 1 {
+            return Err("账号认证已变更，请重新操作。".to_string());
+        }
     }
 
     Ok(info)

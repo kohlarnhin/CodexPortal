@@ -3,6 +3,7 @@ mod auth;
 mod codex;
 mod db;
 mod http;
+mod process;
 mod sessions;
 mod skills;
 mod state;
@@ -44,17 +45,23 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .on_window_event(|window, event| match event {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
-                let _ = window.hide();
+        .on_window_event(|_window, _event| {
+            // macOS 可通过 Dock 恢复窗口；Windows 使用原生关闭退出行为。
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
+                let _ = _window.hide();
                 api.prevent_close();
             }
-            _ => {}
         })
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            {
+                let updater = tauri_plugin_updater::Builder::new();
+                #[cfg(windows)]
+                let updater =
+                    updater.target(format!("windows-{}-portable", std::env::consts::ARCH));
+                app.handle().plugin(updater.build())?;
+            }
 
             let app_data_dir = app
                 .path()
@@ -120,6 +127,7 @@ pub fn run() {
             accounts::usage::refresh_account_usage,
             accounts::messages::send_test_message,
             codex::config::get_codex_config,
+            codex::config::get_codex_config_path,
             codex::config::save_codex_config,
             codex::version::get_codex_versions,
             sessions::sync::sync_sessions,
@@ -130,6 +138,8 @@ pub fn run() {
             sessions::usage::get_token_usage,
             updates::get_pending_update,
             updates::set_pending_update,
+            updates::get_update_install_mode,
+            updates::install_portable_update,
             accounts::import_account_from_auth_json,
             skills::list_skills,
             skills::get_skill_detail,
@@ -139,14 +149,14 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| match event {
+    app.run(|_app_handle, event| match event {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
             has_visible_windows,
             ..
         } => {
             if !has_visible_windows {
-                show_main_window(app_handle);
+                show_main_window(_app_handle);
             }
         }
         _ => {}

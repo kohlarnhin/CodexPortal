@@ -14,7 +14,6 @@ use serde_json::Value;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write;
-use std::process::Command;
 use std::process::Stdio;
 use tauri::Emitter;
 use tauri::State;
@@ -63,13 +62,7 @@ fn curl_post_stream(
     config.push('\n');
     config.push_str("write-out = \"\\n%{http_code}\"\n");
 
-    let mut command = if cfg!(target_os = "macos") {
-        Command::new("/usr/bin/curl")
-    } else if cfg!(target_os = "windows") {
-        Command::new("curl.exe")
-    } else {
-        Command::new("/usr/bin/curl")
-    };
+    let mut command = crate::process::curl_command();
     let mut child = command
         .arg("--config")
         .arg("-")

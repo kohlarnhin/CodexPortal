@@ -34,7 +34,13 @@ pub(crate) struct SkillDetail {
 
 /// Skill 目录名必须是单个目录段（无路径分隔符、无 `.`/`..`），防路径遍历。
 fn is_valid_skill_dir_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name != "."
+        && name != ".."
+        // Windows 的 C: 等盘符前缀不能作为根目录下的 skill 名。
+        && std::path::Path::new(name).file_name() == Some(std::ffi::OsStr::new(name))
 }
 
 /// Codex 主要读取的 skills 目录。
@@ -243,6 +249,9 @@ fn delete_skill_from(root: &PathBuf, name: &str) -> Result<(), String> {
         .map(|meta| meta.file_type().is_symlink())
         .unwrap_or(false);
     if is_symlink {
+        #[cfg(windows)]
+        fs::remove_dir(&target).map_err(|e| e.to_string())?;
+        #[cfg(not(windows))]
         fs::remove_file(&target).map_err(|e| e.to_string())?;
     } else {
         fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
@@ -278,6 +287,11 @@ mod tests {
         assert!(!is_valid_skill_dir_name("a/b"));
         assert!(!is_valid_skill_dir_name("a\\b"));
         assert!(!is_valid_skill_dir_name(""));
+        #[cfg(windows)]
+        {
+            assert!(!is_valid_skill_dir_name("C:"));
+            assert!(!is_valid_skill_dir_name("C:outside"));
+        }
     }
 
     #[test]
@@ -337,13 +351,16 @@ mod tests {
         assert!(delete_skill_from(&root, "my-skill").is_err());
 
         // 软链接 skill 删除只删链接。
-        let symlink_target = source.clone();
-        std::os::unix::fs::symlink(&symlink_target, root.join("linked-skill")).unwrap();
-        let linked = read_skill_info(&root.join("linked-skill")).unwrap();
-        assert!(linked.is_symlink);
-        delete_skill_from(&root, "linked-skill").unwrap();
-        assert!(!root.join("linked-skill").exists());
-        assert!(source.exists(), "软链接指向的源目录不应被删除");
+        #[cfg(unix)]
+        {
+            let symlink_target = source.clone();
+            std::os::unix::fs::symlink(&symlink_target, root.join("linked-skill")).unwrap();
+            let linked = read_skill_info(&root.join("linked-skill")).unwrap();
+            assert!(linked.is_symlink);
+            delete_skill_from(&root, "linked-skill").unwrap();
+            assert!(!root.join("linked-skill").exists());
+            assert!(source.exists(), "软链接指向的源目录不应被删除");
+        }
 
         fs::remove_dir_all(&root).unwrap();
     }

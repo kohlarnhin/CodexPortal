@@ -16,6 +16,7 @@ function formatPublishDate(value?: string): string | null {
 export default function UpdateModal({ updater }: UpdateModalProps) {
   const {
     status,
+    installMode,
     update,
     error,
     downloadProgress,
@@ -31,7 +32,7 @@ export default function UpdateModal({ updater }: UpdateModalProps) {
   const progressLabel = status === 'downloading'
     ? `正在下载${downloadProgress === null ? '...' : ` ${downloadProgress}%`}`
     : status === 'installing'
-      ? '正在安装...'
+      ? (installMode === 'portable' ? '正在替换程序...' : '正在安装...')
       : status === 'restarting'
         ? '正在重启...'
         : status === 'error'
@@ -122,7 +123,11 @@ export default function UpdateModal({ updater }: UpdateModalProps) {
                   style={downloadProgress === null ? undefined : { width: `${downloadProgress}%` }}
                 />
               </div>
-              <p className="text-[11px] text-[#999999] mt-2.5">安装完成后应用将自动重启，请不要关闭程序。</p>
+              <p className="text-[11px] text-[#999999] mt-2.5">
+                {installMode === 'portable'
+                  ? '更新完成后应用将自动重启，请不要移动或删除程序文件。'
+                  : '安装完成后应用将自动重启，请不要关闭程序。'}
+              </p>
             </div>
           )}
 

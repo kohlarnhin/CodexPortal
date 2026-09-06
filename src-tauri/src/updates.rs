@@ -2,6 +2,32 @@ use crate::state::AppState;
 use rusqlite::params;
 use tauri::State;
 
+#[cfg(windows)]
+mod portable;
+
+#[tauri::command]
+pub(crate) fn get_update_install_mode() -> &'static str {
+    if cfg!(windows) {
+        "portable"
+    } else {
+        "installer"
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn install_portable_update(
+    app: tauri::AppHandle,
+    expected_version: String,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    return portable::install(app, expected_version).await;
+    #[cfg(not(windows))]
+    {
+        let _ = (app, expected_version);
+        Err("当前平台不使用免安装更新".to_string())
+    }
+}
+
 /// 已提醒过用户的新版本号（用户关闭更新弹窗后记录，用于避免重复打扰）。
 #[tauri::command]
 pub(crate) fn get_pending_update(state: State<'_, AppState>) -> Result<Option<String>, String> {
