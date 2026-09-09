@@ -111,7 +111,7 @@ fn refresh_due_access_tokens(app: &tauri::AppHandle, state: &AppState) {
                     .db
                     .lock()
                     .map_err(|e| e.to_string())
-                    .and_then(|db| persist_rotated_access_token(&db, &id, &rt, &info));
+                    .and_then(|db| persist_rotated_access_token(&db, &id, &rt, &info, true));
                 if let Err(error) = saved {
                     save_fallback_reset(app, state, &id, "账号认证续期失败", &error);
                     continue;

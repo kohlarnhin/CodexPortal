@@ -416,7 +416,7 @@ async fn send_account_message(
                 .map_err(|e| format!("刷新 Access Token 任务失败：{e}"))??;
             {
                 let db = state.db.lock().map_err(|e| e.to_string())?;
-                persist_rotated_access_token(&db, &id, &expected_rt, &info)?;
+                persist_rotated_access_token(&db, &id, &expected_rt, &info, true)?;
             }
             bearer = Some(info.access_token);
             account_id = info.chatgpt_account_id;

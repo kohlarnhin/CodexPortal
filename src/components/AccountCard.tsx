@@ -74,12 +74,6 @@ const AccountCard: React.FC<AccountCardProps> = ({
   onShowReset,
   isUsageRefreshing,
 }) => {
-  const canActivate = (() => {
-    try {
-      const token: unknown = JSON.parse(account.authJsonContent).personal_access_token;
-      return typeof token === 'string' && token.trim().length > 0;
-    } catch { return false; }
-  })();
   const usageWindows: Array<{
     window: AccountUsageWindow;
     kind: 'primary' | 'secondary';
@@ -179,7 +173,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
               <ToggleSwitch
                 label="切换当前账号"
                 checked={isActive}
-                disabled={!canActivate}
+                disabled={!account.canActivate}
                 onToggle={() => {
                   if (!isActive) onSetActive(account.id);
                 }}

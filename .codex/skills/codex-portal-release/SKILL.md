@@ -18,7 +18,7 @@ Treat saved `auth.json` content, tokens, account email addresses, and the local 
 3. Resolve implementation details from the repository when the requested behavior is sufficiently determined. Ask one concise question only when different interpretations would materially change behavior.
 4. Keep React UI changes consistent with the existing compact monochrome desktop design. Organize Rust commands and data access by business module; keep `src-tauri/src/lib.rs` focused on application startup, shared-state initialization, and command registration.
 
-Do not create or switch branches, commit, push, tag, or open a pull request unless the user asks for that Git operation.
+Outside an explicitly authorized release, do not create or switch branches, commit, push, tag, or open a pull request unless the user asks for that Git operation. During a release, perform the necessary Git operations under the release workflow below.
 
 ### Branch Naming
 
@@ -66,6 +66,8 @@ A version bump is development work only. It never authorizes a release.
 
 Publish only when the user explicitly asks to **发布版本** or gives another unmistakable instruction to publish the current application version. Do not infer release authorization from a version number, completed implementation, approval of the code, or a request to prepare release files.
 
+An explicit release request, including **发布吧**, authorizes committing the intended release changes, getting them onto `main`, pushing `main`, and running the publishing workflow. Proceed without a separate Git commit, push, or publication confirmation. Preserve unrelated uncommitted work and honor any narrower current instruction, such as preparing files only or not pushing. This authorization convention was adopted from the user's explicit correction on 2026-09-09.
+
 Without explicit release authorization, do not:
 
 - dispatch `.github/workflows/release.yml`
@@ -79,7 +81,7 @@ Without explicit release authorization, do not:
 After explicit release authorization:
 
 1. Verify that the five version sources match and that the target version is not already released.
-2. Confirm the intended changes are committed on and pushed to `main`; request any missing Git authorization instead of assuming it.
+2. Commit the intended release changes, integrate them into `main` if needed, and push `main`. Include explicitly requested project-skill updates and preserve unrelated local work. Use the release request's Git authorization without asking again; only pause for a remaining blocker or an action outside that scope.
 3. Prepare concise release notes from the actual diff and obtain the user's wording when their choice would materially affect the public notes.
 4. Dispatch the manual workflow on `main`:
    ```bash

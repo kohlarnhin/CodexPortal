@@ -20,6 +20,7 @@ export interface Account {
   planType: 'weekly' | 'monthly';
   usage: AccountUsage | null;
   canRefreshUsage: boolean;
+  canActivate: boolean;
   nextRefreshAt?: string | null;
   autoActivateWindow: boolean;
   chatgptPlanType?: string | null;
@@ -61,6 +62,7 @@ export interface RtTokenInfo {
   email: string;
   chatgptPlanType?: string | null;
   chatgptAccountId?: string | null;
+  idToken?: string | null;
   accessToken: string;
   refreshToken: string;
   atExpiresAt: number;
@@ -70,6 +72,7 @@ export interface SaveRtAccountParams {
   email: string;
   chatgptPlanType?: string | null;
   chatgptAccountId?: string | null;
+  idToken?: string | null;
   accessToken: string;
   refreshToken: string;
   atExpiresAt: number;

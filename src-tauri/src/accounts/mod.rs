@@ -7,11 +7,15 @@ pub(crate) mod usage;
 
 use crate::accounts::credits::ResetCreditsInfo;
 use crate::accounts::periods::ensure_account_period;
-use crate::accounts::usage::{parse_cached_usage, AccountUsage};
+use crate::accounts::usage::{
+    at_is_due, begin_account_refresh, parse_cached_usage, persist_rotated_access_token,
+    sync_active_oauth_account, AccountUsage,
+};
 use crate::auth::{
-    apply_auth_json, apply_auth_json_if_pat, build_auth_json, exchange_refresh_token,
-    extract_personal_access_token, resolve_auth_json_credential, resolve_token_metadata,
-    AuthJsonCredential, RtTokenInfo,
+    apply_auth_json, apply_auth_json_if_pat, build_auth_json, can_apply_auth_json,
+    exchange_refresh_token, exchange_rt_for_at, extract_personal_access_token,
+    resolve_auth_json_credential, resolve_token_metadata, update_oauth_auth_json, AuthJsonCredential,
+    RtTokenInfo,
 };
 use crate::sessions::sync::request_session_sync;
 use crate::state::AppState;
@@ -42,6 +46,8 @@ pub(crate) struct Account {
     pub(crate) usage: Option<AccountUsage>,
     #[serde(rename = "canRefreshUsage")]
     pub(crate) can_refresh_usage: bool,
+    #[serde(rename = "canActivate")]
+    pub(crate) can_activate: bool,
     #[serde(rename = "nextRefreshAt")]
     pub(crate) next_refresh_at: Option<String>,
     #[serde(rename = "autoActivateWindow")]
@@ -82,11 +88,16 @@ pub(crate) fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, S
         .query_map([], |row| {
             let auth_json_content: String = row.get(2)?;
             let access_token: Option<String> = row.get(11)?;
+            let refresh_token: Option<String> = row.get(15)?;
             Ok(Account {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 can_refresh_usage: extract_personal_access_token(&auth_json_content).is_some()
                     || access_token.is_some(),
+                can_activate: can_apply_auth_json(&auth_json_content)
+                    || refresh_token
+                        .as_deref()
+                        .is_some_and(|token| !token.trim().is_empty()),
                 auth_json_content,
                 notes: row.get(3)?,
                 created_at: row.get(4)?,
@@ -104,7 +115,7 @@ pub(crate) fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, S
                 access_token,
                 chatgpt_account_id: row.get(12)?,
                 chatgpt_account_is_fedramp: row.get::<_, i32>(13)? == 1,
-                refresh_token: row.get(15)?,
+                refresh_token,
                 at_expires_at: row.get(16)?,
             })
         })
@@ -134,6 +145,7 @@ pub(crate) async fn save_rt_account(
     email: String,
     chatgpt_plan_type: Option<String>,
     chatgpt_account_id: Option<String>,
+    id_token: Option<String>,
     access_token: String,
     refresh_token: String,
     at_expires_at: i64,
@@ -145,6 +157,7 @@ pub(crate) async fn save_rt_account(
             email,
             chatgpt_plan_type,
             chatgpt_account_id,
+            id_token,
             access_token,
             refresh_token,
             at_expires_at,
@@ -187,6 +200,7 @@ async fn insert_pat_account(
         plan_type: "weekly".to_string(),
         usage: None,
         can_refresh_usage,
+        can_activate: true,
         next_refresh_at: None,
         auto_activate_window: false,
         chatgpt_plan_type: meta.chatgpt_plan_type,
@@ -227,7 +241,7 @@ async fn insert_pat_account(
 }
 
 /// 入库 rt 兑换出的账号（手动添加与 auth.json 自动导入共用）。
-/// rt 账号用于额度管理，不写入 ~/.codex/auth.json，也不开启本地账号活跃时段。
+/// 保存完整 OAuth 凭证，由用户启用时写入本地认证并开启账号活跃时段。
 async fn insert_rt_account(
     state: &State<'_, AppState>,
     info: RtTokenInfo,
@@ -237,7 +251,7 @@ async fn insert_rt_account(
         return Err("Token 信息不完整，请重新兑换".to_string());
     }
 
-    let auth_json_content = serde_json::json!({ "personal_access_token": null }).to_string();
+    let auth_json_content = update_oauth_auth_json("{}", &info);
     let now = Utc::now().to_rfc3339();
     let at_expires = DateTime::from_timestamp(info.at_expires_at, 0)
         .map(|time| time.to_rfc3339())
@@ -254,6 +268,7 @@ async fn insert_rt_account(
         plan_type: "weekly".to_string(),
         usage: None,
         can_refresh_usage: true,
+        can_activate: true,
         next_refresh_at: None,
         auto_activate_window: false,
         chatgpt_plan_type: info.chatgpt_plan_type,
@@ -277,7 +292,6 @@ async fn insert_rt_account(
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
 
-    // rt 账号无法生成 codex 可用的 auth.json，不写入 ~/.codex/auth.json。
     Ok(account)
 }
 
@@ -372,6 +386,7 @@ pub(crate) async fn update_account(
             plan_type: existing_plan_type,
             usage: parse_cached_usage(existing_usage_json),
             can_refresh_usage: true,
+            can_activate: true,
             next_refresh_at: existing_next_refresh_at,
             auto_activate_window: existing_auto_activate_window,
             chatgpt_plan_type: existing_chatgpt_plan_type,
@@ -424,6 +439,7 @@ pub(crate) async fn update_account(
         plan_type: "weekly".to_string(),
         usage: None,
         can_refresh_usage: true,
+        can_activate: true,
         next_refresh_at: None,
         auto_activate_window: existing_auto_activate_window,
         chatgpt_plan_type: meta.chatgpt_plan_type,
@@ -491,6 +507,7 @@ pub(crate) fn delete_account(
     id: String,
 ) -> Result<(), String> {
     let mut db = state.db.lock().map_err(|e| e.to_string())?;
+    sync_active_oauth_account(&db)?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
     let is_active: bool = tx
         .query_row(
@@ -522,10 +539,10 @@ pub(crate) fn delete_account(
             rows.collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.to_string())?
         };
-        // 只有成功写入本地认证的账号才能接续会话额度归属；RT 账号仍可独立管理额度。
+        // 仅选择凭证完整的账号接续会话额度归属；旧版 OAuth 账号需先手动启用以补齐凭证。
         let next = candidates
             .into_iter()
-            .find(|(_, content)| extract_personal_access_token(content).is_some());
+            .find(|(_, content)| can_apply_auth_json(content));
         tx.execute("UPDATE accounts SET is_active = 0", [])
             .map_err(|e| e.to_string())?;
         tx.execute(
@@ -555,12 +572,48 @@ pub(crate) fn delete_account(
 }
 
 #[tauri::command]
-pub(crate) fn set_active_account(
+pub(crate) async fn set_active_account(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
+    // 与额度查询、后台续期共用互斥，避免重复兑换同一个 Refresh Token。
+    let _guard = begin_account_refresh(&state, &id, None)?;
+    let (content, refresh_token, at_expires_at, is_active) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.query_row(
+            "SELECT auth_json_content, refresh_token, at_expires_at, is_active FROM accounts WHERE id = ?1",
+            params![id],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, bool>(3)?,
+            )),
+        )
+        .map_err(|_| "Account not found".to_string())?
+    };
+    if is_active {
+        return Ok(());
+    }
+
+    // 旧版只保存了 at/rt；首次启用时兑换并补齐 id_token，过期凭证也先续期。
+    if extract_personal_access_token(&content).is_none()
+        && (!can_apply_auth_json(&content) || at_expires_at.is_none() || at_is_due(&at_expires_at))
+    {
+        let rt = refresh_token
+            .filter(|token| !token.trim().is_empty())
+            .ok_or_else(|| "账号登录信息不完整，请重新进行 OAuth 登录。".to_string())?;
+        let expected_rt = rt.clone();
+        let info = tauri::async_runtime::spawn_blocking(move || exchange_rt_for_at(&rt))
+            .await
+            .map_err(|e| format!("账号认证续期任务失败：{e}"))??;
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        persist_rotated_access_token(&db, &id, &expected_rt, &info, true)?;
+    }
+
     let mut db = state.db.lock().map_err(|e| e.to_string())?;
+    sync_active_oauth_account(&db)?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
 
     // 目标账号已是活跃账号：直接返回，避免重复开段产生重叠时段。
@@ -584,10 +637,8 @@ pub(crate) fn set_active_account(
         )
         .map_err(|_| "Account not found".to_string())?;
 
-    if extract_personal_access_token(&content).is_none() {
-        return Err(
-            "该账号没有可用于本地切换的 PAT，请先补充 PAT；仍可刷新和管理额度。".to_string(),
-        );
+    if !can_apply_auth_json(&content) {
+        return Err("账号登录信息不完整，请重新进行 OAuth 登录。".to_string());
     }
 
     // 记录账号活跃时段：供会话返回的剩余额度按账号归属。

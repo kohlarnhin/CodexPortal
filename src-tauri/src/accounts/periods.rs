@@ -1,4 +1,4 @@
-use crate::auth::extract_personal_access_token;
+use crate::auth::can_apply_auth_json;
 use crate::state::AppState;
 use crate::time::rfc3339_timestamp_millis;
 use chrono::Utc;
@@ -87,7 +87,7 @@ pub(crate) fn ensure_account_period_on_startup(state: &AppState) {
         )
         .ok();
     let active_id = active.and_then(|(id, content)| {
-        if extract_personal_access_token(&content).is_some() {
+        if can_apply_auth_json(&content) {
             Some(id)
         } else {
             let _ = db.execute(

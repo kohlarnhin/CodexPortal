@@ -220,6 +220,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
           email: rtToSave.email,
           chatgptPlanType: rtToSave.chatgptPlanType,
           chatgptAccountId: rtToSave.chatgptAccountId,
+          idToken: rtToSave.idToken,
           accessToken: rtToSave.accessToken,
           refreshToken: rtToSave.refreshToken,
           atExpiresAt: rtToSave.atExpiresAt,

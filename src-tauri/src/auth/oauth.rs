@@ -209,6 +209,7 @@ fn exchange_oauth_code(
         email,
         chatgpt_plan_type,
         chatgpt_account_id,
+        id_token: Some(response.id_token),
         access_token: response.access_token,
         refresh_token: response.refresh_token,
         at_expires_at: exp,

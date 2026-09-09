@@ -1,6 +1,7 @@
 use crate::auth::{
-    exchange_rt_for_at, extract_personal_access_token, PersonalAccessTokenMetadata, RtTokenInfo,
-    PERSONAL_ACCESS_TOKEN_METADATA_URL,
+    apply_auth_json, can_apply_auth_json, decode_access_token, exchange_rt_for_at,
+    extract_personal_access_token, oauth_auth_identity, update_oauth_auth_json,
+    PersonalAccessTokenMetadata, RtTokenInfo, PERSONAL_ACCESS_TOKEN_METADATA_URL,
 };
 use crate::http::curl_get_json;
 use crate::sessions::sync::request_session_sync;
@@ -10,6 +11,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use rusqlite::params;
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde::Serialize;
 use tauri::Emitter;
@@ -422,11 +424,91 @@ pub(crate) fn begin_account_refresh<'a>(
             },
         );
     }
-    Ok(AccountRefreshGuard {
+    let guard = AccountRefreshGuard {
         state,
         account_id: id.to_string(),
         app,
-    })
+    };
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    sync_active_oauth_account(&db)?;
+    Ok(guard)
+}
+
+/// Codex 也会续期；回读同一账号的新凭证后再使用数据库中的 rt。
+pub(crate) fn sync_active_oauth_account(db: &Connection) -> Result<(), String> {
+    let active = db
+        .query_row(
+            "SELECT id, auth_json_content, refresh_token FROM accounts WHERE is_active = 1 AND refresh_token IS NOT NULL",
+            [],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            )),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((id, content, expected_rt)) = active else {
+        return Ok(());
+    };
+    if extract_personal_access_token(&content).is_some() {
+        return Ok(());
+    }
+    let auth_path = crate::codex::paths::codex_home()?.join("auth.json");
+    let Ok(local_content) = std::fs::read_to_string(auth_path) else {
+        return Ok(());
+    };
+    if !can_apply_auth_json(&local_content) || extract_personal_access_token(&local_content).is_some() {
+        return Ok(());
+    }
+    let stored: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|_| "保存的账号登录信息格式异常，请重新登录。".to_string())?;
+    let local: serde_json::Value = serde_json::from_str(&local_content)
+        .map_err(|_| "本地账号登录信息格式异常，请重新登录。".to_string())?;
+    let Some(identity) = oauth_auth_identity(&stored) else {
+        return Ok(());
+    };
+    if oauth_auth_identity(&local).as_ref() != Some(&identity) {
+        return Ok(());
+    }
+    let tokens = &local["tokens"];
+    let access_token = tokens["access_token"].as_str().unwrap_or_default();
+    let refresh_token = tokens["refresh_token"].as_str().unwrap_or_default();
+    if refresh_token == expected_rt {
+        return Ok(());
+    }
+    let Some((meta, exp)) = decode_access_token(access_token) else {
+        return Ok(());
+    };
+    let stored_exp = stored["tokens"]["access_token"]
+        .as_str()
+        .and_then(decode_access_token)
+        .map(|(_, exp)| exp)
+        .unwrap_or_default();
+    let local_refreshed_at = local["last_refresh"]
+        .as_str()
+        .and_then(rfc3339_timestamp_millis);
+    let stored_refreshed_at = stored["last_refresh"]
+        .as_str()
+        .and_then(rfc3339_timestamp_millis);
+    if exp < stored_exp || (exp == stored_exp && local_refreshed_at <= stored_refreshed_at) {
+        return Ok(());
+    }
+    persist_rotated_access_token(
+        db,
+        &id,
+        &expected_rt,
+        &RtTokenInfo {
+            email: meta.email,
+            chatgpt_plan_type: meta.chatgpt_plan_type,
+            chatgpt_account_id: Some(identity.0),
+            id_token: tokens["id_token"].as_str().map(str::to_string),
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.to_string(),
+            at_expires_at: exp,
+        },
+        false,
+    )
 }
 
 pub(crate) fn persist_rotated_access_token(
@@ -434,12 +516,33 @@ pub(crate) fn persist_rotated_access_token(
     id: &str,
     expected_rt: &str,
     info: &RtTokenInfo,
+    write_local_auth: bool,
 ) -> Result<(), String> {
+    let (content, is_active, account_id) = db
+        .query_row(
+            "SELECT auth_json_content, is_active, chatgpt_account_id FROM accounts WHERE id = ?1 AND refresh_token = ?2",
+            params![id, expected_rt],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, bool>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            )),
+        )
+        .map_err(|_| "账号认证已变更，请重新操作。".to_string())?;
+    let is_oauth = extract_personal_access_token(&content).is_none();
+    let auth_json_content = if is_oauth {
+        let mut info = info.clone();
+        info.chatgpt_account_id = info.chatgpt_account_id.or(account_id);
+        update_oauth_auth_json(&content, &info)
+    } else {
+        content
+    };
     let new_expiry = DateTime::from_timestamp(info.at_expires_at, 0).map(|time| time.to_rfc3339());
     let changed = db
         .execute(
             "UPDATE accounts SET access_token = ?1, refresh_token = ?2, at_expires_at = ?3,
-             chatgpt_account_id = COALESCE(?4, chatgpt_account_id), reset_credits_json = NULL
+             chatgpt_account_id = COALESCE(?4, chatgpt_account_id), reset_credits_json = NULL,
+             auth_json_content = ?7
          WHERE id = ?5 AND refresh_token = ?6",
             params![
                 info.access_token,
@@ -447,12 +550,20 @@ pub(crate) fn persist_rotated_access_token(
                 new_expiry,
                 info.chatgpt_account_id,
                 id,
-                expected_rt
+                expected_rt,
+                auth_json_content
             ],
         )
         .map_err(|e| e.to_string())?;
     if changed != 1 {
         return Err("账号认证已变更，请重新操作。".to_string());
+    }
+    // 先保存已轮换的 rt；本地文件写入失败时也不能丢失新的凭证。
+    if write_local_auth && is_active && is_oauth {
+        if !can_apply_auth_json(&auth_json_content) {
+            return Err("账号登录信息不完整，请重新进行 OAuth 登录。".to_string());
+        }
+        apply_auth_json(&auth_json_content)?;
     }
     Ok(())
 }
@@ -534,7 +645,7 @@ async fn fetch_and_persist_account_usage(
                 .map_err(|e| format!("刷新 Access Token 任务失败：{e}"))??;
             {
                 let db = state.db.lock().map_err(|e| e.to_string())?;
-                persist_rotated_access_token(&db, &id, &expected_rt, &info)?;
+                persist_rotated_access_token(&db, &id, &expected_rt, &info, true)?;
             }
             bearer = Some(info.access_token);
             account_id = info.chatgpt_account_id;

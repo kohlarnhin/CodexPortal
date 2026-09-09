@@ -74,6 +74,64 @@ pub(crate) fn build_auth_json(token: &str) -> String {
     .to_string()
 }
 
+/// 保存 Codex 的 ChatGPT 登录格式；续期未返回 id_token 时保留已有值。
+pub(crate) fn update_oauth_auth_json(content: &str, info: &RtTokenInfo) -> String {
+    let mut auth = serde_json::from_str::<Value>(content)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    auth["auth_mode"] = serde_json::json!("chatgpt");
+    auth["OPENAI_API_KEY"] = Value::Null;
+    if !auth["tokens"].is_object() {
+        auth["tokens"] = serde_json::json!({});
+    }
+    if let Some(id_token) = info
+        .id_token
+        .as_deref()
+        .filter(|token| !token.trim().is_empty())
+    {
+        auth["tokens"]["id_token"] = serde_json::json!(id_token);
+    }
+    auth["tokens"]["access_token"] = serde_json::json!(info.access_token);
+    auth["tokens"]["refresh_token"] = serde_json::json!(info.refresh_token);
+    if let Some(account_id) = &info.chatgpt_account_id {
+        auth["tokens"]["account_id"] = serde_json::json!(account_id);
+    }
+    auth["last_refresh"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+    auth.to_string()
+}
+
+pub(crate) fn can_apply_auth_json(content: &str) -> bool {
+    if extract_personal_access_token(content).is_some() {
+        return true;
+    }
+    let Ok(auth) = serde_json::from_str::<Value>(content) else {
+        return false;
+    };
+    ["id_token", "access_token", "refresh_token"]
+        .iter()
+        .all(|key| {
+            auth.get("tokens")
+                .and_then(|tokens| tokens.get(*key))
+                .and_then(Value::as_str)
+                .is_some_and(|token| !token.trim().is_empty())
+        })
+}
+
+/// 同时匹配工作区与登录用户，防止把同一工作区内其他用户的凭证归入当前账号。
+pub(crate) fn oauth_auth_identity(auth: &Value) -> Option<(String, String)> {
+    let tokens = auth.get("tokens")?;
+    let id_token = tokens.get("id_token")?.as_str()?;
+    let bytes = URL_SAFE_NO_PAD.decode(id_token.split('.').nth(1)?).ok()?;
+    let claims: Value = serde_json::from_slice(&bytes).ok()?;
+    let subject = claims.get("sub")?.as_str()?.trim();
+    let account_id = tokens.get("account_id")?.as_str()?.trim();
+    if subject.is_empty() || account_id.is_empty() {
+        return None;
+    }
+    Some((account_id.to_string(), subject.to_string()))
+}
+
 /// rt 兑换后的账号信息与令牌（供前端确认与保存）。
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RtTokenInfo {
@@ -82,6 +140,8 @@ pub(crate) struct RtTokenInfo {
     pub(crate) chatgpt_plan_type: Option<String>,
     #[serde(rename = "chatgptAccountId")]
     pub(crate) chatgpt_account_id: Option<String>,
+    #[serde(rename = "idToken")]
+    pub(crate) id_token: Option<String>,
     #[serde(rename = "accessToken")]
     pub(crate) access_token: String,
     #[serde(rename = "refreshToken")]
@@ -92,6 +152,7 @@ pub(crate) struct RtTokenInfo {
 
 #[derive(Debug, Deserialize)]
 struct OAuthTokenResponse {
+    id_token: Option<String>,
     access_token: String,
     refresh_token: String,
 }
@@ -264,6 +325,7 @@ pub(crate) fn exchange_rt_for_at(rt: &str) -> Result<RtTokenInfo, String> {
         email: meta.email,
         chatgpt_plan_type: meta.chatgpt_plan_type,
         chatgpt_account_id: meta.chatgpt_account_id,
+        id_token: response.id_token,
         access_token: response.access_token,
         refresh_token: response.refresh_token,
         at_expires_at: exp,
@@ -351,8 +413,7 @@ pub(crate) async fn exchange_refresh_token(input: String) -> Result<RtTokenInfo,
     .map_err(|e| format!("兑换任务失败：{e}"))?
 }
 
-/// 仅当认证内容含 Personal Access Token（codex 可用的认证格式）时才写入 ~/.codex/auth.json。
-/// rt 账号（无 PAT）不会覆盖本地 auth.json。
+/// PAT 编辑完成后同步本地认证；OAuth 凭证由切换和续期流程写入。
 pub(crate) fn apply_auth_json_if_pat(content: &str) {
     if extract_personal_access_token(content).is_some() {
         let _ = apply_auth_json(content);

@@ -9,7 +9,7 @@ interface AboutProps {
 }
 
 export default function About({ updater }: AboutProps) {
-  const [appVersion, setAppVersion] = useState<string>('0.3.0');
+  const [appVersion, setAppVersion] = useState<string>('0.3.1');
   const [appName, setAppName] = useState<string>('Codex Portal');
   const [tauriVersion, setTauriVersion] = useState<string>('2.11.5');
 
@@ -149,4 +149,3 @@ export default function About({ updater }: AboutProps) {
     </div>
   );
 }
-

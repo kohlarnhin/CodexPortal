@@ -82,6 +82,7 @@ export function useAccounts() {
       email: params.email,
       chatgptPlanType: params.chatgptPlanType ?? null,
       chatgptAccountId: params.chatgptAccountId ?? null,
+      idToken: params.idToken ?? null,
       accessToken: params.accessToken,
       refreshToken: params.refreshToken,
       atExpiresAt: params.atExpiresAt,
