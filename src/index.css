@@ -36,6 +36,69 @@ html, body, #root {
   background-color: #FAFAFA;
 }
 
+@layer components {
+  .app-sidebar {
+    width: clamp(176px, 20vw, 240px);
+    min-height: 0;
+  }
+
+  .sidebar-brand {
+    padding-inline: clamp(16px, 2vw, 20px);
+    padding-bottom: clamp(16px, 4vh, 32px);
+  }
+
+  .sidebar-nav {
+    min-height: 0;
+    padding-inline: clamp(8px, 1.5vw, 16px);
+  }
+
+  .sidebar-nav > button {
+    padding-inline: clamp(12px, 1.5vw, 16px);
+    white-space: nowrap;
+  }
+
+  .sidebar-nav > button > svg {
+    flex-shrink: 0;
+  }
+
+  .app-content {
+    min-width: 0;
+    min-height: 0;
+    padding-inline: clamp(20px, 3vw, 48px);
+    padding-bottom: clamp(16px, 4vh, 40px);
+  }
+
+  /* Breakpoints follow the space left after the sidebar and page gutters. */
+  .page-layout {
+    container: page / inline-size;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .page-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    gap: 12px 16px;
+    margin-bottom: 24px;
+  }
+
+  .page-scroll {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 12px;
+    margin-right: -12px;
+  }
+}
+
 /* 默认允许选中文字（长按/拖拽选择），仅交互控件与拖拽区不可选 */
 button,
 [role="button"],
@@ -89,3 +152,48 @@ input, textarea, code {
 .toggle-checkbox:checked + .toggle-label {
   background-color: #000;
 }
+
+/* Logo-inspired dynamic portal brand text */
+@keyframes portal-gradient-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.portal-brand-text {
+  background-image: linear-gradient(
+    115deg,
+    #090d16 0%,
+    #0284c7 20%,
+    #38bdf8 38%,
+    #818cf8 58%,
+    #4f46e5 78%,
+    #090d16 100%
+  );
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: portal-gradient-flow 7s ease-in-out infinite;
+  display: inline-block;
+  transition: filter 0.3s ease;
+}
+
+.portal-brand-text:hover {
+  filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.28));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-brand-text {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
+

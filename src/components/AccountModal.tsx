@@ -2,6 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Account, AccountFormData, OAuthLoginInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
 import Select from './Select';
+import Button from './ui/button';
+import Input from './ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from './ui/dialog';
 
 interface AccountModalProps {
   isOpen: boolean;
@@ -246,64 +256,60 @@ const AccountModal: React.FC<AccountModalProps> = ({
     secondaryLabel: string,
     onSecondary: () => void,
   ) => (
-    <div className="px-5 py-3 bg-[#FAFAFA] border-t border-[#EAEAEA] flex flex-col gap-3 mt-auto">
+    <div className="flex flex-col gap-3 pt-2">
       {renderError()}
-      <div className="flex justify-end gap-2">
-        <button
+      <DialogFooter className="pt-0">
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onSecondary}
           disabled={primaryBusy}
-          className="px-4 py-1.5 text-[12px] font-medium text-[#333333] bg-white border border-[#EAEAEA] rounded hover:bg-[#F9F9F9] hover:text-black transition-colors shadow-sm disabled:opacity-50"
         >
           {secondaryLabel}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="default"
+          size="sm"
           onClick={onPrimary}
           disabled={primaryBusy || disabledPrimary}
-          className="px-4 py-1.5 text-[12px] font-medium text-white bg-black border border-transparent rounded hover:bg-[#333333] focus:ring-2 focus:ring-black/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm min-w-[80px] flex justify-center"
+          className="min-w-[90px]"
         >
           {primaryBusy ? '处理中...' : primaryLabel}
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </div>
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-black/20 backdrop-blur-sm animate-fade-in"
-        onClick={onClose}
-      />
-
-      <div className="relative w-full max-w-[480px] bg-white rounded-xl shadow-2xl animate-modal-in overflow-hidden flex flex-col border border-[#EAEAEA]">
-        <div className="flex justify-between items-center px-5 py-3 border-b border-[#EAEAEA] bg-[#FAFAFA]">
-          <h2 className="text-[14px] font-semibold text-black tracking-tight">
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-[490px] p-6 sm:p-7 gap-5">
+        <DialogHeader>
+          <DialogTitle>
             {editingAccount ? '编辑账号配置' : '新增账号配置'}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1 text-[#999999] hover:text-black rounded transition-colors"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
+          </DialogTitle>
+          <DialogDescription>
+            {editingAccount
+              ? '修改该账号的认证 Token 或备注信息。'
+              : '配置 Codex 认证凭据，支持 PAT、Refresh Token 及 OAuth 登录。'}
+          </DialogDescription>
+        </DialogHeader>
 
         {unsupportedFormat ? (
-          <div className="p-8 text-center">
-            <p className="text-[14px] text-[#555555] mb-5">该账号为 OAuth / Refresh Token 登录的账号，无法直接编辑。<br/>可删除后重新添加。</p>
-            <button
-              onClick={onClose}
-              className="px-4 py-1.5 text-[12px] font-medium text-white bg-black rounded hover:bg-[#333333] transition-colors"
-            >
+          <div className="py-6 text-center space-y-4">
+            <p className="text-[13px] text-[#666666] leading-relaxed">
+              该账号为 OAuth / Refresh Token 登录的账号，无法直接编辑。<br />可删除后重新添加。
+            </p>
+            <Button onClick={onClose} size="sm">
               关闭
-            </button>
+            </Button>
           </div>
         ) : step === 'form' ? (
-          <div className="flex flex-col max-h-[85vh]">
-            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+          <div className="flex flex-col gap-5">
+            <div className="space-y-4">
               <div>
-                <label className="block text-[12px] font-medium text-black mb-1.5">
+                <label className="block text-[12px] font-medium text-[#222222] mb-1.5">
                   认证方式 <span className="text-[#D32F2F]">*</span>
                 </label>
                 <Select
@@ -316,12 +322,12 @@ const AccountModal: React.FC<AccountModalProps> = ({
                   ]}
                 />
                 {isRt && (
-                  <p className="text-[11px] text-[#999999] mt-1.5">
+                  <p className="text-[11px] text-[#888888] mt-1.5">
                     Refresh Token 一次性使用，兑换后旧 rt 失效；Team 账号同样支持。
                   </p>
                 )}
                 {isOauth && (
-                  <p className="text-[11px] text-[#999999] mt-1.5">
+                  <p className="text-[11px] text-[#888888] mt-1.5">
                     支持个人与 Team 账号。生成 Codex 登录链接，浏览器登录后自动回跳本机完成认证。
                   </p>
                 )}
@@ -329,16 +335,16 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
               {!isOauth && (
                 <div>
-                  <label htmlFor="tokenInput" className="block text-[12px] font-medium text-black mb-1.5">
+                  <label htmlFor="tokenInput" className="block text-[12px] font-medium text-[#222222] mb-1.5">
                     {isRt ? 'Refresh Token' : 'Personal Access Token'} <span className="text-[#D32F2F]">*</span>
                   </label>
-                  <input
+                  <Input
                     type="text"
                     id="tokenInput"
                     value={input}
                     onChange={(e) => { setInput(e.target.value); setError(null); }}
                     placeholder={isRt ? '可粘贴 JSON（自动提取 refresh_token）或直接粘贴 rt...' : '在此输入或粘贴 Token...'}
-                    className="w-full px-3 py-2 bg-white border border-[#EAEAEA] rounded-md focus:border-black focus:ring-1 focus:ring-black outline-none transition-all text-black placeholder-[#A0A0A0] text-[13px] font-mono"
+                    className="font-mono text-[12px]"
                   />
                   {!isRt && isTokenUnchanged && (
                     <p className="mt-1.5 text-[11px] text-emerald-600">
@@ -349,21 +355,21 @@ const AccountModal: React.FC<AccountModalProps> = ({
               )}
 
               <div>
-                <label htmlFor="notes" className="block text-[12px] font-medium text-black mb-1.5">
+                <label htmlFor="notes" className="block text-[12px] font-medium text-[#222222] mb-1.5">
                   备注 (可选)
                 </label>
-                <input
+                <Input
                   type="text"
                   id="notes"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="例如：这是用于测试环境的临时账号..."
-                  className="w-full px-3 py-2 bg-white border border-[#EAEAEA] rounded-md focus:border-black focus:ring-1 focus:ring-black outline-none transition-all text-black placeholder-[#A0A0A0] text-[13px]"
+                  className="text-[13px]"
                 />
               </div>
 
-              <div className="flex items-start gap-2 rounded-lg border border-[#EAEAEA] bg-[#F9F9F9] px-3.5 py-2.5 text-[11px] text-[#777777]">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <div className="flex items-start gap-2.5 rounded-xl border border-[#EAEAEA] bg-[#F9F9F9] p-3 text-[12px] text-[#666666] leading-relaxed">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-[#888888]"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                 <span>
                   {isOauth
                     ? '登录成功后邮箱与订阅自动解析；限额类型在额度刷新后自动判断。'
@@ -381,7 +387,6 @@ const AccountModal: React.FC<AccountModalProps> = ({
                 if (isOauth) {
                   void handleStartOauth();
                 } else if (isTokenUnchanged && !isRt) {
-                  // Token 未变化：直接保存，不重新验证、不弹确认框。
                   void handleConfirmSave();
                 } else {
                   void handleValidate();
@@ -393,36 +398,40 @@ const AccountModal: React.FC<AccountModalProps> = ({
             )}
           </div>
         ) : step === 'oauth' ? (
-          <div className="flex flex-col max-h-[85vh]">
-            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
-              <div className="flex items-center gap-2.5 text-[13px] text-[#666666]">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          <div className="flex flex-col gap-5">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2.5 text-[13px] text-[#555555]">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin text-black"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                 等待登录回调...（在本机浏览器登录成功后自动完成）
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[12px] font-medium text-black">登录链接</label>
+                <label className="text-[12px] font-medium text-[#222222]">登录链接</label>
                 <div className="flex items-center gap-2">
-                  <input
+                  <Input
                     type="text"
                     readOnly
                     value={oauthInfo?.url || ''}
-                    className="flex-1 min-w-0 px-3 py-2 bg-[#F7F7F7] border border-[#EAEAEA] rounded-md text-[11px] text-[#666666] font-mono select-text"
+                    className="text-[11px] text-[#666666] font-mono bg-[#F7F7F7]"
                   />
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => void handleCopyUrl()}
-                    className="shrink-0 px-3 py-2 text-[12px] font-medium bg-white border border-[#EAEAEA] rounded-md hover:border-black hover:text-black transition-colors"
+                    className="shrink-0"
                   >
                     {copied ? '已复制' : '复制'}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="default"
+                    size="sm"
                     onClick={() => void handleOpenBrowser()}
-                    className="shrink-0 px-3 py-2 text-[12px] font-medium bg-black text-white rounded-md hover:bg-[#333333] transition-colors"
+                    className="shrink-0"
                   >
                     打开浏览器
-                  </button>
+                  </Button>
                 </div>
               </div>
 
@@ -433,43 +442,46 @@ const AccountModal: React.FC<AccountModalProps> = ({
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[12px] font-medium text-black">
+                <label className="text-[12px] font-medium text-[#222222]">
                   在其他设备登录后，粘贴浏览器回跳的 localhost 地址
                 </label>
-                <input
+                <Input
                   type="text"
                   value={manualUrl}
                   onChange={(e) => { setManualUrl(e.target.value); setError(null); }}
                   placeholder="http://localhost:端口/auth/callback?code=...&state=..."
-                  className="w-full px-3 py-2 bg-white border border-[#EAEAEA] rounded-md focus:border-black focus:ring-1 focus:ring-black outline-none transition-all text-black placeholder-[#A0A0A0] text-[12px] font-mono"
+                  className="font-mono text-[11px]"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="default"
+                  size="sm"
                   onClick={() => void handleManualComplete()}
                   disabled={isValidating}
-                  className="self-end px-4 py-1.5 text-[12px] font-medium bg-black text-white rounded-md hover:bg-[#333333] transition-colors disabled:opacity-50"
+                  className="self-end"
                 >
                   {isValidating ? '处理中...' : '完成认证'}
-                </button>
+                </Button>
               </div>
             </div>
 
-            <div className="px-5 py-3 bg-[#FAFAFA] border-t border-[#EAEAEA] flex flex-col gap-3 mt-auto">
+            <div className="flex flex-col gap-3 pt-2">
               {renderError()}
-              <div className="flex justify-end">
-                <button
+              <DialogFooter className="pt-0">
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => setStep('form')}
-                  className="px-4 py-1.5 text-[12px] font-medium text-[#333333] bg-white border border-[#EAEAEA] rounded hover:bg-[#F9F9F9] hover:text-black transition-colors shadow-sm"
                 >
                   返回
-                </button>
-              </div>
+                </Button>
+              </DialogFooter>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col max-h-[85vh]">
-            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+          <div className="flex flex-col gap-5">
+            <div className="space-y-4">
               <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-3">
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-[12px] text-[#888888] shrink-0">账号邮箱</span>
@@ -481,8 +493,8 @@ const AccountModal: React.FC<AccountModalProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-start gap-2 rounded-lg border border-[#EAEAEA] bg-[#F9F9F9] px-3.5 py-2.5 text-[11px] text-[#777777]">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <div className="flex items-start gap-2.5 rounded-xl border border-[#EAEAEA] bg-[#F9F9F9] p-3 text-[12px] text-[#666666] leading-relaxed">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-[#888888]"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                 <span>
                   {isOauth
                     ? '确认后保存账号；登录已成功，Refresh Token 将用于后续自动刷新。'
@@ -496,8 +508,8 @@ const AccountModal: React.FC<AccountModalProps> = ({
             {renderFooterButtons('确认保存', isSubmitting, () => void handleConfirmSave(), false, '返回修改', () => setStep(isOauth ? 'oauth' : 'form'))}
           </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 

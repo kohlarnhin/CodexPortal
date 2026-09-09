@@ -3,8 +3,10 @@ import { useAccounts } from '../hooks/useAccounts';
 import AccountCard from './AccountCard';
 import AccountModal from './AccountModal';
 import ConfirmModal from './ConfirmModal';
-import TestAccountModal from './TestAccountModal';
+import QuotaActivationModal from './QuotaActivationModal';
 import ResetInfoModal from './ResetInfoModal';
+import Button from './ui/button';
+import { ActionTooltip } from './ui/tooltip';
 import { Account, AccountFormData, AccountUsage, SaveRtAccountParams } from '../types/account';
 
 const PLAN_FILTER_STYLES: Record<string, { label: string; activeClass: string }> = {
@@ -34,9 +36,10 @@ const AccountList: React.FC<AccountListProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [testingAccount, setTestingAccount] = useState<Account | null>(null);
+  const [activationAccountId, setActivationAccountId] = useState<string | null>(null);
   const [resetAccount, setResetAccount] = useState<Account | null>(null);
   const [planFilter, setPlanFilter] = useState<string | null>(null);
+  const activationAccount = accounts.find((account) => account.id === activationAccountId);
 
   // 各订阅类型的账号数量（用于筛选 chip）
   const planCounts = useMemo(() => {
@@ -80,7 +83,7 @@ const AccountList: React.FC<AccountListProps> = ({
 
     // PAT 未变化时无需重新获取额度
     if (savedAccount.canRefreshUsage && shouldRefreshUsage) {
-      void handleRefreshUsage(savedAccount.id, true);
+      void handleRefreshUsage(savedAccount.id);
     }
   };
 
@@ -88,23 +91,22 @@ const AccountList: React.FC<AccountListProps> = ({
     const savedAccount = await saveRtAccount(params);
     setIsModalOpen(false);
     if (savedAccount.canRefreshUsage) {
-      void handleRefreshUsage(savedAccount.id, true);
+      void handleRefreshUsage(savedAccount.id);
     }
     return savedAccount;
   };
 
-  const handleRefreshUsage = async (accountId: string, accountWasJustSaved = false) => {
+  const handleRefreshUsage = async (accountId: string) => {
     try {
       await onRefreshUsage(accountId);
-    } catch (error: any) {
-      const prefix = accountWasJustSaved ? '账号已保存，但额度刷新失败' : '额度刷新失败';
-      alert(`${prefix}: ${error?.message || error?.toString() || '未知错误'}`);
+    } catch {
+      // 后端已记录异常，由全局弹窗统一展示。
     }
   };
 
   if (isLoading) {
     return (
-      <div className="max-w-3xl mx-auto w-full">
+      <div className="page-layout pt-4">
         <div className="flex items-center justify-between mb-8">
           <div>
             <div className="h-6 w-24 bg-[#EAEAEA] rounded animate-pulse mb-2"></div>
@@ -122,30 +124,32 @@ const AccountList: React.FC<AccountListProps> = ({
   }
 
   return (
-    <div className="max-w-4xl mx-auto w-full">
-      <div className="flex items-center justify-between mb-8 relative z-10">
+    <div className="page-layout pt-4">
+      <div className="page-header relative z-10 mb-3">
         <div>
-          <h2 className="text-[20px] font-semibold text-black tracking-tight mb-1.5">账号管理</h2>
-          <p className="text-[14px] text-[#666666]">管理并无缝切换本地的 Codex 认证配置。</p>
+          <h2 className="text-[20px] font-semibold text-black tracking-tight mb-1">账号管理</h2>
+          <p className="text-[13px] text-[#666666]">管理并无缝切换本地的 Codex 认证配置。</p>
         </div>
-        <button
-          onClick={handleAdd}
-          title="添加账号"
-          className="w-8 h-8 flex items-center justify-center bg-black hover:bg-[#333333] text-white rounded-md transition-colors shadow-sm"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-        </button>
+        <ActionTooltip label="添加账号">
+          <Button
+            onClick={handleAdd}
+            size="icon"
+            className="h-8 w-8 shadow-sm"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          </Button>
+        </ActionTooltip>
       </div>
 
       {accounts.length > 0 && (
-        <div className="flex items-center gap-2 mb-4 flex-wrap shrink-0">
+        <div className="flex items-center gap-2 mb-3 flex-wrap shrink-0">
           <button
             type="button"
             onClick={() => setPlanFilter(null)}
-            className={`px-3 py-1 rounded-full border text-[12px] font-medium transition-colors ${
+            className={`px-3 py-1 rounded-full border text-[12px] font-medium transition-all cursor-pointer ${
               planFilter === null
-                ? 'bg-black text-white border-black'
-                : 'bg-white text-[#666666] border-[#EAEAEA] hover:border-[#C8C8C8] hover:text-black'
+                ? 'bg-black text-white border-black shadow-2xs'
+                : 'bg-white text-[#666666] border-[#EAEAEA] hover:border-[#CCCCCC] hover:text-black'
             }`}
           >
             全部
@@ -160,10 +164,10 @@ const AccountList: React.FC<AccountListProps> = ({
                   key={plan}
                   type="button"
                   onClick={() => setPlanFilter(planFilter === plan ? null : plan)}
-                  className={`px-3 py-1 rounded-full border text-[12px] font-medium transition-colors ${
+                  className={`px-3 py-1 rounded-full border text-[12px] font-medium transition-all cursor-pointer ${
                     planFilter === plan
-                      ? meta?.activeClass || 'bg-black text-white border-black'
-                      : 'bg-white text-[#666666] border-[#EAEAEA] hover:border-[#C8C8C8] hover:text-black'
+                      ? (meta?.activeClass || 'bg-black text-white border-black') + ' shadow-2xs'
+                      : 'bg-white text-[#666666] border-[#EAEAEA] hover:border-[#CCCCCC] hover:text-black'
                   }`}
                 >
                   {label}
@@ -185,29 +189,30 @@ const AccountList: React.FC<AccountListProps> = ({
           <p className="text-[#666666] max-w-[280px] mb-8 text-[14px] leading-relaxed relative z-10">
             你还没有添加任何账号配置。添加一个账号，立即体验 Codex 强大的代码生成能力。
           </p>
-          <button
+          <Button
             onClick={handleAdd}
-            className="relative z-10 flex items-center gap-2 px-6 py-2.5 bg-black hover:bg-[#333333] text-white font-medium text-[14px] rounded-full transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0"
+            className="relative z-10 gap-2 px-6 py-2.5 rounded-full shadow-md hover:shadow-lg"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
             立即创建
-          </button>
+          </Button>
         </div>
       ) : filteredAccounts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[#DADADA] bg-white rounded-2xl">
           <p className="text-[14px] text-[#666666] mb-2">该筛选下暂无账号</p>
-          <button
+          <Button
+            variant="link"
             onClick={() => setPlanFilter(null)}
-            className="text-[13px] font-medium text-black hover:underline"
+            className="text-[13px] font-medium"
           >
             查看全部账号
-          </button>
+          </Button>
         </div>
       ) : (
-        <div className="h-[464px] overflow-y-auto pr-4 -mr-4 snap-y snap-mandatory">
-          <div className="flex flex-col gap-4">
+        <div className="page-scroll">
+          <div className="grid grid-cols-1 @min-[1080px]/page:grid-cols-2 gap-4 pb-1">
           {filteredAccounts.map((account, index) => (
-            <div key={account.id} style={{ animationDelay: `${index * 30}ms` }} className="animate-card-in">
+            <div key={account.id} style={{ animationDelay: `${index * 30}ms` }} className="min-w-0 animate-card-in">
               <AccountCard
                 account={account}
                 isActive={account.id === activeAccountId}
@@ -224,7 +229,7 @@ const AccountList: React.FC<AccountListProps> = ({
                 onEdit={handleEdit}
                 onDelete={(id) => setDeleteConfirmId(id)}
                 onRefreshUsage={(id) => void handleRefreshUsage(id)}
-                onTest={(target) => setTestingAccount(target)}
+                onActivateWindow={(target) => setActivationAccountId(target.id)}
                 onShowReset={(target) => setResetAccount(target)}
                 isUsageRefreshing={account.canRefreshUsage && isUsageRefreshing(account.id)}
               />
@@ -264,11 +269,13 @@ const AccountList: React.FC<AccountListProps> = ({
         onCancel={() => setDeleteConfirmId(null)}
       />
 
-      {testingAccount && (
-        <TestAccountModal
-          account={testingAccount}
-          onClose={() => setTestingAccount(null)}
-          onRefreshUsage={onRefreshUsage}
+      {activationAccount && (
+        <QuotaActivationModal
+          key={activationAccount.id}
+          account={activationAccount}
+          onClose={() => setActivationAccountId(null)}
+          isUsageRefreshing={isUsageRefreshing(activationAccount.id)}
+          isEmailMaskingEnabled={isEmailMaskingEnabled}
         />
       )}
 

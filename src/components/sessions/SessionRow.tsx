@@ -2,9 +2,13 @@ import React, { useState } from 'react';
 import { SessionRecord } from '../../types/session';
 import { formatDateTime, formatFileSize, formatRelativeTime } from '../../utils/time';
 import { formatTokens } from '../../utils/format';
+import { findTextMatches } from '../../utils/sessionSearch';
+import HighlightedText from './HighlightedText';
 
 interface SessionRowProps {
   session: SessionRecord;
+  search?: string;
+  showProject?: boolean;
   onOpenDetail: (session: SessionRecord) => void;
   onCopyResume: (session: SessionRecord) => void;
   onRevealInFinder: (session: SessionRecord) => void;
@@ -12,6 +16,8 @@ interface SessionRowProps {
 
 const SessionRow: React.FC<SessionRowProps> = ({
   session,
+  search = '',
+  showProject = false,
   onOpenDetail,
   onCopyResume,
   onRevealInFinder,
@@ -28,10 +34,26 @@ const SessionRow: React.FC<SessionRowProps> = ({
   return (
     <div
       onClick={() => onOpenDetail(session)}
-      className="group bg-white rounded-xl border border-[#EAEAEA] hover:border-[#C8C8C8] transition-colors p-4 flex items-start gap-4 cursor-pointer"
+      role="button"
+      tabIndex={0}
+      onKeyDown={event => {
+        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          onOpenDetail(session);
+        }
+      }}
+      className="group min-w-0 bg-white rounded-xl border border-[#EAEAEA] hover:border-[#C8C8C8] transition-colors p-4 flex flex-col @min-[720px]/page:flex-row items-start gap-4 cursor-pointer"
     >
-      <div className="flex-1 min-w-0">
-        <p className="text-[14px] font-medium text-black leading-snug line-clamp-2">{session.title}</p>
+      <div className="flex-1 min-w-0 w-full">
+        <p className="break-words text-[14px] font-medium text-black leading-snug line-clamp-2">{session.title}</p>
+        <p className="mt-1.5 break-all text-[11px] font-mono text-[#888888]">
+          ID: <HighlightedText text={session.id} matches={findTextMatches(session.id, search)} />
+        </p>
+        {showProject && (
+          <p className="mt-1 text-[11px] text-[#888888] truncate" title={session.projectPath}>
+            项目：{session.projectPath || '未知项目'}
+          </p>
+        )}
         <div className="mt-2 flex items-center gap-2 text-[11px] text-[#888888] flex-wrap">
           <span>开始于 {formatDateTime(session.startedAt)}</span>
           {session.lastActivityAt && (
@@ -53,10 +75,10 @@ const SessionRow: React.FC<SessionRowProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex flex-wrap items-center gap-1.5 shrink-0 max-w-full">
         {session.model && (
           <span
-            className="rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2 py-0.5 text-[10px] font-mono text-[#666666]"
+            className="max-w-48 truncate rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2 py-0.5 text-[10px] font-mono text-[#666666]"
             title={session.modelProvider || undefined}
           >
             {session.model}
@@ -68,7 +90,7 @@ const SessionRow: React.FC<SessionRowProps> = ({
           </span>
         )}
 
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
           <button
             onClick={handleCopy}
             title={copied ? '已复制' : '复制恢复命令'}

@@ -1,5 +1,6 @@
 use crate::accounts::usage::{
-    account_usage_context, at_is_due, begin_account_refresh, persist_rotated_access_token,
+    account_usage_context, at_is_due, begin_account_refresh, save_fallback_reset,
+    persist_rotated_access_token, refresh_account_usage_inner, report_account_request_error,
 };
 use crate::auth::{
     exchange_rt_for_at, extract_personal_access_token, PersonalAccessTokenMetadata,
@@ -21,6 +22,7 @@ use tauri::State;
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 
 const TEST_MESSAGE_CONTENT: &str = "Introduce yourself.";
+const DEFAULT_ACTIVATION_MODEL: &str = "gpt-5.6-luna";
 
 /// 向 Codex 后端 POST JSON 并**流式读取** SSE 响应。
 ///
@@ -90,6 +92,8 @@ fn curl_post_stream(
     let mut line = String::new();
     let mut raw_body = String::new();
     let mut status: Option<u16> = None;
+    let mut completed = false;
+    let mut stream_error: Option<String> = None;
 
     loop {
         line.clear();
@@ -99,7 +103,6 @@ fn curl_post_stream(
         if bytes == 0 {
             break;
         }
-        raw_body.push_str(&line);
         let trimmed = line.trim_end();
 
         // write-out 追加的状态码行（形如 "200"）。
@@ -109,9 +112,25 @@ fn curl_post_stream(
             }
             continue;
         }
+        raw_body.push_str(&line);
 
         if let Some(data) = trimmed.strip_prefix("data:") {
             if let Ok(event) = serde_json::from_str::<Value>(data.trim()) {
+                match event.get("type").and_then(Value::as_str) {
+                    Some("response.completed") => completed = true,
+                    Some("response.failed" | "response.incomplete" | "error") => {
+                        stream_error = Some(
+                            event.pointer("/response/error/message")
+                                .or_else(|| event.pointer("/error/message"))
+                                .or_else(|| event.get("message"))
+                                .or_else(|| event.pointer("/response/incomplete_details/reason"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("模型请求未能完成")
+                                .to_string(),
+                        );
+                    }
+                    _ => {}
+                }
                 if event.get("type").and_then(|value| value.as_str())
                     == Some("response.output_text.delta")
                 {
@@ -132,7 +151,7 @@ fn curl_post_stream(
     let output = child
         .wait_with_output()
         .map_err(|_| "网络请求未能完成".to_string())?;
-    if !output.status.success() && status.is_none() {
+    if !output.status.success() {
         let exit_code = output.status.code().unwrap_or(-1);
         let detail = String::from_utf8_lossy(&output.stderr)
             .lines()
@@ -142,10 +161,15 @@ fn curl_post_stream(
         return Err(format!("网络请求失败（exit {exit_code}）：{detail}"));
     }
 
-    if let Some(code) = status {
-        if !(200..300).contains(&code) {
-            return Err(build_test_error(code, &raw_body));
-        }
+    let code = status.ok_or_else(|| "未收到完整的请求状态".to_string())?;
+    if !(200..300).contains(&code) {
+        return Err(build_test_error(code, &raw_body));
+    }
+    if let Some(error) = stream_error {
+        return Err(format!("模型请求失败：{error}"));
+    }
+    if !completed {
+        return Err("模型响应中断，未收到完成事件，请手动检查后再操作。".to_string());
     }
 
     Ok(extract_responses_output_from_body(&raw_body))
@@ -165,7 +189,7 @@ fn build_test_error(status: u16, body: &str) -> String {
         .filter(|message| !message.trim().is_empty());
 
     if let Some(message) = api_message {
-        return format!("测试请求失败（HTTP {status}）：{message}");
+        return format!("模型请求失败（HTTP {status}）：{message}");
     }
 
     let generic = match status {
@@ -174,7 +198,7 @@ fn build_test_error(status: u16, body: &str) -> String {
         _ => String::new(),
     };
     if !generic.is_empty() {
-        return format!("测试请求失败（HTTP {status}）：{generic}");
+        return format!("模型请求失败（HTTP {status}）：{generic}");
     }
 
     let truncated: String = body.chars().take(500).collect();
@@ -184,9 +208,9 @@ fn build_test_error(status: u16, body: &str) -> String {
         } else {
             ""
         };
-        return format!("测试请求失败（HTTP {status}）：{truncated}{suffix}");
+        return format!("模型请求失败（HTTP {status}）：{truncated}{suffix}");
     }
-    format!("测试请求失败（HTTP {status}）")
+    format!("模型请求失败（HTTP {status}）")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -317,7 +341,7 @@ fn extract_responses_output_from_body(body: &str) -> String {
     "(无返回内容)".to_string()
 }
 
-/// 用账号调用 Codex 模型接口（chatgpt.com 后端 /responses）发送 "hello"，验证账号额度可用性。
+/// 发送一条消息激活额度窗口，成功后读取额度；任一步失败即结束本次流程。
 /// 所有账号类型均支持：有 PAT 用 PAT（account_id 经 whoami 获取）；
 /// 无 PAT（OAuth / rt 账号）用 at + 存库 account_id，at 临近过期先兑换。
 #[tauri::command]
@@ -325,9 +349,30 @@ pub(crate) async fn send_test_message(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
+    model: Option<String>,
+) -> Result<TestMessageResult, String> {
+    let _guard = begin_account_refresh(&state, &id, Some(app.clone())).map_err(|error| {
+        report_account_request_error(&app, &state, &id, "额度窗口激活未执行", &error);
+        error
+    })?;
+    let model = model
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_ACTIVATION_MODEL.to_string());
+    let result = send_account_message(&app, &state, &id, model).await;
+    if let Err(error) = &result {
+        save_fallback_reset(&app, &state, &id, "额度窗口激活失败", error);
+    }
+    let result = result?;
+    refresh_account_usage_inner(&app, &state, &id).await?;
+    Ok(result)
+}
+
+async fn send_account_message(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
     model: String,
 ) -> Result<TestMessageResult, String> {
-    let _guard = begin_account_refresh(&state, &id, None)?;
     let (
         auth_json_content,
         access_token,
@@ -379,11 +424,12 @@ pub(crate) async fn send_test_message(
         }
     }
 
-    let bearer = bearer.ok_or_else(|| "该账号暂无可用认证，无法测试额度".to_string())?;
+    let bearer = bearer.ok_or_else(|| "该账号暂无可用认证，无法激活额度窗口".to_string())?;
 
     // 按 Codex 后端要求：input 为带 type 的消息列表、store 必须为 false、streaming 必须为 true。
     let request_body = serde_json::json!({
         "model": model,
+        "reasoning": { "effort": "low" },
         "input": [
             {
                 "type": "message",
@@ -398,6 +444,8 @@ pub(crate) async fn send_test_message(
     })
     .to_string();
 
+    let app = app.clone();
+    let id = id.to_string();
     let output = tauri::async_runtime::spawn_blocking(move || {
         // PAT 账号运行时经 whoami 获取 account_id / fedramp；at 账号用存库值。
         let (account_id, fedramp) = if let Some(id) = account_id {
@@ -428,7 +476,7 @@ pub(crate) async fn send_test_message(
         )
     })
     .await
-    .map_err(|e| format!("测试任务失败：{e}"))??;
+    .map_err(|e| format!("额度窗口激活任务失败：{e}"))??;
 
     Ok(TestMessageResult {
         model,

@@ -32,8 +32,8 @@ export default function CodexInfo() {
   }, [fetchInfo]);
 
   return (
-    <div className="max-w-4xl mx-auto w-full pt-4 pb-12 flex flex-col h-full">
-      <div className="flex items-center justify-between mb-8 shrink-0">
+    <div className="page-layout pt-4">
+      <div className="page-header">
         <div>
           <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">Codex 信息</h2>
           <p className="text-[13px] text-[#666666]">分别检测 CLI 与桌面端内置 Codex 版本，未检测到时显示未安装。</p>
@@ -42,7 +42,7 @@ export default function CodexInfo() {
           type="button"
           onClick={() => void fetchInfo()}
           disabled={isLoading}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-medium text-white bg-black rounded-md hover:bg-[#333333] transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+          className="flex shrink-0 items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-medium text-white bg-black rounded-md hover:bg-[#333333] transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
         >
           {isLoading && (
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -51,7 +51,7 @@ export default function CodexInfo() {
         </button>
       </div>
 
-      <div className="flex-1">
+      <div className="page-scroll">
         <div className="bg-white rounded-xl shadow-sm border border-[#EAEAEA] overflow-hidden">
           <div className="p-8">
             <div className="flex items-center gap-5 mb-8">
@@ -64,7 +64,7 @@ export default function CodexInfo() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 gap-6">
               {VERSION_ENTRIES.map(({ key, label, description }) => (
                 <div key={key} className="min-w-0 flex flex-col">
                   <h4 className="text-[14px] font-medium text-[#333333] mb-1">{label}</h4>

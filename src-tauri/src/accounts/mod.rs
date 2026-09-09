@@ -1,6 +1,7 @@
 pub(crate) mod credits;
 pub(crate) mod messages;
 pub(crate) mod periods;
+pub(crate) mod quiet_hours;
 pub(crate) mod scheduler;
 pub(crate) mod usage;
 
@@ -43,6 +44,8 @@ pub(crate) struct Account {
     pub(crate) can_refresh_usage: bool,
     #[serde(rename = "nextRefreshAt")]
     pub(crate) next_refresh_at: Option<String>,
+    #[serde(rename = "autoActivateWindow")]
+    pub(crate) auto_activate_window: bool,
     #[serde(rename = "chatgptPlanType")]
     pub(crate) chatgpt_plan_type: Option<String>,
     #[serde(rename = "hasAccessToken")]
@@ -74,7 +77,7 @@ pub(crate) struct AccountStore {
 pub(crate) fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, auto_activate_window FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
     let account_iter = stmt
         .query_map([], |row| {
             let auth_json_content: String = row.get(2)?;
@@ -92,6 +95,7 @@ pub(crate) fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, S
                 plan_type: row.get(7)?,
                 usage: parse_cached_usage(row.get(8)?),
                 next_refresh_at: row.get(9)?,
+                auto_activate_window: row.get(17)?,
                 chatgpt_plan_type: row.get(10)?,
                 has_access_token: access_token.is_some(),
                 reset_credits: row
@@ -184,6 +188,7 @@ async fn insert_pat_account(
         usage: None,
         can_refresh_usage,
         next_refresh_at: None,
+        auto_activate_window: false,
         chatgpt_plan_type: meta.chatgpt_plan_type,
         has_access_token: false,
         reset_credits: None,
@@ -250,6 +255,7 @@ async fn insert_rt_account(
         usage: None,
         can_refresh_usage: true,
         next_refresh_at: None,
+        auto_activate_window: false,
         chatgpt_plan_type: info.chatgpt_plan_type,
         has_access_token: true,
         reset_credits: None,
@@ -314,10 +320,11 @@ pub(crate) async fn update_account(
         existing_refresh_token,
         existing_at_expires_at,
         is_active,
+        existing_auto_activate_window,
     ) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.query_row(
-            "SELECT auth_json_content, name, plan_type, usage_json, usage_updated_at, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, is_active FROM accounts WHERE id = ?1",
+            "SELECT auth_json_content, name, plan_type, usage_json, usage_updated_at, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, is_active, auto_activate_window FROM accounts WHERE id = ?1",
             params![id],
             |row| Ok((
                 row.get::<_, String>(0)?,
@@ -334,6 +341,7 @@ pub(crate) async fn update_account(
                 row.get::<_, Option<String>>(11)?,
                 row.get::<_, Option<String>>(12)?,
                 row.get::<_, i32>(13)? == 1,
+                row.get::<_, bool>(14)?,
             )),
         )
         .map_err(|_| "Account not found".to_string())?
@@ -365,6 +373,7 @@ pub(crate) async fn update_account(
             usage: parse_cached_usage(existing_usage_json),
             can_refresh_usage: true,
             next_refresh_at: existing_next_refresh_at,
+            auto_activate_window: existing_auto_activate_window,
             chatgpt_plan_type: existing_chatgpt_plan_type,
             has_access_token: existing_access_token.is_some(),
             reset_credits: existing_reset_credits_json
@@ -416,6 +425,7 @@ pub(crate) async fn update_account(
         usage: None,
         can_refresh_usage: true,
         next_refresh_at: None,
+        auto_activate_window: existing_auto_activate_window,
         chatgpt_plan_type: meta.chatgpt_plan_type,
         has_access_token: false,
         reset_credits: None,
@@ -426,6 +436,28 @@ pub(crate) async fn update_account(
         refresh_token: None,
         at_expires_at: None,
     })
+}
+
+#[tauri::command]
+pub(crate) fn set_auto_activate_window(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|error| error.to_string())?;
+    let changed = db
+        .execute(
+            "UPDATE accounts SET auto_activate_window = ?1 WHERE id = ?2",
+            params![enabled, id],
+        )
+        .map_err(|error| error.to_string())?;
+    if changed == 0 {
+        return Err("账号不存在".to_string());
+    }
+    drop(db);
+    let _ = app.emit("accounts-updated", ());
+    Ok(())
 }
 
 /// 保存 team 账号的 Access Token（at），用于获取重置卡等 PAT 无法访问的接口。

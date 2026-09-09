@@ -141,7 +141,7 @@ fn normalize_title(text: &str, max_chars: usize) -> String {
 /// used_percent 缺失/非数字（含窗口为 null）时返回 None，避免误当 0%（重置回满）。
 fn parse_session_rate_limit_window(window: &Value) -> Option<AccountUsageWindow> {
     Some(AccountUsageWindow {
-        used_percent: window.get("used_percent").and_then(Value::as_f64)?,
+        used_percent: Some(window.get("used_percent").and_then(Value::as_f64)?),
         window_minutes: window.get("window_minutes").and_then(Value::as_i64),
         resets_at: window.get("resets_at").and_then(Value::as_i64),
     })
@@ -316,7 +316,7 @@ pub(crate) fn extract_session_summary<S: AsRef<str>>(
                                     .get("primary")
                                     .and_then(parse_session_rate_limit_window)?;
                                 Some(RateLimitSnapshot {
-                                    used_percent: primary.used_percent,
+                                    used_percent: primary.used_percent?,
                                     window_minutes: primary.window_minutes,
                                     resets_at: primary.resets_at,
                                     secondary: rl
@@ -746,7 +746,7 @@ mod tests {
         assert_eq!(rl.used_percent, 4.0);
         assert_eq!(rl.window_minutes, Some(300));
         let secondary = rl.secondary.expect("应提取到周限窗口");
-        assert_eq!(secondary.used_percent, 15.0);
+        assert_eq!(secondary.used_percent, Some(15.0));
         assert_eq!(secondary.window_minutes, Some(10080));
         assert_eq!(secondary.resets_at, Some(1788313023));
     }
