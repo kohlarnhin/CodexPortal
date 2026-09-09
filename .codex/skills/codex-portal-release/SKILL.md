@@ -56,6 +56,8 @@ Keep the application version synchronized in all five sources:
 - `src-tauri/Cargo.toml`
 - the `codex-portal` package entry in `src-tauri/Cargo.lock`
 
+Also synchronize any app-version fallback literal in `src/components/About.tsx` with the release version.
+
 When the user requests the next version without naming it, increment the patch component by exactly one. When the user gives an explicit version, use it unchanged. Do not update dependency versions as part of an application version bump.
 
 A version bump is development work only. It never authorizes a release.
