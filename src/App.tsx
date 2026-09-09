@@ -11,6 +11,7 @@ import CodexInfo from './components/CodexInfo';
 import About from './components/About';
 import UpdateModal from './components/UpdateModal';
 import Logo from './components/Logo';
+import { TooltipProvider } from './components/ui/tooltip';
 import { useUpdater } from './hooks/useUpdater';
 import { useEmailMasking } from './hooks/useEmailMasking';
 import { useAccountUsageScheduler } from './hooks/useAccountUsageScheduler';
@@ -18,9 +19,10 @@ import { useAutostart } from './hooks/useAutostart';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [detailContainer, setDetailContainer] = useState<HTMLDivElement | null>(null);
   const updater = useUpdater();
   const { isEmailMaskingEnabled, toggleEmailMasking } = useEmailMasking();
-  const usageScheduler = useAccountUsageScheduler();
+  const usageScheduler = useAccountUsageScheduler(isEmailMaskingEnabled);
   const autostart = useAutostart();
 
   // 自动检查发现新版本时跳转到"关于"页，让用户看到版本更新提示。
@@ -31,16 +33,18 @@ function App() {
   }, [updater.promptRevision]);
 
   return (
-    <>
+    <TooltipProvider delayDuration={150}>
       <div className="flex h-screen bg-[#FAFAFA] text-[#111111] font-sans overflow-hidden cursor-default relative">
       {/* Sidebar */}
       <div className="w-[240px] flex-shrink-0 bg-[#F9F9F9] border-r border-[#EAEAEA] flex flex-col">
         {/* Sidebar Drag Header (Traffic Lights area) */}
         <div data-tauri-drag-region className="h-10 w-full shrink-0"></div>
         <div className="px-5 pb-8">
-          <div className="flex items-center gap-3 pointer-events-none">
-            <Logo className="w-7 h-7 shadow-sm" />
-            <h1 className="font-semibold text-[16px] tracking-tight">Codex Portal</h1>
+          <div className="flex items-center gap-2.5">
+            <Logo className="w-7 h-7 shadow-sm transition-transform duration-300 hover:scale-105" />
+            <h1 className="font-bold text-[16.5px] tracking-tight portal-brand-text select-none">
+              Codex Portal
+            </h1>
           </div>
         </div>
 
@@ -172,7 +176,7 @@ function App() {
       <div className="flex-1 flex flex-col min-w-0 bg-[#FAFAFA]">
         {/* Main Content Drag Header */}
         <div data-tauri-drag-region className="h-10 shrink-0 w-full"></div>
-        <div className="flex-1 flex flex-col relative px-12 pb-12 overflow-hidden">
+        <div ref={setDetailContainer} className="flex-1 flex flex-col relative px-12 pb-8 overflow-hidden">
           {activeTab === 'dashboard' && (
             <div className="flex-1 flex flex-col min-h-0">
               <ActiveAccount
@@ -185,7 +189,7 @@ function App() {
             </div>
           )}
           {activeTab === 'accounts' && (
-            <div className="flex-1 overflow-y-auto -mr-4 pr-4">
+            <div className="flex-1 flex flex-col min-h-0">
               <AccountList
                 isEmailMaskingEnabled={isEmailMaskingEnabled}
                 usageRevision={usageScheduler.usageRevision}
@@ -201,7 +205,7 @@ function App() {
           )}
           {activeTab === 'sessions' && (
             <div className="flex-1 flex flex-col min-h-0">
-              <SessionsPage />
+              <SessionsPage detailContainer={detailContainer} />
             </div>
           )}
           {activeTab === 'token-usage' && (
@@ -244,7 +248,7 @@ function App() {
       </div>
       </div>
       <UpdateModal updater={updater} />
-    </>
+    </TooltipProvider>
   );
 }
 

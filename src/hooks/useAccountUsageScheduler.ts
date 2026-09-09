@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AccountUsage } from '../types/account';
+import { getDisplayedEmail } from '../utils/accountEmail';
 
 /**
  * 账号额度刷新调度。
@@ -9,7 +10,9 @@ import { AccountUsage } from '../types/account';
  * 后端每 5 分钟同步会话，并保存会话返回的账号额度。
  * 同步完成后重新读取本地账号缓存；启动补刷、重置到期和手动刷新使用额度接口。
  */
-export function useAccountUsageScheduler() {
+export function useAccountUsageScheduler(isEmailMaskingEnabled: boolean) {
+  const emailMasking = useRef(isEmailMaskingEnabled);
+  emailMasking.current = isEmailMaskingEnabled;
   const [usageRevision, setUsageRevision] = useState(0);
   const [refreshingAccountIds, setRefreshingAccountIds] = useState<Set<string>>(
     () => new Set(),
@@ -39,6 +42,9 @@ export function useAccountUsageScheduler() {
     };
 
     void Promise.allSettled([
+      listen<{ accountName: string; message: string }>('account-request-failed', (event) => {
+        if (!disposed) window.alert(`${getDisplayedEmail(event.payload.accountName, emailMasking.current)}\n${event.payload.message}`);
+      }),
       listen('usage-updated', handleUsageUpdated),
       listen('accounts-updated', handleUsageUpdated),
       listen('session-sync-completed', handleUsageUpdated),

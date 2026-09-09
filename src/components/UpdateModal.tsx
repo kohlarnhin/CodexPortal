@@ -1,6 +1,8 @@
 import React from 'react';
 import type { UpdaterController } from '../hooks/useUpdater';
 import Markdown from './Markdown';
+import Button from './ui/button';
+import { Dialog, DialogContent } from './ui/dialog';
 
 interface UpdateModalProps {
   updater: UpdaterController;
@@ -40,17 +42,10 @@ export default function UpdateModal({ updater }: UpdateModalProps) {
           : '立即升级';
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-black/20 backdrop-blur-sm animate-fade-in"
-        onClick={isBusy ? undefined : closeModal}
-      />
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="update-modal-title"
-        className="relative bg-white rounded-xl shadow-2xl border border-[#EAEAEA] w-full max-w-lg overflow-hidden animate-modal-in flex flex-col max-h-[82vh]"
+    <Dialog open={isModalOpen} onOpenChange={(open) => { if (!open && !isBusy) closeModal(); }}>
+      <DialogContent
+        className="max-w-lg p-0 max-h-[82vh] flex flex-col overflow-hidden gap-0"
+        showCloseButton={false}
       >
         <div className="px-5 py-4 border-b border-[#EAEAEA] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -70,7 +65,7 @@ export default function UpdateModal({ updater }: UpdateModalProps) {
               aria-label="关闭更新窗口"
               className="w-7 h-7 flex items-center justify-center rounded text-[#999999] hover:bg-[#F5F5F5] hover:text-black transition-colors"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
           )}
         </div>
@@ -138,29 +133,32 @@ export default function UpdateModal({ updater }: UpdateModalProps) {
           )}
         </div>
 
-        <div className="px-5 py-3 bg-[#FAFAFA] border-t border-[#EAEAEA] flex items-center justify-end gap-2 shrink-0">
+        <div className="px-6 py-3.5 bg-[#FAFAFA] border-t border-[#EAEAEA] flex items-center justify-end gap-2.5 shrink-0">
           {!isBusy && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={closeModal}
-              className="px-4 py-1.5 text-[13px] font-medium text-[#666666] hover:bg-[#F0F0F0] hover:text-black rounded-md transition-colors"
             >
               {status === 'error' ? '关闭' : '稍后提醒'}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            variant="default"
+            size="sm"
             onClick={() => void installUpdate()}
             disabled={isBusy}
-            className="min-w-[96px] px-4 py-1.5 bg-black hover:bg-[#333333] text-white text-[13px] font-medium rounded-md transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="min-w-[96px]"
           >
             {isBusy && (
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             )}
             {progressLabel}
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -2,15 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { getVersion, getName, getTauriVersion } from '@tauri-apps/api/app';
 import type { UpdaterController } from '../hooks/useUpdater';
 import Logo from './Logo';
+import { cn } from '../lib/utils';
 
 interface AboutProps {
   updater: UpdaterController;
 }
 
 export default function About({ updater }: AboutProps) {
-  const [appVersion, setAppVersion] = useState<string>('...');
-  const [appName, setAppName] = useState<string>('...');
-  const [tauriVersion, setTauriVersion] = useState<string>('...');
+  const [appVersion, setAppVersion] = useState<string>('0.2.3');
+  const [appName, setAppName] = useState<string>('Codex Portal');
+  const [tauriVersion, setTauriVersion] = useState<string>('2.11.5');
 
   useEffect(() => {
     let cancelled = false;
@@ -19,21 +20,20 @@ export default function About({ updater }: AboutProps) {
       try {
         const [v, n, t] = await Promise.all([getVersion(), getName(), getTauriVersion()]);
         if (cancelled) return;
-        setAppVersion(v);
-        setAppName(n);
-        setTauriVersion(t);
+        if (v) setAppVersion(v);
+        if (n) setAppName(n);
+        if (t) setTauriVersion(t);
       } catch (err) {
         console.error('Failed to load app info:', err);
       }
     };
-    
+
     void fetchAppInfo();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // 已记录的新版本与当前版本不一致才提示（升级到该版本后提示自动消失）。
   const hasPendingUpdate =
     updater.pendingVersion !== null && updater.pendingVersion !== appVersion;
 
@@ -48,64 +48,100 @@ export default function About({ updater }: AboutProps) {
           : '自动检查已启用';
 
   const updateStatusColor = updater.status === 'error'
-    ? 'bg-[#D32F2F]'
+    ? 'bg-red-500'
     : hasPendingUpdate
-      ? 'bg-emerald-500'
-      : 'bg-[#B0B0B0]';
+      ? 'bg-amber-500 animate-pulse'
+      : updater.status === 'up-to-date'
+        ? 'bg-emerald-500'
+        : 'bg-neutral-400';
 
   return (
-    <div className="max-w-4xl mx-auto w-full h-full flex flex-col pt-4">
-      <div className="flex items-center justify-between mb-4 shrink-0">
-        <div>
-          <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">关于</h2>
-          <p className="text-[13px] text-[#666666]">关于 Codex Portal 应用程序</p>
-        </div>
+    <div className="page-layout pt-4">
+      <div className="mb-3 shrink-0">
+        <h2 className="text-[20px] font-semibold tracking-tight text-neutral-900 mb-0.5">关于</h2>
+        <p className="text-[13px] text-neutral-500">关于 Codex Portal 应用程序</p>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col pb-4">
-        <div className="bg-white rounded-xl shadow-sm border border-[#EAEAEA] flex flex-col items-center justify-center py-10 text-center flex-1">
-          
-          <div className="mb-4">
-            <Logo className="w-16 h-16 shadow-md rounded-2xl" />
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center rounded-xl border border-neutral-200/80 bg-white shadow-2xs p-6 overflow-hidden">
+        <div className="flex flex-col items-center text-center max-w-sm w-full my-auto">
+          {/* Logo */}
+          <div className="mb-3">
+            <Logo className="w-16 h-16 shadow-md rounded-2xl ring-1 ring-black/5 transition-transform duration-300 hover:scale-105" />
           </div>
-          
-          <h1 className="text-[28px] font-black text-black tracking-tighter mb-2">{appName}</h1>
-          <p className="text-[14px] text-[#666666] mb-6 max-w-md mx-auto">
+
+          {/* App Name */}
+          <h1 className="text-[24px] font-extrabold tracking-tight mb-1.5 portal-brand-text select-none">
+            {appName}
+          </h1>
+          <p className="text-[13px] text-neutral-500 leading-relaxed mb-6">
             强大而优雅的 Codex 模型管理入口，帮助你轻松管理多种账户与本地环境配置。
           </p>
 
-          <div className="bg-[#F9F9F9] border border-[#EAEAEA] rounded-lg p-5 w-full max-w-md text-left mx-auto">
-            <div className="flex justify-between items-center py-2.5 border-b border-[#EAEAEA]">
-              <span className="text-[13px] font-medium text-[#666666]">应用程序版本</span>
-              <span className="text-[14px] font-bold text-black">{appVersion}</span>
-            </div>
+          {/* 简洁信息卡片 */}
+          <div className="w-full bg-neutral-50/80 border border-neutral-200/80 rounded-xl p-3.5 divide-y divide-neutral-200/60 text-left">
             <div className="flex justify-between items-center py-2.5">
-              <span className="text-[13px] font-medium text-[#666666]">Tauri 核心版本</span>
-              <span className="text-[14px] font-bold text-black">{tauriVersion}</span>
+              <span className="text-[12.5px] text-neutral-500">应用程序版本</span>
+              <span className="font-mono text-[13px] font-semibold text-neutral-900">{appVersion}</span>
             </div>
-            <div className="flex justify-between items-center py-2.5 border-t border-[#EAEAEA]">
-              <div>
-                <span className="text-[13px] font-medium text-[#666666]">软件更新</span>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <span className={`w-1.5 h-1.5 rounded-full ${updateStatusColor}`}></span>
-                  <span className={`text-[11px] ${updater.status === 'error' ? 'text-[#D32F2F]' : 'text-[#999999]'}`}>
+
+            <div className="flex justify-between items-center py-2.5">
+              <span className="text-[12.5px] text-neutral-500">Tauri 核心版本</span>
+              <span className="font-mono text-[13px] font-semibold text-neutral-900">{tauriVersion}</span>
+            </div>
+
+            <div className="flex justify-between items-center py-2.5">
+              <span className="text-[12.5px] text-neutral-500">软件更新</span>
+              <div className="flex items-center gap-2.5">
+                <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-500">
+                  <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", updateStatusColor)} />
+                  <span className={cn(
+                    updater.status === 'error' ? 'text-red-600 font-medium' : 'text-neutral-500'
+                  )}>
                     {updateStatus}
                   </span>
-                </div>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void updater.checkNow()}
+                  disabled={updater.status === 'checking' || updater.isBusy}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-medium transition-all select-none cursor-pointer disabled:opacity-50",
+                    hasPendingUpdate
+                      ? "bg-neutral-900 text-white hover:bg-neutral-800 shadow-2xs"
+                      : "text-neutral-600 hover:text-neutral-900 bg-neutral-200/60 hover:bg-neutral-200 active:bg-neutral-300/70"
+                  )}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={cn("shrink-0", updater.status === 'checking' && "animate-spin")}
+                  >
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                  </svg>
+                  <span>
+                    {updater.status === 'checking'
+                      ? '检查中...'
+                      : hasPendingUpdate
+                        ? '立即更新'
+                        : updater.status === 'error'
+                          ? '重试'
+                          : '检查更新'}
+                  </span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => void updater.checkNow()}
-                disabled={updater.status === 'checking' || updater.isBusy}
-                className="px-3 py-1.5 bg-white border border-[#DADADA] text-[12px] font-medium text-[#444444] rounded-md hover:border-black hover:text-black hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={updater.status === 'checking' ? 'animate-spin' : ''}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                {updater.status === 'checking' ? '检查中' : hasPendingUpdate ? '更新' : '检查更新'}
-              </button>
             </div>
           </div>
-          
-          <div className="mt-8 text-[12px] text-[#999999]">
+
+          {/* 版权声明 */}
+          <div className="mt-6 text-[11.5px] text-neutral-400">
             © {new Date().getFullYear()} Codex Portal. All rights reserved.
           </div>
         </div>
@@ -113,3 +149,5 @@ export default function About({ updater }: AboutProps) {
     </div>
   );
 }
+
+

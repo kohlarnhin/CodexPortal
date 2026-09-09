@@ -1,8 +1,8 @@
 import { AccountUsage, AccountUsageWindow } from '../types/account';
 
-export function getRemainingPercent(window: AccountUsageWindow): number {
-  const usedPercent = Number.isFinite(window.usedPercent) ? window.usedPercent : 0;
-  return Math.max(0, Math.min(100, 100 - usedPercent));
+export function getRemainingPercent(window: AccountUsageWindow): number | null {
+  if (window.usedPercent === null || !Number.isFinite(window.usedPercent)) return null;
+  return Math.max(0, Math.min(100, 100 - window.usedPercent));
 }
 
 export function formatUsageWindowLabel(
@@ -51,7 +51,7 @@ export function formatUsageSyncedAt(syncedAt: string): string {
 /** 短周期（primary）窗口是否已用尽（剩余 0%）。 */
 export function isShortCycleExhausted(usage: AccountUsage | null): boolean {
   const primary = usage?.primary;
-  return !!primary && primary.usedPercent >= 100;
+  return !!primary && primary.usedPercent !== null && primary.usedPercent >= 100;
 }
 
 function formatDateTime(iso: string): string {

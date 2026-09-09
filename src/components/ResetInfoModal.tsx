@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Account, ResetCredit, ResetCreditsInfo } from '../types/account';
+import Button from './ui/button';
+import { Dialog, DialogContent } from './ui/dialog';
 
 interface ResetInfoModalProps {
   account: Account;
@@ -131,14 +133,10 @@ export default function ResetInfoModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-sm animate-fade-in" onClick={onClose} />
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="reset-modal-title"
-        className="relative bg-white rounded-xl shadow-2xl border border-[#EAEAEA] w-full max-w-lg overflow-hidden animate-modal-in flex flex-col max-h-[82vh]"
+    <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        className="max-w-lg p-0 max-h-[82vh] flex flex-col overflow-hidden gap-0"
+        showCloseButton={false}
       >
         <div className="px-5 py-4 border-b border-[#EAEAEA] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
@@ -200,12 +198,14 @@ export default function ResetInfoModal({
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
               <div>
                 <p>{error}</p>
-                <button
+                <Button
+                  variant="destructive"
+                  size="sm"
                   onClick={() => void loadResetCredits(true)}
-                  className="mt-2 px-3 py-1 bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-[12px] font-medium rounded-md transition-colors"
+                  className="mt-2"
                 >
                   重新获取
-                </button>
+                </Button>
               </div>
             </div>
           ) : info ? (
@@ -244,17 +244,18 @@ export default function ResetInfoModal({
                               {STATUS_LABELS[status] || credit.status || '未知'}
                             </span>
                             {isAvailable && (
-                              <button
+                              <Button
                                 type="button"
+                                size="sm"
                                 onClick={() => {
                                   setConfirmCredit(credit);
                                   setConsumeError(null);
                                 }}
                                 disabled={consumingId !== null || confirmCredit !== null}
-                                className="px-2.5 py-1 bg-black hover:bg-[#333333] text-white text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
+                                className="h-6 px-2.5 text-[11px]"
                               >
                                 使用
-                              </button>
+                              </Button>
                             )}
                           </div>
                         </div>
@@ -271,25 +272,28 @@ export default function ResetInfoModal({
                               使用后立即重置当前额度窗口，确认使用这张重置卡？
                             </p>
                             <div className="flex items-center gap-2">
-                              <button
+                              <Button
                                 type="button"
+                                variant="destructive"
+                                size="sm"
                                 onClick={() => void handleConsume(credit)}
                                 disabled={consumingId !== null}
-                                className="px-3 py-1 bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-[12px] font-medium rounded-md transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                                className="gap-1.5"
                               >
                                 {consumingId === credit.id && (
                                   <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                                 )}
-                                {consumingId === credit.id ? '使用中...' : '确认使用'}
-                              </button>
-                              <button
+                                <span>{consumingId === credit.id ? '使用中...' : '确认使用'}</span>
+                              </Button>
+                              <Button
                                 type="button"
+                                variant="outline"
+                                size="sm"
                                 onClick={() => setConfirmCredit(null)}
                                 disabled={consumingId !== null}
-                                className="px-3 py-1 text-[12px] font-medium text-[#666666] hover:bg-[#F5F5F5] rounded-md transition-colors disabled:opacity-50"
                               >
                                 取消
-                              </button>
+                              </Button>
                             </div>
                           </div>
                         )}
@@ -310,49 +314,54 @@ export default function ResetInfoModal({
           ) : null}
         </div>
 
-        <div className="px-5 py-3 bg-[#FAFAFA] border-t border-[#EAEAEA] flex items-center justify-end gap-2 shrink-0">
+        <div className="px-6 py-3.5 bg-[#FAFAFA] border-t border-[#EAEAEA] flex items-center justify-end gap-2.5 shrink-0">
           {needsAt ? (
             <>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={onClose}
                 disabled={isSavingAt}
-                className="px-4 py-1.5 text-[13px] font-medium text-[#666666] hover:bg-[#F0F0F0] hover:text-black rounded-md transition-colors disabled:opacity-50"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="default"
+                size="sm"
                 onClick={() => void handleSaveAt()}
                 disabled={isSavingAt}
-                className="min-w-[96px] px-4 py-1.5 bg-black hover:bg-[#333333] text-white text-[13px] font-medium rounded-md transition-colors shadow-sm disabled:opacity-60 flex items-center justify-center gap-2"
+                className="min-w-[96px]"
               >
                 {isSavingAt ? '保存中...' : '保存并获取'}
-              </button>
+              </Button>
             </>
           ) : (
             <>
               {!error && (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => void loadResetCredits(true)}
                   disabled={isLoading}
-                  className="px-4 py-1.5 text-[13px] font-medium text-[#666666] hover:bg-[#F0F0F0] hover:text-black rounded-md transition-colors disabled:opacity-50"
                 >
                   重新获取
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
+                variant="default"
+                size="sm"
                 onClick={onClose}
-                className="px-4 py-1.5 bg-black hover:bg-[#333333] text-white text-[13px] font-medium rounded-md transition-colors shadow-sm"
               >
                 关闭
-              </button>
+              </Button>
             </>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

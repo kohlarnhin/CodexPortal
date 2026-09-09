@@ -26,6 +26,11 @@ export interface SessionRecord {
   totalTokens: number;
 }
 
+export interface SessionListPage {
+  sessions: SessionRecord[];
+  total: number;
+}
+
 export interface SessionSyncResult {
   total: number;
   imported: number;

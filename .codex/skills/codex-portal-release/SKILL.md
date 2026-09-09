@@ -20,16 +20,31 @@ Treat saved `auth.json` content, tokens, account email addresses, and the local 
 
 Do not create or switch branches, commit, push, tag, or open a pull request unless the user asks for that Git operation.
 
+### Branch Naming
+
+When branch creation is authorized, name the branch after the current date in the session's timezone: `YYYY-MM-DD` (for example, `2026-09-08`). If that name already exists locally or in known remote refs, use the first available suffix starting at `-2`, then `-3`, and so on: `2026-09-08-2`, `2026-09-08-3`.
+
+Use the date alone, without prefixes such as `feat/`, `feature/`, or `codex/`, and without feature or task names. Keep all existing uncommitted changes on the new branch; creating a branch does not authorize committing or pushing them. Continue using the current branch unless another branch operation is requested.
+
 ## Implement Changes
 
 - Keep frontend pages and components in `src/`, shared hooks in `src/hooks/`, utilities in `src/utils/`, and account types in `src/types/`.
 - Under `src-tauri/src/`, keep account management in `accounts/`, authentication in `auth/`, session parsing/sync/statistics in `sessions/`, and Codex configuration/version detection in `codex/`. Keep shared runtime state in `state.rs`, database initialization in `db.rs`, common HTTP and timestamp helpers in `http.rs` and `time.rs`, and skill/update management in `skills.rs` and `updates.rs`.
-- Keep module dependencies explicit and expose only the types and functions needed by callers. Keep unit tests with their owning module. During structural refactors, preserve Tauri command names and serialized fields, database migrations, transaction/lock boundaries, scheduler behavior, and credential handling.
+- Keep module dependencies explicit and expose only the types and functions needed by callers. When tests are explicitly requested, keep unit tests with their owning module. During structural refactors, preserve Tauri command names and serialized fields, database migrations, transaction/lock boundaries, scheduler behavior, and credential handling.
 - Preserve raw account and authentication data. Apply masking or formatting only at the presentation boundary unless the user explicitly requests a data migration.
 - Prefer browser-native APIs and existing dependencies. Do not install packages merely for small parsing, formatting, or state-persistence tasks.
 - Persist application-only UI preferences separately from Codex's `config.toml`; do not mix portal preferences into the user's Codex configuration.
-- Do not start services, run tests, build, package, install dependencies, deploy, modify unrelated configuration, or update documentation without explicit user authorization.
-- Use read-only inspection, `git diff --check`, and focused diff review as the default verification path.
+- Do not start services, build, package, install dependencies, deploy, modify unrelated configuration, or update documentation without explicit user authorization. Requested project skill and rule updates authorize editing those files.
+
+## No Tests or Browser Calls by Default
+
+For this project, complete the requested edits without creating or running tests, executing validation commands, or invoking browser/computer-use tools. This also applies when creating or updating this project skill. A general request to implement, fix, or finish work does not authorize these actions.
+
+- Do not run unit, integration, end-to-end, or ad hoc assertion tests; type checks; lint or formatting checks; `git diff --check`; skill validators such as `quick_validate.py`; or builds and previews for verification.
+- Do not open a browser, call browser automation tools, take screenshots, perform visual or interaction testing, or start a service or create a preview page for those purposes.
+- Use only the source reads and ordinary Git status/diff inspection needed to understand and edit the requested files. Do not add a testing or validation phase, delegate one, or ask for permission to run one as a routine completion step.
+- Run a particular check only if the user later explicitly requests it, and stay within that request. An explicitly authorized release may use the release workflow below; it does not authorize extra local tests or browser calls.
+- Briefly report the edits and state that tests were not run per the project rule. Do not describe omitted tests as a blocker or claim that unrun checks passed.
 
 ## Update the Application Version
 
@@ -69,5 +84,5 @@ After explicit release authorization:
    gh workflow run release.yml --ref main -f release_notes='<release notes>'
    ```
 5. Monitor the corresponding run through completion with `gh run list` and `gh run watch --exit-status`.
-6. Let the workflow create `v<version>`, build both macOS architectures, upload the DMG files, and publish the GitHub Release. Do not create a competing manual tag or release.
+6. Perform all building, packaging, signing, and release uploads in GitHub Actions. Do not build local release artifacts. Let the workflow build both macOS architectures and the Windows portable executable, keep intermediate files in Actions artifacts, and create `v<version>` with a published GitHub Release only after all builds succeed. Mark the release as latest after every asset has uploaded. Do not create GitHub Release drafts or a competing manual tag or release. This project preference was explicitly adopted on 2026-09-09.
 7. Report the version, commit, workflow result, tag, and release URL.

@@ -30,6 +30,17 @@ fn show_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     let _ = app_handle.show();
 
     if let Some(window) = app_handle.get_webview_window("main") {
+        // 启动和从 Dock 重新打开时，恢复适合展示两个账号的默认窗口尺寸。
+        let _ = window.unmaximize();
+        if let Some(config) = app_handle
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|config| config.label == window.label())
+        {
+            let _ = window.set_size(tauri::LogicalSize::new(config.width, config.height));
+        }
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
@@ -122,6 +133,9 @@ pub fn run() {
             accounts::delete_account,
             accounts::set_active_account,
             accounts::set_account_access_token,
+            accounts::set_auto_activate_window,
+            accounts::quiet_hours::get_quota_quiet_hours,
+            accounts::quiet_hours::set_quota_quiet_hours,
             accounts::credits::get_reset_credits,
             accounts::credits::consume_reset_credit,
             accounts::usage::refresh_account_usage,
@@ -133,6 +147,7 @@ pub fn run() {
             sessions::sync::sync_sessions,
             sessions::sync::get_session_sync_status,
             sessions::list_session_projects,
+            sessions::list::list_sessions,
             sessions::list_project_sessions,
             sessions::get_session_content,
             sessions::usage::get_token_usage,

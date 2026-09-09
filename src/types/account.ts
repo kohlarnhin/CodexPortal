@@ -1,5 +1,5 @@
 export interface AccountUsageWindow {
-  usedPercent: number;
+  usedPercent: number | null;
   windowMinutes: number | null;
   resetsAt: number | null;
 }
@@ -21,6 +21,7 @@ export interface Account {
   usage: AccountUsage | null;
   canRefreshUsage: boolean;
   nextRefreshAt?: string | null;
+  autoActivateWindow: boolean;
   chatgptPlanType?: string | null;
   hasAccessToken: boolean;
   resetCredits: ResetCreditsInfo | null;

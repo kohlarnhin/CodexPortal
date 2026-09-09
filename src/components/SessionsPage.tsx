@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useSessions } from '../hooks/useSessions';
 import { SessionProject, SessionRecord } from '../types/session';
@@ -7,13 +8,20 @@ import { formatTokens } from '../utils/format';
 import { copyText } from '../utils/clipboard';
 import ProjectCard from './sessions/ProjectCard';
 import SessionRow from './sessions/SessionRow';
-import SessionDetailModal from './sessions/SessionDetailModal';
+import SessionDetailPanel from './sessions/SessionDetailPanel';
+import SessionListView from './sessions/SessionListView';
+import SearchInput from './sessions/SearchInput';
 
 type ViewState =
   | { type: 'projects' }
+  | { type: 'sessions' }
   | { type: 'project'; project: SessionProject };
 
-const SessionsPage: React.FC = () => {
+interface SessionsPageProps {
+  detailContainer: HTMLElement | null;
+}
+
+const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
   const sessions = useSessions();
   const [view, setView] = useState<ViewState>({ type: 'projects' });
   const [search, setSearch] = useState('');
@@ -56,14 +64,17 @@ const SessionsPage: React.FC = () => {
   const isSyncing = sessions.isSyncing || sessions.syncProgress !== null;
 
   return (
-    <div className="max-w-5xl mx-auto w-full h-full flex flex-col pt-4">
+    <div
+      className="page-layout pt-4"
+      style={{ visibility: detailSession && detailContainer ? 'hidden' : undefined }}
+    >
       {/* 标题栏 + 同步状态 */}
-      <div className="flex items-center justify-between gap-4 mb-4 shrink-0">
+      <div className="page-header mb-4">
         <div className="min-w-0">
           <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">会话管理</h2>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="text-[11px] text-[#999999] hidden sm:block">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[11px] text-[#999999]">
             {sessions.status?.lastSyncedAt ? (
               <>
                 上次同步 {formatRelativeTime(sessions.status.lastSyncedAt)}
@@ -132,9 +143,35 @@ const SessionsPage: React.FC = () => {
         </div>
       )}
 
+      <div className="flex items-center gap-1 mb-4 shrink-0 border-b border-[#EAEAEA]" aria-label="会话浏览方式">
+        {([{ type: 'projects', label: '项目列表' }, { type: 'sessions', label: '会话列表' }] as const).map(tab => {
+          const isActive = tab.type === 'sessions' ? view.type === 'sessions' : view.type !== 'sessions';
+          return (
+            <button
+              key={tab.type}
+              aria-pressed={isActive}
+              onClick={() => {
+                sessions.activeProjectPathRef.current = null;
+                setView({ type: tab.type });
+              }}
+              className={`px-4 py-2.5 -mb-px border-b-2 text-[13px] font-medium transition-colors ${isActive ? 'border-black text-black' : 'border-transparent text-[#888888] hover:text-black'}`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* 内容区 */}
-      <div className="flex-1 min-h-0 overflow-y-auto -mr-4 pr-4">
-        {view.type === 'projects' ? (
+      <div className="page-scroll">
+        {view.type === 'sessions' ? (
+          <SessionListView
+            refreshKey={sessions.syncResult?.syncedAt ?? null}
+            onOpenDetail={setDetailSession}
+            onCopyResume={handleCopyResume}
+            onRevealInFinder={handleRevealInFinder}
+          />
+        ) : view.type === 'projects' ? (
           <ProjectsView
             projects={filteredProjects}
             totalProjects={sessions.status?.totalProjects ?? filteredProjects.length}
@@ -148,6 +185,7 @@ const SessionsPage: React.FC = () => {
           />
         ) : (
           <ProjectSessionsView
+            key={view.project.path}
             project={view.project}
             sessions={sessions.sessions}
             isLoading={sessions.isLoadingSessions}
@@ -159,14 +197,16 @@ const SessionsPage: React.FC = () => {
         )}
       </div>
 
-      {detailSession && (
-        <SessionDetailModal
+      {detailSession && detailContainer && createPortal(
+        <SessionDetailPanel
+          key={detailSession.id}
           session={detailSession}
           loadContent={sessions.loadSessionContent}
           onCopyResume={handleCopyResume}
           onRevealInFinder={handleRevealInFinder}
           onClose={() => setDetailSession(null)}
-        />
+        />,
+        detailContainer,
       )}
     </div>
   );
@@ -198,27 +238,25 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
   return (
     <div>
       {/* 统计 + 搜索 */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         <span className="rounded-full border border-[#EAEAEA] bg-white px-3 py-1 text-[11px] font-medium text-[#666666]">
           {totalProjects} 个项目
         </span>
         <span className="rounded-full border border-[#EAEAEA] bg-white px-3 py-1 text-[11px] font-medium text-[#666666]">
           {totalSessions} 个会话
         </span>
-        <div className="flex-1" />
-        <div className="relative">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-[#999999] pointer-events-none"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input
+        <div className="ml-auto flex w-full @min-[520px]/page:w-56">
+          <SearchInput
             value={search}
-            onChange={e => onSearchChange(e.target.value)}
+            onChange={onSearchChange}
+            label="搜索项目"
             placeholder="搜索项目名称或路径…"
-            className="w-56 pl-9 pr-3 py-1.5 text-[13px] bg-white border border-[#EAEAEA] rounded-lg placeholder:text-[#AAAAAA] focus:outline-none focus:border-black transition-colors"
           />
         </div>
       </div>
 
       {isLoading && !isSyncing ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1024px]/page:grid-cols-3 @min-[1400px]/page:grid-cols-4 gap-4">
           {[1, 2, 3].map(i => (
             <div key={i} className="h-32 bg-white border border-[#EAEAEA] rounded-xl animate-pulse" />
           ))}
@@ -229,14 +267,16 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#999999]"><path d="M12 8v4l2.5 2.5"/><circle cx="12" cy="12" r="10"/></svg>
           </div>
           <h3 className="text-[16px] font-semibold text-black mb-1.5">
-            {isSyncing ? '正在同步会话数据…' : '还没有会话数据'}
+            {search.trim() ? '没有找到匹配的项目' : isSyncing ? '正在同步会话数据…' : '还没有会话数据'}
           </h3>
           <p className="text-[13px] text-[#888888] mb-5">
-            {isSyncing
+            {search.trim()
+              ? '试试其他项目名称或路径，或清除搜索查看全部项目'
+              : isSyncing
               ? '首次使用会将 ~/.codex/sessions 的全部历史会话入库，请稍候'
               : '点击同步，将 ~/.codex/sessions 的历史会话按项目入库'}
           </p>
-          {!isSyncing && (
+          {!isSyncing && !search.trim() && (
             <button
               onClick={onSyncNow}
               className="px-4 py-1.5 bg-black hover:bg-[#333333] text-white text-[13px] font-medium rounded-md transition-colors shadow-sm"
@@ -246,7 +286,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1024px]/page:grid-cols-3 @min-[1400px]/page:grid-cols-4 gap-4">
           {projects.map(project => (
             <ProjectCard key={project.path} project={project} onOpen={onOpenProject} />
           ))}
@@ -275,6 +315,13 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
   onCopyResume,
   onRevealInFinder,
 }) => {
+  const [search, setSearch] = useState('');
+  const keyword = search.trim().toLowerCase();
+  const filteredSessions = useMemo(
+    () => keyword ? sessions.filter(session => session.id.toLowerCase().includes(keyword)) : sessions,
+    [sessions, keyword],
+  );
+
   return (
     <div>
       {/* 返回 + 项目信息 */}
@@ -287,25 +334,34 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
       </button>
 
       <div className="bg-white rounded-xl border border-[#EAEAEA] px-5 py-4 mb-4">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="w-9 h-9 shrink-0 rounded-lg bg-black text-white flex items-center justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
           </div>
-          <div className="min-w-0">
-            <h3 className="text-[16px] font-semibold text-black tracking-tight">{project.name}</h3>
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-[16px] font-semibold text-black tracking-tight" title={project.name}>{project.name}</h3>
             <p className="text-[11px] font-mono text-[#888888] truncate">{project.path}</p>
           </div>
-          <div className="flex items-center gap-2 ml-auto shrink-0">
+          <div className="flex flex-wrap items-center gap-2 ml-auto">
             <span className="rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2.5 py-0.5 text-[11px] font-medium text-[#666666]">
               {sessions.length} 个会话
               {project.totalTokens > 0 && (
                 <> · {formatTokens(project.totalTokens)} tokens</>
               )}
             </span>
-            <span className="rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2.5 py-0.5 text-[11px] font-medium text-[#666666] hidden sm:block">
+            <span className="rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2.5 py-0.5 text-[11px] font-medium text-[#666666]">
               最近活跃 {formatRelativeTime(project.lastSessionAt)}
             </span>
           </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <span role="status" className="text-[11px] text-[#888888]">
+          {isLoading ? '正在加载…' : keyword ? `${filteredSessions.length} 个匹配会话 / 共 ${sessions.length} 个` : `共 ${sessions.length} 个会话`}
+        </span>
+        <div className="ml-auto flex w-full @min-[520px]/page:w-72">
+          <SearchInput value={search} onChange={setSearch} label="搜索项目内会话 ID" placeholder="搜索会话 ID，支持部分匹配…" />
         </div>
       </div>
 
@@ -315,16 +371,17 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
             <div key={i} className="h-20 bg-white border border-[#EAEAEA] rounded-xl animate-pulse" />
           ))}
         </div>
-      ) : sessions.length === 0 ? (
+      ) : filteredSessions.length === 0 ? (
         <div className="bg-white rounded-xl border border-[#EAEAEA] py-14 px-8 text-center">
-          <p className="text-[13px] text-[#999999]">该项目暂无会话</p>
+          <p className="text-[13px] text-[#999999]">{keyword ? '没有找到匹配的会话，试试更短的 ID 片段' : '该项目暂无会话'}</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {sessions.map(session => (
+          {filteredSessions.map(session => (
             <SessionRow
               key={session.id}
               session={session}
+              search={keyword}
               onOpenDetail={onOpenDetail}
               onCopyResume={onCopyResume}
               onRevealInFinder={onRevealInFinder}

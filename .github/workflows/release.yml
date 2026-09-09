@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: codex-portal-release
@@ -54,23 +54,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: Codex Portal v__VERSION__
-          releaseBody: ${{ inputs.release_notes }}
-          releaseCommitish: ${{ github.sha }}
-          releaseDraft: true
-          prerelease: false
           retryAttempts: 2
           args: --target ${{ matrix.target }}
 
-      - name: Create DMG installer
-        id: dmg
+      - name: Prepare macOS release files
+        env:
+          APP_VERSION: ${{ steps.tauri.outputs.appVersion }}
+          APP_ARCH: ${{ matrix.arch }}
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
         shell: bash
         run: |
           set -euo pipefail
 
           APP_PATH="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Codex Portal.app"
-          DMG_PATH="${RUNNER_TEMP}/CodexPortal_${{ steps.tauri.outputs.appVersion }}_${{ matrix.arch }}.dmg"
+          RELEASE_DIR="${RUNNER_TEMP}/release"
+          mkdir -p "$RELEASE_DIR"
+          DMG_PATH="${RELEASE_DIR}/CodexPortal_${APP_VERSION}_${APP_ARCH}.dmg"
           STAGING_DIR="$(mktemp -d)"
           trap 'rm -rf "$STAGING_DIR"' EXIT
 
@@ -79,16 +78,27 @@ jobs:
           ln -s /Applications "$STAGING_DIR/Applications"
           hdiutil create -volname "Codex Portal" -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH"
 
-          echo "path=$DMG_PATH" >> "$GITHUB_OUTPUT"
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const bundle = JSON.parse(process.env.ARTIFACT_PATHS).find(file => file.endsWith('.app.tar.gz'));
+          if (!bundle) throw new Error('Missing signed macOS updater bundle');
+          const filename = `CodexPortal_${process.env.APP_VERSION}_${process.env.APP_ARCH}.app.tar.gz`;
+          const destination = path.join(process.env.RUNNER_TEMP, 'release', filename);
+          fs.copyFileSync(bundle, destination);
+          fs.copyFileSync(`${bundle}.sig`, `${destination}.sig`);
+          NODE
 
-      - name: Upload DMG installer
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "v${{ steps.tauri.outputs.appVersion }}" "${{ steps.dmg.outputs.path }}" --clobber
+      - name: Store macOS release files
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          compression-level: 0
 
   build-windows:
     if: github.ref == 'refs/heads/main'
-    needs: build-macos
     runs-on: windows-latest
 
     steps:
@@ -124,10 +134,11 @@ jobs:
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $name = "CodexPortal_${version}_windows_x64.exe"
-          $path = Join-Path $env:RUNNER_TEMP $name
+          $directory = Join-Path $env:RUNNER_TEMP 'release'
+          New-Item -ItemType Directory -Path $directory -Force | Out-Null
+          $path = Join-Path $directory $name
           Copy-Item 'src-tauri/target/x86_64-pc-windows-msvc/release/codex-portal.exe' $path
           "path=$path" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Sign portable update
         env:
@@ -136,56 +147,93 @@ jobs:
           PORTABLE_PATH: ${{ steps.portable.outputs.path }}
         run: npm run tauri signer sign -- "$env:PORTABLE_PATH"
 
-      - name: Upload portable executable and signature
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PORTABLE_PATH: ${{ steps.portable.outputs.path }}
-          APP_VERSION: ${{ steps.portable.outputs.version }}
-        run: gh release upload "v$env:APP_VERSION" "$env:PORTABLE_PATH" "$env:PORTABLE_PATH.sig" --clobber
+      - name: Store Windows release files
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x64
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          compression-level: 0
 
   publish-release:
     if: github.ref == 'refs/heads/main'
     needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Download all release files
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: ${{ runner.temp }}/release/
+          merge-multiple: true
+
       - name: Read app version
         id: version
         run: node -e "const fs = require('fs'); const pkg = require('./package.json'); fs.appendFileSync(process.env.GITHUB_OUTPUT, 'value=' + pkg.version + '\n')"
 
-      - name: Add portable update and verify every desktop target
+      - name: Prepare updater manifest and verify every desktop target
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APP_VERSION: ${{ steps.version.outputs.value }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release download "v${APP_VERSION}" --pattern latest.json --dir "${RUNNER_TEMP}/updater"
-          gh release download "v${APP_VERSION}" --pattern "CodexPortal_${APP_VERSION}_windows_x64.exe.sig" --dir "${RUNNER_TEMP}/updater"
           node <<'NODE'
           const fs = require('fs');
           const path = require('path');
-          const manifestPath = path.join(process.env.RUNNER_TEMP, 'updater', 'latest.json');
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-          if (manifest.version !== process.env.APP_VERSION) throw new Error('Updater version mismatch');
-          const filename = `CodexPortal_${process.env.APP_VERSION}_windows_x64.exe`;
-          manifest.platforms['windows-x86_64-portable'] = {
-            signature: fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'updater', `${filename}.sig`), 'utf8').trim(),
-            url: `https://github.com/${process.env.RELEASE_REPOSITORY}/releases/download/v${process.env.APP_VERSION}/${filename}`,
+          const directory = path.join(process.env.RUNNER_TEMP, 'release');
+          const version = process.env.APP_VERSION;
+          const prefix = `CodexPortal_${version}`;
+          const manifest = {
+            version,
+            notes: process.env.RELEASE_NOTES,
+            pub_date: new Date().toISOString(),
+            platforms: {},
           };
-          for (const target of ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64-portable']) {
-            const entry = manifest.platforms?.[target];
-            if (!entry?.url || !entry?.signature) throw new Error(`Missing updater artifact: ${target}`);
+          for (const [target, filename] of [
+            ['darwin-aarch64', `${prefix}_arm64.app.tar.gz`],
+            ['darwin-x86_64', `${prefix}_x64.app.tar.gz`],
+            ['windows-x86_64-portable', `${prefix}_windows_x64.exe`],
+          ]) {
+            if (fs.statSync(path.join(directory, filename)).size === 0) throw new Error(`Empty updater artifact: ${target}`);
+            const signature = fs.readFileSync(path.join(directory, `${filename}.sig`), 'utf8').trim();
+            if (!signature) throw new Error(`Missing updater signature: ${target}`);
+            manifest.platforms[target] = {
+              signature,
+              url: `https://github.com/${process.env.RELEASE_REPOSITORY}/releases/download/v${version}/${filename}`,
+            };
           }
-          fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+          for (const arch of ['arm64', 'x64']) {
+            if (fs.statSync(path.join(directory, `${prefix}_${arch}.dmg`)).size === 0) throw new Error(`Empty DMG installer: ${arch}`);
+          }
+          fs.writeFileSync(path.join(directory, 'latest.json'), JSON.stringify(manifest, null, 2) + '\n');
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'release-notes.md'), process.env.RELEASE_NOTES);
           NODE
-          gh release upload "v${APP_VERSION}" "${RUNNER_TEMP}/updater/latest.json" --clobber
 
-      - name: Publish release
+      - name: Publish release directly and mark it latest after uploading
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "v${{ steps.version.outputs.value }}" --draft=false --latest
+          APP_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "v${APP_VERSION}" \
+            --target "$RELEASE_COMMIT" \
+            --title "Codex Portal v${APP_VERSION}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md" \
+            --latest=false
+          gh release upload "v${APP_VERSION}" "${RUNNER_TEMP}/release/"*
+          gh release edit "v${APP_VERSION}" --latest

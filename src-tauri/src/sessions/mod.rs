@@ -1,3 +1,4 @@
+pub(crate) mod list;
 pub(crate) mod parser;
 pub(crate) mod sync;
 pub(crate) mod usage;
@@ -55,6 +56,27 @@ pub(crate) struct SessionRecord {
     pub(crate) reasoning_tokens: i64,
     #[serde(rename = "totalTokens")]
     pub(crate) total_tokens: i64,
+}
+
+fn session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
+    Ok(SessionRecord {
+        id: row.get(0)?,
+        project_path: row.get(1)?,
+        file_path: row.get(2)?,
+        title: row.get(3)?,
+        started_at: row.get(4)?,
+        last_activity_at: row.get(5)?,
+        model_provider: row.get(6)?,
+        cli_version: row.get(7)?,
+        file_size: row.get(8)?,
+        message_count: row.get(9)?,
+        model: row.get(10)?,
+        input_tokens: row.get(11)?,
+        cached_input_tokens: row.get(12)?,
+        output_tokens: row.get(13)?,
+        reasoning_tokens: row.get(14)?,
+        total_tokens: row.get(15)?,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,26 +151,7 @@ pub(crate) fn list_project_sessions(
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![project_path], |row| {
-            Ok(SessionRecord {
-                id: row.get(0)?,
-                project_path: row.get(1)?,
-                file_path: row.get(2)?,
-                title: row.get(3)?,
-                started_at: row.get(4)?,
-                last_activity_at: row.get(5)?,
-                model_provider: row.get(6)?,
-                cli_version: row.get(7)?,
-                file_size: row.get(8)?,
-                message_count: row.get(9)?,
-                model: row.get(10)?,
-                input_tokens: row.get(11)?,
-                cached_input_tokens: row.get(12)?,
-                output_tokens: row.get(13)?,
-                reasoning_tokens: row.get(14)?,
-                total_tokens: row.get(15)?,
-            })
-        })
+        .query_map(params![project_path], session_from_row)
         .map_err(|e| e.to_string())?;
     let mut sessions = Vec::new();
     for row in rows {

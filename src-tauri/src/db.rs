@@ -23,7 +23,8 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
             chatgpt_account_is_fedramp INTEGER NOT NULL DEFAULT 0,
             reset_credits_json TEXT,
             refresh_token TEXT,
-            at_expires_at TEXT
+            at_expires_at TEXT,
+            auto_activate_window INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
@@ -51,6 +52,10 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
     );
     let _ = conn.execute("ALTER TABLE accounts ADD COLUMN refresh_token TEXT", []);
     let _ = conn.execute("ALTER TABLE accounts ADD COLUMN at_expires_at TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE accounts ADD COLUMN auto_activate_window INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS configs (

@@ -1,4 +1,13 @@
 import React from 'react';
+import Button from './ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from './ui/dialog';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -9,34 +18,35 @@ interface ConfirmModalProps {
 }
 
 const ConfirmModal: React.FC<ConfirmModalProps> = ({ isOpen, title, message, onConfirm, onCancel }) => {
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white rounded-xl shadow-2xl border border-[#EAEAEA] w-full max-w-sm overflow-hidden animate-modal-in">
-        <div className="px-5 py-4 border-b border-[#EAEAEA]">
-          <h3 className="font-semibold text-[15px] text-black tracking-tight">{title}</h3>
-        </div>
-        <div className="p-5">
-          <p className="text-[13px] text-[#666666] leading-relaxed">{message}</p>
-        </div>
-        <div className="px-5 py-3 bg-[#FAFAFA] border-t border-[#EAEAEA] flex items-center justify-end gap-2">
-          <button 
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent className="max-w-sm p-6 gap-4" showCloseButton={false}>
+        <DialogHeader className="pr-0">
+          <DialogTitle className="text-[16px] font-semibold text-neutral-900">{title}</DialogTitle>
+          <DialogDescription className="text-[13px] text-neutral-600 leading-relaxed pt-1">
+            {message}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2.5 pt-2">
+          <Button 
+            variant="outline"
+            size="sm"
             onClick={onCancel}
-            className="px-4 py-1.5 text-[13px] font-medium text-[#666666] hover:bg-[#F5F5F5] hover:text-black rounded-md transition-colors"
           >
             取消
-          </button>
-          <button 
+          </Button>
+          <Button 
+            variant="destructive"
+            size="sm"
             onClick={onConfirm}
-            className="px-4 py-1.5 bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-[13px] font-medium rounded-md transition-colors shadow-sm"
           >
             确认删除
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 
 export default ConfirmModal;
+

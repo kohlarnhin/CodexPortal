@@ -12,7 +12,7 @@ pub(crate) fn usage(used_percent: f64, resets_at: Option<i64>) -> AccountUsage {
     AccountUsage {
         request_started_at: None,
         primary: Some(AccountUsageWindow {
-            used_percent,
+            used_percent: Some(used_percent),
             window_minutes: Some(300),
             resets_at,
         }),

@@ -32,12 +32,12 @@ pub(crate) struct RateLimitSnapshot {
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 
-const USAGE_REFRESH_INTERVAL_SECONDS: i64 = 60 * 60;
+const USAGE_RESET_FALLBACK_SECONDS: i64 = 5 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AccountUsageWindow {
     #[serde(rename = "usedPercent")]
-    pub(crate) used_percent: f64,
+    pub(crate) used_percent: Option<f64>,
     #[serde(rename = "windowMinutes")]
     pub(crate) window_minutes: Option<i64>,
     #[serde(rename = "resetsAt")]
@@ -93,7 +93,7 @@ pub(crate) fn parse_cached_usage(usage_json: Option<String>) -> Option<AccountUs
 
 fn normalize_usage_window(window: UsageApiWindow) -> AccountUsageWindow {
     AccountUsageWindow {
-        used_percent: window.used_percent,
+        used_percent: Some(window.used_percent),
         window_minutes: window.limit_window_seconds.map(|seconds| seconds / 60),
         resets_at: window.reset_at,
     }
@@ -174,38 +174,89 @@ pub(crate) fn fetch_account_usage(
     })
 }
 
-/// 计算本次刷新成功后该账号的下次刷新时间。
-///
-/// 规则（以短周期 primary 窗口为准）：
-/// - primary 剩余额度为 0（used_percent >= 100）→ 下次 = primary.resets_at + 1 分钟；
-/// - 否则 → 下次 = 本次同步时间 + 1 小时。
-///
-/// 加 `now + 60s` 底线，防止 resets_at 已过或接口延迟导致热轮询。
+/// 成功和失败都按短周期重置时间加一分钟安排刷新。
 fn compute_next_refresh_at(usage: &AccountUsage, now: DateTime<Utc>) -> DateTime<Utc> {
-    let base = DateTime::parse_from_rfc3339(&usage.synced_at)
-        .map(|synced| {
-            synced.with_timezone(&Utc) + chrono::Duration::seconds(USAGE_REFRESH_INTERVAL_SECONDS)
-        })
-        .unwrap_or(now + chrono::Duration::seconds(USAGE_REFRESH_INTERVAL_SECONDS));
-
-    let exhausted = usage
+    usage
         .primary
         .as_ref()
-        .map(|window| window.used_percent >= 100.0)
-        .unwrap_or(false);
+        .and_then(|window| window.resets_at)
+        .filter(|reset| *reset > 0)
+        .and_then(|reset| DateTime::from_timestamp(reset, 0))
+        .and_then(|reset| reset.checked_add_signed(chrono::Duration::minutes(1)))
+        .filter(|next| *next > now)
+        .unwrap_or(now + chrono::Duration::seconds(USAGE_RESET_FALLBACK_SECONDS + 60))
+}
 
-    let candidate = if exhausted {
-        match usage.primary.as_ref().and_then(|window| window.resets_at) {
-            Some(resets_at) => DateTime::from_timestamp(resets_at, 0)
-                .map(|reset| reset + chrono::Duration::seconds(60))
-                .unwrap_or(base),
-            None => base,
-        }
-    } else {
-        base
+pub(crate) fn report_account_request_error(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+    title: &str,
+    error: &str,
+) {
+    let name = state.db.lock().ok().and_then(|db| {
+        db.query_row(
+            "SELECT name FROM accounts WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        ).ok()
+    }).unwrap_or_else(|| id.to_string());
+    let _ = app.emit(
+        "account-request-failed",
+        serde_json::json!({ "accountName": name, "message": format!("{title}：{error}\n请手动检查账号认证或网络后处理。") }),
+    );
+}
+
+/// 获取失败时只把重置时间写为五分钟后，额度百分比保留已有值。
+pub(crate) fn save_fallback_reset(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+    title: &str,
+    error: &str,
+) {
+    let saved = (|| -> Result<(), String> {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        let cached = db.query_row(
+            "SELECT usage_json FROM accounts WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, Option<String>>(0),
+        ).map_err(|error| error.to_string())?;
+        let now = Utc::now();
+        let mut usage = parse_cached_usage(cached).unwrap_or(AccountUsage {
+            primary: None,
+            secondary: None,
+            synced_at: now.to_rfc3339(),
+            request_started_at: None,
+            plan_type: None,
+        });
+        let primary = usage.primary.get_or_insert(AccountUsageWindow {
+            used_percent: None,
+            window_minutes: None,
+            resets_at: None,
+        });
+        primary.resets_at = Some(
+            (now + chrono::Duration::seconds(USAGE_RESET_FALLBACK_SECONDS)).timestamp(),
+        );
+        usage.synced_at = now.to_rfc3339();
+        usage.request_started_at = None;
+        let json = serde_json::to_string(&usage).map_err(|error| error.to_string())?;
+        let next = compute_next_refresh_at(&usage, now).to_rfc3339();
+        db.execute(
+            "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?3 WHERE id = ?4",
+            params![json, usage.synced_at, next, id],
+        ).map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    let message = match saved {
+        Ok(()) => error.to_string(),
+        Err(save_error) => format!("{error}\n默认重置时间保存失败：{save_error}"),
     };
-
-    std::cmp::max(candidate, now + chrono::Duration::seconds(60))
+    report_account_request_error(app, state, id, title, &message);
+    let _ = app.emit(
+        "usage-updated",
+        AccountRefreshEvent { account_id: id.to_string() },
+    );
 }
 
 /// 根据额度响应的长周期（secondary）窗口时长推导账号限额类型（周限/月限）。
@@ -412,7 +463,31 @@ pub(crate) async fn refresh_account_usage(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<AccountUsage, String> {
-    let _guard = begin_account_refresh(&state, &id, Some(app.clone()))?;
+    let _guard = begin_account_refresh(&state, &id, Some(app.clone())).map_err(|error| {
+        report_account_request_error(&app, &state, &id, "额度刷新未执行", &error);
+        error
+    })?;
+    refresh_account_usage_inner(&app, &state, &id).await
+}
+
+/// 调用者持有账号刷新互斥；激活消息与额度查询共用同一个互斥区间。
+pub(crate) async fn refresh_account_usage_inner(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+) -> Result<AccountUsage, String> {
+    let result = fetch_and_persist_account_usage(app, state, id).await;
+    if let Err(error) = &result {
+        save_fallback_reset(app, state, id, "额度刷新失败", error);
+    }
+    result
+}
+
+async fn fetch_and_persist_account_usage(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+) -> Result<AccountUsage, String> {
     // 读取账号认证上下文。
     let (
         auth_json_content,
@@ -497,7 +572,7 @@ pub(crate) async fn refresh_account_usage(
     let _ = app.emit(
         "usage-updated",
         AccountRefreshEvent {
-            account_id: id.clone(),
+            account_id: id.to_string(),
         },
     );
 
@@ -520,7 +595,10 @@ fn remove_from_refreshing(state: &AppState, id: &str) {
 }
 
 fn session_usage_is_valid(window: &AccountUsageWindow, timestamp_millis: i64) -> bool {
-    if !window.used_percent.is_finite() || !(0.0..=100.0).contains(&window.used_percent) {
+    let Some(used_percent) = window.used_percent else {
+        return false;
+    };
+    if !used_percent.is_finite() || !(0.0..=100.0).contains(&used_percent) {
         return false;
     }
     let Some(end) = window.resets_at.filter(|end| *end > 0) else {
@@ -542,7 +620,7 @@ fn session_usage_is_valid(window: &AccountUsageWindow, timestamp_millis: i64) ->
 /// 用会话感知的额度快照更新账号的剩余额度：
 /// - 合并现有 usage_json：更新 primary 与 secondary（事件缺 secondary 时保留旧值）及同步时间；
 /// - 会话感知到订阅类型时顺带补全 chatgpt_plan_type；
-/// - 保留既有 next_refresh_at；
+/// - 依据最新窗口更新 next_refresh_at；
 /// 返回是否实际写入（时间保护跳过旧事件时为 false），
 /// 供同步结束后通知前端刷新对应账号的额度展示。
 pub(crate) fn update_account_usage_from_session(
@@ -551,7 +629,7 @@ pub(crate) fn update_account_usage_from_session(
     rl: &RateLimitSnapshot,
 ) -> Result<bool, String> {
     let primary = AccountUsageWindow {
-        used_percent: rl.used_percent,
+        used_percent: Some(rl.used_percent),
         window_minutes: rl.window_minutes,
         resets_at: rl.resets_at,
     };
@@ -601,9 +679,13 @@ pub(crate) fn update_account_usage_from_session(
     usage.synced_at = rl.timestamp.clone();
     usage.request_started_at = None;
     let json = serde_json::to_string(&usage).map_err(|e| e.to_string())?;
+    let observed_at = DateTime::parse_from_rfc3339(&rl.timestamp)
+        .map_err(|error| error.to_string())?
+        .with_timezone(&Utc);
+    let next_refresh_at = compute_next_refresh_at(&usage, observed_at).to_rfc3339();
     tx.execute(
-        "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, chatgpt_plan_type = COALESCE(?3, chatgpt_plan_type) WHERE id = ?4",
-        params![json, rl.timestamp, rl.plan_type, account_id],
+        "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, chatgpt_plan_type = COALESCE(?3, chatgpt_plan_type), next_refresh_at = ?4 WHERE id = ?5",
+        params![json, rl.timestamp, rl.plan_type, next_refresh_at, account_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(true)
@@ -617,10 +699,10 @@ mod tests {
     use serde_json::Value;
 
     #[test]
-    fn not_exhausted_uses_next_hour() {
+    fn not_exhausted_without_reset_uses_default_reset_plus_minute() {
         let now = utc_ts("2026-08-07T10:00:00Z");
         let next = compute_next_refresh_at(&usage(40.0, None), now);
-        assert_eq!(next, utc_ts("2026-08-07T11:00:00Z"));
+        assert_eq!(next, utc_ts("2026-08-07T10:06:00Z"));
     }
 
     #[test]
@@ -632,22 +714,22 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_without_reset_falls_back_to_next_hour() {
+    fn exhausted_without_reset_uses_default_reset_plus_minute() {
         let now = utc_ts("2026-08-07T10:00:00Z");
         let next = compute_next_refresh_at(&usage(100.0, None), now);
-        assert_eq!(next, utc_ts("2026-08-07T11:00:00Z"));
+        assert_eq!(next, utc_ts("2026-08-07T10:06:00Z"));
     }
 
     #[test]
-    fn exhausted_with_past_reset_is_floored_to_next_minute() {
+    fn exhausted_with_past_reset_uses_default_reset_plus_minute() {
         let now = utc_ts("2026-08-07T10:00:00Z");
         let resets_at = now.timestamp() - 600; // 已过
         let next = compute_next_refresh_at(&usage(100.0, Some(resets_at)), now);
-        assert_eq!(next, utc_ts("2026-08-07T10:01:00Z"));
+        assert_eq!(next, utc_ts("2026-08-07T10:06:00Z"));
     }
 
     #[test]
-    fn missing_primary_uses_next_hour() {
+    fn missing_primary_uses_default_reset_plus_minute() {
         let now = utc_ts("2026-08-07T10:00:00Z");
         let usage = AccountUsage {
             request_started_at: None,
@@ -657,7 +739,7 @@ mod tests {
             plan_type: None,
         };
         let next = compute_next_refresh_at(&usage, now);
-        assert_eq!(next, utc_ts("2026-08-07T11:00:00Z"));
+        assert_eq!(next, utc_ts("2026-08-07T10:06:00Z"));
     }
 
     #[test]
@@ -665,12 +747,12 @@ mod tests {
         let usage = AccountUsage {
             request_started_at: None,
             primary: Some(AccountUsageWindow {
-                used_percent: 30.0,
+                used_percent: Some(30.0),
                 window_minutes: Some(300),
                 resets_at: None,
             }),
             secondary: Some(AccountUsageWindow {
-                used_percent: 50.0,
+                used_percent: Some(50.0),
                 window_minutes: Some(10_080),
                 resets_at: None,
             }),
@@ -686,7 +768,7 @@ mod tests {
             request_started_at: None,
             primary: None,
             secondary: Some(AccountUsageWindow {
-                used_percent: 50.0,
+                used_percent: Some(50.0),
                 window_minutes: Some(43_200),
                 resets_at: None,
             }),
@@ -702,7 +784,7 @@ mod tests {
             request_started_at: None,
             primary: None,
             secondary: Some(AccountUsageWindow {
-                used_percent: 50.0,
+                used_percent: Some(50.0),
                 window_minutes: Some(300),
                 resets_at: None,
             }),
@@ -740,7 +822,7 @@ mod tests {
         let usage = AccountUsage {
             request_started_at: None,
             primary: Some(AccountUsageWindow {
-                used_percent: 100.0,
+                used_percent: Some(100.0),
                 window_minutes: Some(300),
                 resets_at: Some(resets_at),
             }),
@@ -765,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn session_usage_update_merges_and_keeps_schedule() {
+    fn session_usage_update_merges_and_updates_schedule() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE accounts (
@@ -815,8 +897,10 @@ mod tests {
         // secondary 保留（合并而非覆盖）。
         assert_eq!(usage["secondary"]["usedPercent"], 30.0);
         assert_eq!(usage["syncedAt"], "2026-08-14T03:20:00Z");
-        // 1 小时调度计划不受影响。
-        assert_eq!(next_refresh.as_deref(), Some("2026-08-13T11:00:00Z"));
+        // 根据最新重置时间安排刷新。
+        let expected = (DateTime::from_timestamp(1787134079, 0).unwrap()
+            + chrono::Duration::minutes(1)).to_rfc3339();
+        assert_eq!(next_refresh.as_deref(), Some(expected.as_str()));
         // 订阅类型顺带补全。
         assert_eq!(plan.as_deref(), Some("team"));
     }
@@ -829,6 +913,7 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 usage_json TEXT,
                 usage_updated_at TEXT,
+                next_refresh_at TEXT,
                 chatgpt_plan_type TEXT
             );",
         )
@@ -851,7 +936,7 @@ mod tests {
             window_minutes: Some(300),
             resets_at: Some(1787726207),
             secondary: Some(AccountUsageWindow {
-                used_percent: 15.0,
+                used_percent: Some(15.0),
                 window_minutes: Some(10_080),
                 resets_at: Some(1788313007),
             }),
@@ -892,7 +977,7 @@ mod tests {
         let current = AccountUsage {
             request_started_at: None,
             primary: Some(AccountUsageWindow {
-                used_percent: 30.0,
+                used_percent: Some(30.0),
                 window_minutes: Some(300),
                 resets_at: Some(18000),
             }),
@@ -903,7 +988,7 @@ mod tests {
         persist_account_usage(&conn, "a", "fixture-token", &current).unwrap();
         let stale = AccountUsage {
             primary: Some(AccountUsageWindow {
-                used_percent: 20.0,
+                used_percent: Some(20.0),
                 ..current.primary.clone().unwrap()
             }),
             synced_at: "1970-01-01T00:20:00Z".to_string(),
