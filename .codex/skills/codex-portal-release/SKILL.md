@@ -20,6 +20,10 @@ Treat saved `auth.json` content, tokens, account email addresses, and the local 
 
 Outside an explicitly authorized release, do not create or switch branches, commit, push, tag, or open a pull request unless the user asks for that Git operation. During a release, perform the necessary Git operations under the release workflow below.
 
+### Commit Scope
+
+Unless the user explicitly requests a limited commit, every authorized commit includes all current workspace changes: tracked modifications and deletions, plus non-ignored untracked files. Inspect the full diff, then use `git add -A` from the repository root. Do not limit the commit to the current task, files edited by Codex, or changes made during the current session. Preserve existing file contents when including other work; inclusion does not authorize unrelated rewrites. This full-workspace default was adopted from the user's explicit correction on 2026-09-10.
+
 ### Branch Naming
 
 When branch creation is authorized, name the branch after the current date in the session's timezone: `YYYY-MM-DD` (for example, `2026-09-08`). If that name already exists locally or in known remote refs, use the first available suffix starting at `-2`, then `-3`, and so on: `2026-09-08-2`, `2026-09-08-3`.
@@ -66,7 +70,7 @@ A version bump is development work only. It never authorizes a release.
 
 Publish only when the user explicitly asks to **发布版本** or gives another unmistakable instruction to publish the current application version. Do not infer release authorization from a version number, completed implementation, approval of the code, or a request to prepare release files.
 
-An explicit release request, including **发布吧**, authorizes committing the intended release changes, getting them onto `main`, pushing `main`, and running the publishing workflow. Proceed without a separate Git commit, push, or publication confirmation. Preserve unrelated uncommitted work and honor any narrower current instruction, such as preparing files only or not pushing. This authorization convention was adopted from the user's explicit correction on 2026-09-09.
+An explicit release request, including **发布吧**, authorizes committing all workspace changes under Commit Scope, getting them onto `main`, pushing `main`, and running the publishing workflow. Proceed without a separate Git commit, push, or publication confirmation. Honor any narrower current instruction, such as committing selected files, preparing files only, or not pushing. This authorization convention was adopted from the user's explicit correction on 2026-09-09; commit scope follows the 2026-09-10 correction above.
 
 Without explicit release authorization, do not:
 
@@ -81,7 +85,7 @@ Without explicit release authorization, do not:
 After explicit release authorization:
 
 1. Verify that the five version sources match and that the target version is not already released.
-2. Commit the intended release changes, integrate them into `main` if needed, and push `main`. Include explicitly requested project-skill updates and preserve unrelated local work. Use the release request's Git authorization without asking again; only pause for a remaining blocker or an action outside that scope.
+2. Commit all workspace changes under Commit Scope, including existing work and project-skill updates, integrate them into `main` if needed, and push `main`. Use the release request's Git authorization without asking again; only pause for a remaining blocker or an action outside that scope.
 3. Prepare concise release notes from the actual diff and obtain the user's wording when their choice would materially affect the public notes.
 4. Dispatch the manual workflow on `main`:
    ```bash

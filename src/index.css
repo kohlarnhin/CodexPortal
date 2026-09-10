@@ -197,3 +197,44 @@ input, textarea, code {
   }
 }
 
+/* Logo dynamic sliding animations along C */
+@keyframes portal-dot-slide {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(270deg);
+  }
+}
+
+@keyframes portal-strip-slide {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(-210deg);
+  }
+}
+
+.portal-logo-dot {
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+  animation: portal-dot-slide 4.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+  will-change: transform;
+}
+
+.portal-logo-strip {
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+  animation: portal-strip-slide 4.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-logo-dot,
+  .portal-logo-strip {
+    animation: none;
+  }
+}
+
+
