@@ -82,7 +82,7 @@ Without explicit release authorization, do not:
 
 ### Release Shorthand
 
-The user may simply say **发布** or **发布了**. Treat this as authorization for the complete release workflow: select the next version, synchronize all version sources, commit all workspace changes, merge into `main`, push, dispatch GitHub Actions, and monitor publication through completion. Do not ask for these permissions again. This standing instruction was adopted on 2026-09-20.
+The user may simply say **发布** or **发布了**. Treat this as authorization to select the next version, synchronize all version sources, commit all workspace changes, merge into `main`, push, and dispatch GitHub Actions. Stop after push and dispatch succeed; do not monitor the build. Do not ask for these permissions again. This standing instruction was adopted on 2026-09-20.
 
 When no version is specified, default to the latest published stable version plus exactly one patch increment. If the current work has already prepared an explicit unreleased version, publish that version without incrementing it again. Retrying a failed release also keeps the prepared version. Always check existing releases before selecting the target and respect any explicit version or narrower scope in the current request.
 
@@ -97,6 +97,6 @@ After explicit release authorization:
    ```bash
    gh workflow run release.yml --ref main -f release_notes='<release notes>'
    ```
-5. Monitor the corresponding run through completion with `gh run list` and `gh run watch --exit-status`.
+5. Stop after the push and workflow dispatch succeed. Do not query or poll Actions status, watch logs, or wait for publication unless the user explicitly asks. The user receives build-failure emails and wants to avoid consuming quota on repeated checks. If a local watcher is already running when this instruction applies, stop only that watcher, leaving the remote workflow running. This preference was adopted on 2026-09-20.
 6. Perform all building, packaging, signing, and release uploads in GitHub Actions. Do not build local release artifacts. Let the workflow build both macOS architectures and the Windows portable executable, keep intermediate files in Actions artifacts, and create `v<version>` with a published GitHub Release only after all builds succeed. Mark the release as latest after every asset has uploaded. Do not create GitHub Release drafts or a competing manual tag or release. This project preference was explicitly adopted on 2026-09-09.
-7. Report the version, commit, workflow result, tag, and release URL.
+7. Report the version, commit, successful push to `main`, and successful workflow dispatch. Link the workflow page or a run URL already available without further status queries. Do not claim the build or publication succeeded when its result has not been checked. Later rule-only updates do not require dispatching the same release again.
