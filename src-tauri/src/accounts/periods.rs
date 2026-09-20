@@ -101,7 +101,7 @@ pub(crate) fn ensure_account_period_on_startup(state: &AppState) {
 }
 
 /// 账号活跃时段（解析会话时用于把剩余额度归属到账号）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActivePeriod {
     pub(crate) account_id: String,
     pub(crate) started_millis: i64,

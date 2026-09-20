@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { DailyTokenUsage, ModelTokenUsage, ProjectTokenUsage } from '../types/session';
 import { formatTokens } from '../utils/format';
 import { calcModelCost, formatCost } from '../utils/modelPricing';
@@ -168,31 +169,50 @@ const DistributionItem: React.FC<DistributionItemProps> = ({
 const TokenUsagePage: React.FC = () => {
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
+  const [allDates, setAllDates] = useState(false);
   const [days, setDays] = useState<DailyTokenUsage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async (start: string, end: string) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await invoke<DailyTokenUsage[]>('get_token_usage', {
-        startDate: start,
-        endDate: end,
-      });
-      setDays(data);
-    } catch (err: any) {
-      console.error('Failed to load token usage:', err);
-      setError(err?.toString() || 'Failed to load token usage');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const queryStartDate = allDates ? null : startDate;
+  const queryEndDate = allDates ? null : endDate;
 
   useEffect(() => {
-    void load(startDate, endDate);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
+    let disposed = false;
+    let requestId = 0;
+    let unlisten: (() => void) | undefined;
+    const load = async () => {
+      if (disposed) return;
+      const currentRequest = ++requestId;
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await invoke<DailyTokenUsage[]>('get_token_usage', {
+          startDate: queryStartDate,
+          endDate: queryEndDate,
+        });
+        if (!disposed && currentRequest === requestId) setDays(data);
+      } catch (err: any) {
+        if (!disposed && currentRequest === requestId) {
+          console.error('Failed to load token usage:', err);
+          setDays([]);
+          setError(err?.toString() || 'Failed to load token usage');
+        }
+      } finally {
+        if (!disposed && currentRequest === requestId) setIsLoading(false);
+      }
+    };
+
+    void listen('session-sync-completed', () => void load()).then(stop => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch(err => console.error('Failed to listen for session sync:', err));
+    void load();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queryStartDate, queryEndDate]);
 
   const totals = useMemo(
     () =>
@@ -254,7 +274,7 @@ const TokenUsagePage: React.FC = () => {
   const maxProjectTokens = mergedProjects[0]?.totalTokens ?? 0;
   const maxModelTokens = mergedModels[0]?.totalTokens ?? 0;
 
-  // 消耗金额：按内置 API 单价实时计算（任意日期范围，数据来自同步入库的 token 记录）。
+  // 消耗金额：按内置 API 单价及模型倍率实时计算，覆盖所选范围内的历史记录。
   const totalCost = useMemo(() => {
     let cost = 0;
     for (const model of mergedModels) {
@@ -270,17 +290,19 @@ const TokenUsagePage: React.FC = () => {
   }, [mergedModels]);
 
   const setRange = (start: string, end: string) => {
+    setAllDates(false);
     setStartDate(start);
     setEndDate(end);
   };
 
   const activeQuickRange = useMemo(() => {
+    if (allDates) return 'all';
     const today = todayStr();
     if (startDate === today && endDate === today) return 'today';
     if (startDate === daysAgoStr(6) && endDate === today) return '7days';
     if (startDate === daysAgoStr(29) && endDate === today) return '30days';
     return null;
-  }, [startDate, endDate]);
+  }, [startDate, endDate, allDates]);
 
   return (
     <div className="page-layout pt-4">
@@ -294,20 +316,23 @@ const TokenUsagePage: React.FC = () => {
           <DateRangePicker
             startDate={startDate}
             endDate={endDate}
+            allDates={allDates}
             onChange={(start, end) => setRange(start, end)}
           />
-          <SegmentedControl<'today' | '7days' | '30days'>
+          <SegmentedControl<'today' | '7days' | '30days' | 'all'>
             size="sm"
             value={activeQuickRange}
             onChange={key => {
               if (key === 'today') setRange(todayStr(), todayStr());
               else if (key === '7days') setRange(daysAgoStr(6), todayStr());
               else if (key === '30days') setRange(daysAgoStr(29), todayStr());
+              else if (key === 'all') setAllDates(true);
             }}
             options={[
               { id: 'today', label: '今天' },
               { id: '7days', label: '近 7 天' },
               { id: '30days', label: '近 30 天' },
+              { id: 'all', label: '全部' },
             ]}
           />
         </div>
@@ -385,7 +410,7 @@ const TokenUsagePage: React.FC = () => {
                 label="预估费用"
                 value={formatCost(totalCost)}
                 details={[
-                  { label: '计费说明', value: '标准牌价估算' },
+                  { label: '计费说明', value: 'API 标准价，Astra ×2' },
                   { label: '涉及模型', value: `${mergedModels.length} 个模型` },
                 ]}
                 icon={
@@ -474,4 +499,3 @@ const TokenUsagePage: React.FC = () => {
 };
 
 export default TokenUsagePage;
-

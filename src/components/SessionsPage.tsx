@@ -5,7 +5,6 @@ import { useSessions } from '../hooks/useSessions';
 import { SessionProject, SessionRecord } from '../types/session';
 import { formatDateTime, formatRelativeTime } from '../utils/time';
 import { formatTokens } from '../utils/format';
-import { copyText } from '../utils/clipboard';
 import ProjectCard from './sessions/ProjectCard';
 import SessionRow from './sessions/SessionRow';
 import SessionDetailPanel from './sessions/SessionDetailPanel';
@@ -48,11 +47,6 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
     setView({ type: 'projects' });
   };
 
-  const handleCopyResume = async (session: SessionRecord) => {
-    const ok = await copyText(`codex resume ${session.id}`);
-    if (!ok) alert('复制失败，请手动复制');
-  };
-
   const handleRevealInFinder = async (session: SessionRecord) => {
     try {
       await revealItemInDir(session.filePath);
@@ -62,6 +56,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
   };
 
   const isSyncing = sessions.isSyncing || sessions.syncProgress !== null;
+  const currentProjectPath = view.type === 'project' ? view.project.path : null;
 
   return (
     <div
@@ -168,7 +163,6 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
           <SessionListView
             refreshKey={sessions.syncResult?.syncedAt ?? null}
             onOpenDetail={setDetailSession}
-            onCopyResume={handleCopyResume}
             onRevealInFinder={handleRevealInFinder}
           />
         ) : view.type === 'projects' ? (
@@ -186,12 +180,11 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
         ) : (
           <ProjectSessionsView
             key={view.project.path}
-            project={view.project}
+            project={sessions.projects.find(project => project.path === currentProjectPath) ?? view.project}
             sessions={sessions.sessions}
             isLoading={sessions.isLoadingSessions}
             onBack={goBack}
             onOpenDetail={setDetailSession}
-            onCopyResume={handleCopyResume}
             onRevealInFinder={handleRevealInFinder}
           />
         )}
@@ -202,7 +195,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
           key={detailSession.id}
           session={detailSession}
           loadContent={sessions.loadSessionContent}
-          onCopyResume={handleCopyResume}
+          syncRevision={sessions.syncResult?.syncedAt}
           onRevealInFinder={handleRevealInFinder}
           onClose={() => setDetailSession(null)}
         />,
@@ -302,7 +295,6 @@ interface ProjectSessionsViewProps {
   isLoading: boolean;
   onBack: () => void;
   onOpenDetail: (session: SessionRecord) => void;
-  onCopyResume: (session: SessionRecord) => void;
   onRevealInFinder: (session: SessionRecord) => void;
 }
 
@@ -312,7 +304,6 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
   isLoading,
   onBack,
   onOpenDetail,
-  onCopyResume,
   onRevealInFinder,
 }) => {
   const [search, setSearch] = useState('');
@@ -324,44 +315,30 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
 
   return (
     <div>
-      {/* 返回 + 项目信息 */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1.5 text-[13px] font-medium text-[#666666] hover:text-black transition-colors mb-4"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        返回项目列表
-      </button>
-
-      <div className="bg-white rounded-xl border border-[#EAEAEA] px-5 py-4 mb-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="w-9 h-9 shrink-0 rounded-lg bg-black text-white flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[16px] font-semibold text-black tracking-tight" title={project.name}>{project.name}</h3>
-            <p className="text-[11px] font-mono text-[#888888] truncate">{project.path}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 ml-auto">
-            <span className="rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2.5 py-0.5 text-[11px] font-medium text-[#666666]">
-              {sessions.length} 个会话
-              {project.totalTokens > 0 && (
-                <> · {formatTokens(project.totalTokens)} tokens</>
-              )}
-            </span>
-            <span className="rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2.5 py-0.5 text-[11px] font-medium text-[#666666]">
-              最近活跃 {formatRelativeTime(project.lastSessionAt)}
-            </span>
-          </div>
+      <div className="mb-3 space-y-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="返回项目列表"
+            title="返回项目列表"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#666666] transition-colors hover:bg-black/5 hover:text-black focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-black/30"
+          >
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+          </button>
+          <h3 className="max-w-[45%] shrink-0 truncate text-[14px] font-semibold tracking-tight text-black" title={project.name}>{project.name}</h3>
+          <span aria-hidden="true" className="text-[12px] text-[#D0D0D0]">/</span>
+          <p className="min-w-0 flex-1 truncate font-mono text-[10px] text-[#999999]" title={project.path}>{project.path}</p>
         </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <span role="status" className="text-[11px] text-[#888888]">
-          {isLoading ? '正在加载…' : keyword ? `${filteredSessions.length} 个匹配会话 / 共 ${sessions.length} 个` : `共 ${sessions.length} 个会话`}
-        </span>
-        <div className="ml-auto flex w-full @min-[520px]/page:w-72">
-          <SearchInput value={search} onChange={setSearch} label="搜索项目内会话 ID" placeholder="搜索会话 ID，支持部分匹配…" />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] text-[#888888]">
+          <span role="status">
+            {isLoading ? '正在加载…' : keyword ? `${filteredSessions.length} 个匹配 / 共 ${sessions.length} 个会话` : `${sessions.length} 个会话`}
+          </span>
+          {project.totalTokens > 0 && <span>{formatTokens(project.totalTokens)} tokens</span>}
+          <span title={formatDateTime(project.lastSessionAt)}>最近活跃 {formatRelativeTime(project.lastSessionAt)}</span>
+          <div className="ml-auto flex w-full @min-[520px]/page:w-60">
+            <SearchInput value={search} onChange={setSearch} label="搜索项目内会话 ID" placeholder="搜索会话 ID…" />
+          </div>
         </div>
       </div>
 
@@ -383,7 +360,6 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
               session={session}
               search={keyword}
               onOpenDetail={onOpenDetail}
-              onCopyResume={onCopyResume}
               onRevealInFinder={onRevealInFinder}
             />
           ))}

@@ -2,6 +2,22 @@ use rusqlite::params;
 use rusqlite::Connection;
 use rusqlite::Result as SqlResult;
 use std::collections::HashSet;
+use tauri::Manager;
+
+/// 数据库查询和锁等待都放入阻塞线程池，避免阻塞窗口事件循环或异步运行时。
+pub(crate) async fn with_db<T, F>(app: tauri::AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<crate::state::AppState>();
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        operation(&db)
+    })
+    .await
+    .map_err(|error| format!("数据库任务失败：{error}"))?
+}
 
 pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
     conn.execute(

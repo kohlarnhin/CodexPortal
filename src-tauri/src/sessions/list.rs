@@ -1,8 +1,6 @@
 use super::{session_from_row, SessionRecord};
-use crate::state::AppState;
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use tauri::State;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SessionListPage {
@@ -12,20 +10,22 @@ pub(crate) struct SessionListPage {
 
 /// 跨项目按会话 ID 片段搜索，只分页读取元信息，正文仍按需加载。
 #[tauri::command]
-pub(crate) fn list_sessions(
-    state: State<'_, AppState>,
+pub(crate) async fn list_sessions(
+    app: tauri::AppHandle,
     search: Option<String>,
     offset: Option<u32>,
     limit: Option<u32>,
 ) -> Result<SessionListPage, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    query_sessions(
-        &db,
-        search.as_deref().unwrap_or_default(),
-        offset.unwrap_or(0),
-        limit.unwrap_or(50),
-    )
-    .map_err(|e| e.to_string())
+    crate::db::with_db(app, move |db| {
+        query_sessions(
+            db,
+            search.as_deref().unwrap_or_default(),
+            offset.unwrap_or(0),
+            limit.unwrap_or(50),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 fn query_sessions(

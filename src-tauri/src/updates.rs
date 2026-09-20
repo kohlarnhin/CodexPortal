@@ -30,8 +30,11 @@ pub(crate) async fn install_portable_update(
 
 /// 已提醒过用户的新版本号（用户关闭更新弹窗后记录，用于避免重复打扰）。
 #[tauri::command]
-pub(crate) fn get_pending_update(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+pub(crate) async fn get_pending_update(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    crate::db::with_db(app, read_pending_update).await
+}
+
+fn read_pending_update(db: &rusqlite::Connection) -> Result<Option<String>, String> {
     let version: Option<String> = db
         .query_row(
             "SELECT content FROM configs WHERE key = 'updater_pending_version'",

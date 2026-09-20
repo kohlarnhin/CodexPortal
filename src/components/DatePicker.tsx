@@ -4,6 +4,7 @@ import { cn } from '../lib/utils';
 export interface DateRangePickerProps {
   startDate: string;
   endDate: string;
+  allDates?: boolean;
   onChange: (start: string, end: string) => void;
   className?: string;
 }
@@ -23,6 +24,7 @@ function parseValue(value: string): Date {
 export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   startDate,
   endDate,
+  allDates = false,
   onChange,
   className,
 }) => {
@@ -72,6 +74,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   };
 
   const isDisabled = (dateStr: string) => {
+    if (allDates) return false;
     if (activePicker === 'start') return dateStr > endDate;
     if (activePicker === 'end') return dateStr < startDate;
     return false;
@@ -117,7 +120,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           )}
           title="选择起始日期"
         >
-          {startDate}
+          {allDates ? '不限起始' : startDate}
         </button>
 
         <span className="text-neutral-300 text-[11px] select-none font-medium px-1">—</span>
@@ -133,7 +136,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           )}
           title="选择结束日期"
         >
-          {endDate}
+          {allDates ? '不限结束' : endDate}
         </button>
       </div>
 
@@ -179,9 +182,9 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                 if (dateStr === null) {
                   return <span key={`empty-${index}`} className="h-7" />;
                 }
-                const isSelected = dateStr === currentValue;
+                const isSelected = !allDates && dateStr === currentValue;
                 const disabled = isDisabled(dateStr);
-                const inRange = dateStr >= startDate && dateStr <= endDate;
+                const inRange = !allDates && dateStr >= startDate && dateStr <= endDate;
 
                 return (
                   <button
@@ -189,7 +192,9 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                     type="button"
                     disabled={disabled}
                     onClick={() => {
-                      if (activePicker === 'start') {
+                      if (allDates) {
+                        onChange(dateStr, dateStr);
+                      } else if (activePicker === 'start') {
                         onChange(dateStr, endDate);
                       } else {
                         onChange(startDate, dateStr);

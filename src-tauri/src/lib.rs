@@ -8,7 +8,9 @@ mod sessions;
 mod skills;
 mod state;
 mod time;
+mod tray;
 mod updates;
+mod windows;
 
 #[cfg(test)]
 mod test_support;
@@ -18,34 +20,12 @@ use crate::accounts::scheduler::start_usage_scheduler;
 use crate::db::init_db;
 use crate::sessions::sync::start_session_sync_scheduler;
 use crate::state::{AppState, OAuthSession};
+use crate::windows::show_main_window;
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::fs;
 use std::sync::Mutex;
 use tauri::Manager;
-
-#[cfg(desktop)]
-fn show_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
-    #[cfg(target_os = "macos")]
-    let _ = app_handle.show();
-
-    if let Some(window) = app_handle.get_webview_window("main") {
-        // 启动和从 Dock 重新打开时，恢复适合展示两个账号的默认窗口尺寸。
-        let _ = window.unmaximize();
-        if let Some(config) = app_handle
-            .config()
-            .app
-            .windows
-            .iter()
-            .find(|config| config.label == window.label())
-        {
-            let _ = window.set_size(tauri::LogicalSize::new(config.width, config.height));
-        }
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -56,14 +36,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .on_window_event(|_window, _event| {
-            // macOS 可通过 Dock 恢复窗口；Windows 使用原生关闭退出行为。
-            #[cfg(target_os = "macos")]
-            if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
-                let _ = _window.hide();
-                api.prevent_close();
-            }
-        })
+        .on_window_event(windows::handle_window_event)
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -92,6 +65,7 @@ pub fn run() {
                 syncing_sessions: Mutex::new(false),
             });
 
+            tray::start(app.handle().clone())?;
             start_usage_scheduler(app.handle().clone());
             start_session_sync_scheduler(app.handle().clone());
 
@@ -122,6 +96,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             accounts::get_accounts,
+            tray::get_tray_settings,
+            tray::set_tray_enabled,
+            tray::set_tray_email_masking,
+            tray::get_tray_icon_state,
+            tray::set_tray_icon,
             auth::validate_personal_token,
             auth::exchange_refresh_token,
             accounts::save_rt_account,

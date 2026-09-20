@@ -4,12 +4,13 @@ import pricingData from './model-pricing.json?raw';
  * OpenAI 官方 API 标准价（每 1M tokens，USD，短上下文）。
  * 来源：https://developers.openai.com/api/docs/pricing
  * 核对日期：2026-09-05。推理 tokens 已包含在 output 中，不重复计费。
- * 会话汇总缺少逐请求上下文长度、服务档位和缓存写入量，仅按标准短上下文估算。
+ * 会话汇总缺少逐请求上下文长度、服务档位和缓存写入量，按标准短上下文估算后应用模型倍率。
  */
 interface ModelPricing {
   inputPer1M: number;
   cachedInputPer1M: number;
   outputPer1M: number;
+  costMultiplier?: number;
 }
 
 const MODEL_PRICING: Record<string, ModelPricing> = JSON.parse(pricingData);
@@ -40,12 +41,13 @@ export function calcModelCost(model: string, tokens: TokenCostInput): number | n
   if (!pricing) return null;
   // input 累计值已包含缓存命中部分：非缓存部分按全价、缓存部分按缓存价，避免重复计费。
   const uncachedInput = Math.max(0, tokens.input - tokens.cachedInput);
-  return (
+  const apiCost = (
     (uncachedInput * pricing.inputPer1M +
       tokens.cachedInput * pricing.cachedInputPer1M +
       tokens.output * pricing.outputPer1M) /
     1_000_000
   );
+  return apiCost * (pricing.costMultiplier ?? 1);
 }
 
 /** 金额格式化：两位小数，大额取整。 */

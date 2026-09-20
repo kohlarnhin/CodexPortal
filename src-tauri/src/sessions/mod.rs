@@ -6,10 +6,8 @@ pub(crate) mod usage;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use crate::state::AppState;
 use rusqlite::params;
 use serde::Serialize;
-use tauri::State;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SessionProject {
@@ -100,6 +98,8 @@ pub(crate) struct SessionSyncResult {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SessionSyncStatus {
+    #[serde(rename = "isSyncing")]
+    pub(crate) is_syncing: bool,
     #[serde(rename = "lastSyncedAt")]
     pub(crate) last_synced_at: Option<String>,
     #[serde(rename = "nextSyncAt")]
@@ -111,10 +111,13 @@ pub(crate) struct SessionSyncStatus {
 }
 
 #[tauri::command]
-pub(crate) fn list_session_projects(
-    state: State<'_, AppState>,
+pub(crate) async fn list_session_projects(
+    app: tauri::AppHandle,
 ) -> Result<Vec<SessionProject>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    crate::db::with_db(app, query_session_projects).await
+}
+
+fn query_session_projects(db: &rusqlite::Connection) -> Result<Vec<SessionProject>, String> {
     let mut stmt = db
         .prepare(
             "SELECT path, name, session_count, total_tokens, first_session_at, last_session_at FROM session_projects ORDER BY last_session_at DESC",
@@ -140,11 +143,17 @@ pub(crate) fn list_session_projects(
 }
 
 #[tauri::command]
-pub(crate) fn list_project_sessions(
-    state: State<'_, AppState>,
+pub(crate) async fn list_project_sessions(
+    app: tauri::AppHandle,
     project_path: String,
 ) -> Result<Vec<SessionRecord>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    crate::db::with_db(app, move |db| query_project_sessions(db, &project_path)).await
+}
+
+fn query_project_sessions(
+    db: &rusqlite::Connection,
+    project_path: &str,
+) -> Result<Vec<SessionRecord>, String> {
     let mut stmt = db
         .prepare(
             "SELECT id, project_path, file_path, title, started_at, last_activity_at, model_provider, cli_version, file_size, message_count, model, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens FROM sessions WHERE project_path = ?1 ORDER BY started_at DESC",
@@ -162,15 +171,17 @@ pub(crate) fn list_project_sessions(
 
 /// 读取单个会话的完整内容（JSONL 原文，可能较大，按需加载）。
 #[tauri::command]
-pub(crate) fn get_session_content(
-    state: State<'_, AppState>,
+pub(crate) async fn get_session_content(
+    app: tauri::AppHandle,
     id: String,
 ) -> Result<String, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.query_row(
-        "SELECT content FROM sessions WHERE id = ?1",
-        params![id],
-        |row| row.get::<_, String>(0),
-    )
-    .map_err(|_| "会话不存在".to_string())
+    crate::db::with_db(app, move |db| {
+        db.query_row(
+            "SELECT content FROM sessions WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| "会话不存在".to_string())
+    })
+    .await
 }

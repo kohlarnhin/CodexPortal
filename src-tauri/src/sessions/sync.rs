@@ -19,10 +19,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tauri::Manager;
-use tauri::State;
 
 // ==================== Sessions（~/.codex/sessions）管理 ====================
 
@@ -121,8 +120,8 @@ fn scan_session_files() -> Result<Vec<(PathBuf, i64, i64)>, String> {
 
 /// 执行一次同步（全量或增量）：扫描磁盘 → 比对入库 → 清理已删除 → 重建项目聚合。
 ///
-/// 全程在后台线程执行（异步）；数据库锁按批次持有（每批 50 个文件提交一次并释放锁），
-/// 保证首次全量导入或大量新增期间，账号额度等其它查询命令不被长时间阻塞。
+/// 文件读取和 JSON 解析在数据库锁外执行；每个会话独立事务写入并释放锁，
+/// 避免首次全量导入或大文件解析期间阻塞其它页面查询。
 /// `force_full` 为 true 时（仅手动同步 + 规则版本升级触发），对已入库会话也重新解析
 /// 元数据（标题等），但不重写 content，避免 1.2GB 内容反复写入。
 /// 以 `syncing_sessions` 标志防重入；进度经 `session-sync-progress` 事件推送。
@@ -152,17 +151,12 @@ fn sync_sessions_inner(
         let now = Utc::now().to_rfc3339();
 
         let state = app.state::<AppState>();
-        let mut db = state.db.lock().map_err(|e| e.to_string())?;
-
-        // 确保当前活跃账号有进行中时段，供新会话返回的剩余额度匹配对应账号。
-        ensure_active_account_period(&db).map_err(|e| e.to_string())?;
-
-        // 账号活跃时段（会话返回的剩余额度按账号归属用）。
-        let mut periods: Vec<ActivePeriod> = load_active_periods(&db);
-
         // 库里已有的文件 → (mtime, size)，未变化则跳过（增量同步的核心）。
         let mut existing: HashMap<String, (i64, i64)> = HashMap::new();
         {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            // 确保当前活跃账号有进行中时段，供会话返回的剩余额度匹配对应账号。
+            ensure_active_account_period(&db).map_err(|e| e.to_string())?;
             let mut stmt = db
                 .prepare("SELECT file_path, mtime_secs, file_size FROM sessions")
                 .map_err(|e| e.to_string())?;
@@ -180,18 +174,15 @@ fn sync_sessions_inner(
             }
         }
 
-        // 分批提交：每批完成后释放数据库锁片刻，让其它查询命令穿插执行，避免界面卡顿。
-        const SYNC_BATCH_SIZE: usize = 50;
-        let mut tx = db.transaction().map_err(|e| e.to_string())?;
+        let mut last_progress_at = Instant::now();
         for (index, (path, mtime_secs, file_size)) in files.iter().enumerate() {
-            if index > 0 && index % SYNC_BATCH_SIZE == 0 {
-                tx.commit().map_err(|e| e.to_string())?;
-                drop(db);
-                thread::sleep(Duration::from_millis(10));
-                db = state.db.lock().map_err(|e| e.to_string())?;
-                // 释放锁期间可能发生了账号切换：重载时段，避免用过期归属。
-                periods = load_active_periods(&db);
-                tx = db.transaction().map_err(|e| e.to_string())?;
+            // 跳过和读取失败也计入进度；限制事件频率，避免大量文件让前端反复渲染。
+            if index == 0 || last_progress_at.elapsed() >= Duration::from_millis(100) {
+                let _ = app.emit(
+                    "session-sync-progress",
+                    SessionSyncProgress { done: index, total },
+                );
+                last_progress_at = Instant::now();
             }
 
             let key = path.to_string_lossy().to_string();
@@ -221,9 +212,26 @@ fn sync_sessions_inner(
             if meta.project_path.is_empty() {
                 meta.project_path = extract_cwd_from_content(&content);
             }
-            let parsed = extract_session_summary(&lines, &periods);
+            let mut periods: Vec<ActivePeriod> = {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                load_active_periods(&db)
+            };
+            let mut parsed = extract_session_summary(&lines, &periods);
             let last_activity_at =
                 DateTime::from_timestamp(*mtime_secs, 0).map(|time| time.to_rfc3339());
+
+            let mut db = loop {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let current_periods = load_active_periods(&db);
+                if current_periods == periods {
+                    break db;
+                }
+                // 解析期间可能切换账号；释放锁后按最新时段重解析，保留按轮次归属语义。
+                drop(db);
+                periods = current_periods;
+                parsed = extract_session_summary(&lines, &periods);
+            };
+            let tx = db.transaction().map_err(|e| e.to_string())?;
 
             // 该会话按天用量：先删旧行再重建（会话 resume 增长后需重算当天分布）。
             tx.execute(
@@ -304,18 +312,13 @@ fn sync_sessions_inner(
                     updated += 1;
                 }
             }
-            if index % 10 == 0 {
-                let _ = app.emit(
-                    "session-sync-progress",
-                    SessionSyncProgress {
-                        done: index + 1,
-                        total,
-                    },
-                );
-            }
+            tx.commit().map_err(|e| e.to_string())?;
+            drop(db);
         }
-        tx.commit().map_err(|e| e.to_string())?;
-        drop(db);
+        let _ = app.emit(
+            "session-sync-progress",
+            SessionSyncProgress { done: total, total },
+        );
 
         // 删除磁盘上已不存在的会话 + 重建项目聚合（数据量小，短暂持锁即可）。
         let mut db = state.db.lock().map_err(|e| e.to_string())?;
@@ -469,6 +472,9 @@ fn sync_sessions_inner(
             *syncing = false;
         };
     }
+    if let Err(error) = &result {
+        let _ = app.emit("session-sync-failed", error);
+    }
     result
 }
 
@@ -555,28 +561,37 @@ pub(crate) fn start_session_sync_scheduler(app: tauri::AppHandle) {
 /// 入库规则版本升级时自动附带一次全量重解析（元数据）；版本一致时与自动同步一样是纯增量。
 #[tauri::command]
 pub(crate) async fn sync_sessions(app: tauri::AppHandle) -> Result<SessionSyncResult, String> {
-    let force_full = {
-        let state = app.state::<AppState>();
-        let locked = state.db.lock();
-        match locked {
-            Ok(db) => sessions_schema_needs_reparse(&db),
-            Err(_) => true,
-        }
-    };
     let thread_app = app.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || sync_sessions_inner(&thread_app, force_full))
-            .await
-            .map_err(|e| format!("会话同步任务失败：{e}"))??;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let force_full = {
+            let state = thread_app.state::<AppState>();
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            sessions_schema_needs_reparse(&db)
+        };
+        sync_sessions_inner(&thread_app, force_full)
+    })
+    .await
+    .map_err(|e| format!("会话同步任务失败：{e}"))??;
     let _ = app.emit("session-sync-completed", &result);
     Ok(result)
 }
 
 #[tauri::command]
-pub(crate) fn get_session_sync_status(
-    state: State<'_, AppState>,
+pub(crate) async fn get_session_sync_status(
+    app: tauri::AppHandle,
 ) -> Result<SessionSyncStatus, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    crate::db::with_db(app.clone(), move |db| {
+        let state = app.state::<AppState>();
+        let is_syncing = *state.syncing_sessions.lock().map_err(|e| e.to_string())?;
+        query_session_sync_status(db, is_syncing)
+    })
+    .await
+}
+
+fn query_session_sync_status(
+    db: &Connection,
+    is_syncing: bool,
+) -> Result<SessionSyncStatus, String> {
     let last_synced_at: Option<String> = db
         .query_row(
             "SELECT content FROM configs WHERE key = 'sessions_last_synced_at'",
@@ -600,6 +615,7 @@ pub(crate) fn get_session_sync_status(
         })
         .unwrap_or(0);
     Ok(SessionSyncStatus {
+        is_syncing,
         last_synced_at,
         next_sync_at,
         total_projects,

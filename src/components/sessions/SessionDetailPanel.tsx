@@ -1,36 +1,17 @@
-import React, { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { SessionPreviewMessage, SessionRecord } from '../../types/session';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { SessionEntry, SessionRecord } from '../../types/session';
 import { formatDateTime, formatFileSize, formatRelativeTime } from '../../utils/time';
 import { formatTokens } from '../../utils/format';
-import { parseSessionPreview } from '../../utils/sessionContent';
-import { findTextMatches, TextMatch } from '../../utils/sessionSearch';
-import HighlightedText from './HighlightedText';
+import { findTextMatches } from '../../utils/sessionSearch';
+import SessionEntryView from './SessionEntryView';
 import SearchInput from './SearchInput';
-
-const SessionMessage = memo(function SessionMessage({
-  message, matches, firstMatchIndex, activeMatchIndex,
-}: {
-  message: SessionPreviewMessage;
-  matches: TextMatch[];
-  firstMatchIndex: number;
-  activeMatchIndex?: number;
-}) {
-  return (
-    <article className="grid min-w-0 gap-2 border-b border-[#EAEAEA] py-5 last:border-b-0 @min-[640px]/session-detail:grid-cols-[56px_minmax(0,1fr)] @min-[640px]/session-detail:gap-4">
-      <p className={`pt-0.5 text-[11px] font-semibold ${message.role === 'user' ? 'text-black' : 'text-[#777777]'}`}>
-        {message.role === 'user' ? '用户' : 'Codex'}
-      </p>
-      <p className="text-[13px] text-[#444444] leading-relaxed whitespace-pre-wrap break-words">
-        <HighlightedText text={message.text} matches={matches} firstMatchIndex={firstMatchIndex} activeMatchIndex={activeMatchIndex} />
-      </p>
-    </article>
-  );
-});
+import ToggleSwitch from '../ToggleSwitch';
+import SessionCopyMenu from './SessionCopyMenu';
 
 interface SessionDetailPanelProps {
   session: SessionRecord;
   loadContent: (id: string) => Promise<string>;
-  onCopyResume: (session: SessionRecord) => void;
+  syncRevision?: string;
   onRevealInFinder: (session: SessionRecord) => void;
   onClose: () => void;
 }
@@ -38,31 +19,42 @@ interface SessionDetailPanelProps {
 const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
   session,
   loadContent,
-  onCopyResume,
+  syncRevision,
   onRevealInFinder,
   onClose,
 }) => {
-  const [messages, setMessages] = useState<SessionPreviewMessage[]>([]);
+  const [messages, setMessages] = useState<SessionEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const loadedSessionRef = useRef<string | null>(null);
+  const lastContentRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [activeMatch, setActiveMatch] = useState(0);
   const [showInfo, setShowInfo] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const keyword = useDeferredValue(search.trim());
   const isSearching = keyword !== search.trim();
+  const visibleMessages = useMemo(
+    () => showAll ? messages : messages.filter(message => !message.defaultCollapsed),
+    [messages, showAll],
+  );
   const searchResults = useMemo(() => {
     let count = 0;
-    const items = messages.map(message => {
-      const matches = findTextMatches(message.text, keyword);
+    const items = visibleMessages.map(message => {
+      const textMatches = findTextMatches(message.text, keyword);
+      // 原文字段也可搜索；正文已命中时不重复计算同一记录的原文副本。
+      const matchSource = textMatches.length > 0 || !showAll ? 'text' as const : 'raw' as const;
+      const matches = matchSource === 'text' ? textMatches : findTextMatches(message.raw, keyword);
       const firstMatchIndex = count;
       count += matches.length;
-      return { message, matches, firstMatchIndex };
+      return { message, matches, matchSource, firstMatchIndex };
     });
     return { items, count };
-  }, [messages, keyword]);
+  }, [visibleMessages, keyword, showAll]);
   const activeMatchIndex = searchResults.count > 0 ? Math.min(activeMatch, searchResults.count - 1) : -1;
 
   const changeSearch = (value: string) => {
@@ -87,30 +79,45 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    if (activeMatchIndex < 0 || isSearching || isLoading) return;
-    contentRef.current
-      ?.querySelector<HTMLElement>(`[data-search-match="${activeMatchIndex}"]`)
-      ?.scrollIntoView({ block: 'center' });
-  }, [activeMatchIndex, searchResults, isSearching, isLoading]);
-
-  useEffect(() => {
     let cancelled = false;
+    let worker: Worker | undefined;
+    const isInitialLoad = loadedSessionRef.current !== session.id;
     (async () => {
-      setIsLoading(true);
+      setIsLoading(isInitialLoad);
+      setIsRefreshing(!isInitialLoad);
       setLoadError(null);
       try {
         const content = await loadContent(session.id);
-        if (!cancelled) setMessages(parseSessionPreview(content));
+        if (cancelled) return;
+        if (isInitialLoad || content !== lastContentRef.current) {
+          const entries = await new Promise<SessionEntry[]>((resolve, reject) => {
+            worker = new Worker(new URL('../../workers/sessionContent.worker.ts', import.meta.url), { type: 'module' });
+            worker.onmessage = (event: MessageEvent<SessionEntry[]>) => resolve(event.data);
+            worker.onerror = () => reject(new Error('解析会话内容失败'));
+            worker.onmessageerror = () => reject(new Error('读取会话解析结果失败'));
+            worker.postMessage(content);
+          });
+          if (!cancelled) {
+            setMessages(entries);
+            lastContentRef.current = content;
+            loadedSessionRef.current = session.id;
+          }
+        }
       } catch (err: any) {
         if (!cancelled) setLoadError(err?.toString() || '加载会话内容失败');
       } finally {
-        if (!cancelled) setIsLoading(false);
+        worker?.terminate();
+        if (!cancelled) {
+          setIsLoading(false);
+          setIsRefreshing(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
+      worker?.terminate();
     };
-  }, [session.id, loadContent]);
+  }, [session.id, loadContent, syncRevision]);
 
   return (
     <section
@@ -149,6 +156,18 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
             {session.title}
           </h3>
           <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+            <div className="mr-2 flex items-center gap-2" title="开启后显示工具调用、执行结果、指令等全部记录">
+              <span className="text-[11px] text-[#777777]">全量展示</span>
+              <ToggleSwitch
+                checked={showAll}
+                label="全量展示会话记录"
+                size="sm"
+                onToggle={() => {
+                  setShowAll(current => !current);
+                  setActiveMatch(0);
+                }}
+              />
+            </div>
             <button
               onClick={() => {
                 setShowInfo(value => !value);
@@ -170,12 +189,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
             >
               <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
             </button>
-            <button
-              onClick={() => onCopyResume(session)}
-              className="h-7 rounded px-2 text-[12px] font-medium text-black hover:bg-black/5"
-            >
-              复制恢复命令
-            </button>
+            <SessionCopyMenu session={session} />
           </div>
         </div>
 
@@ -185,8 +199,8 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               ref={searchInputRef}
               value={search}
               onChange={changeSearch}
-              label="搜索会话内容"
-              placeholder="搜索会话内容…"
+              label={showAll ? '搜索全部会话记录' : '搜索对话记录'}
+              placeholder={showAll ? '搜索全部记录（含折叠内容）…' : '搜索对话记录…'}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
                   event.preventDefault();
@@ -196,7 +210,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
             />
           </div>
           <span role="status" className="min-w-16 shrink-0 text-center text-[11px] tabular-nums text-[#888888]">
-            {isLoading ? '读取中…' : loadError ? '读取失败' : isSearching ? '查找中…' : !keyword ? `${messages.length} 条消息` : searchResults.count === 0 ? '无匹配' : `${activeMatchIndex + 1} / ${searchResults.count}`}
+            {isLoading ? '读取中…' : isRefreshing ? '更新中…' : loadError ? '读取失败' : isSearching ? '查找中…' : !keyword ? `${visibleMessages.length} 条${showAll ? '记录' : '消息'}` : searchResults.count === 0 ? '无匹配' : `${activeMatchIndex + 1} / ${searchResults.count}`}
           </span>
           <div className="flex shrink-0 items-center">
             <button
@@ -224,7 +238,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
         </div>
       </header>
 
-      <div ref={contentRef} tabIndex={0} aria-label="会话消息" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 outline-none @min-[640px]/session-detail:px-8">
+      <div ref={contentRef} tabIndex={0} aria-label={showAll ? '完整会话记录' : '对话记录'} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 outline-none @min-[640px]/session-detail:px-8">
         <section id="session-detail-info" hidden={!showInfo} aria-label="会话信息" className="border-b border-[#EAEAEA] py-4">
           <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-4 gap-y-2 text-[11px] leading-relaxed">
             <dt className="text-[#999999]">标题</dt>
@@ -262,26 +276,35 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
           </dl>
         </section>
 
+        {loadError && loadedSessionRef.current === session.id && (
+          <p role="status" className="py-3 text-[12px] text-[#D32F2F]">更新失败，暂时显示上次读取的内容：{loadError}</p>
+        )}
+
         {isLoading ? (
           <div className="flex items-center justify-center py-12 text-[13px] text-[#888888]">
             <svg className="animate-spin mr-2" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             正在读取会话内容…
           </div>
-        ) : loadError ? (
+        ) : loadError && loadedSessionRef.current !== session.id ? (
           <div className="py-12 text-center">
             <p className="text-[13px] text-[#D32F2F]">{loadError}</p>
           </div>
-        ) : messages.length === 0 ? (
-          <div className="py-12 text-center text-[13px] text-[#999999]">该会话暂无文本消息</div>
+        ) : visibleMessages.length === 0 ? (
+          <div className="py-12 text-center text-[13px] text-[#999999]">
+            {showAll ? '该会话暂无日志记录' : messages.length > 0 ? '暂无对话消息，开启「全量展示」可查看其他记录' : '该会话暂无对话消息'}
+          </div>
         ) : (
           <div>
-            {searchResults.items.map(({ message, matches, firstMatchIndex }, index) => (
-              <SessionMessage
-                key={index}
-                message={message}
+            {searchResults.items.map(({ message, matches, matchSource, firstMatchIndex }) => (
+              <SessionEntryView
+                key={message.id}
+                entry={message}
+                showRawRecord={showAll}
+                matchSource={matchSource}
+                keyword={keyword}
                 matches={matches}
                 firstMatchIndex={firstMatchIndex}
-                activeMatchIndex={activeMatchIndex >= firstMatchIndex && activeMatchIndex < firstMatchIndex + matches.length ? activeMatchIndex : undefined}
+                activeMatchIndex={!isSearching && activeMatchIndex >= firstMatchIndex && activeMatchIndex < firstMatchIndex + matches.length ? activeMatchIndex : undefined}
               />
             ))}
           </div>

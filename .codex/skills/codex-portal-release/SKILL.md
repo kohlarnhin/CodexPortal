@@ -80,11 +80,17 @@ Without explicit release authorization, do not:
 - push commits or branches
 - build local release artifacts
 
+### Release Shorthand
+
+The user may simply say **发布** or **发布了**. Treat this as authorization for the complete release workflow: select the next version, synchronize all version sources, commit all workspace changes, merge into `main`, push, dispatch GitHub Actions, and monitor publication through completion. Do not ask for these permissions again. This standing instruction was adopted on 2026-09-20.
+
+When no version is specified, default to the latest published stable version plus exactly one patch increment. If the current work has already prepared an explicit unreleased version, publish that version without incrementing it again. Retrying a failed release also keeps the prepared version. Always check existing releases before selecting the target and respect any explicit version or narrower scope in the current request.
+
 ## Publish an Authorized Release
 
 After explicit release authorization:
 
-1. Verify that the five version sources match and that the target version is not already released.
+1. Select the target version using Release Shorthand and any explicit user instruction, apply Update the Application Version, then verify that the five version sources match and that the target version is not already released.
 2. Commit all workspace changes under Commit Scope, including existing work and project-skill updates, integrate them into `main` if needed, and push `main`. Use the release request's Git authorization without asking again; only pause for a remaining blocker or an action outside that scope.
 3. Prepare concise release notes from the actual diff and obtain the user's wording when their choice would materially affect the public notes.
 4. Dispatch the manual workflow on `main`:

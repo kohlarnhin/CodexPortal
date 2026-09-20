@@ -1,9 +1,7 @@
 use crate::sessions::parser::project_display_name;
-use crate::state::AppState;
 use rusqlite::params;
 use serde::Serialize;
 use std::collections::HashMap;
-use tauri::State;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ProjectTokenUsage {
@@ -62,25 +60,39 @@ fn is_date_str(value: &str) -> bool {
             .all(|(index, byte)| byte.is_ascii_digit() || index == 4 || index == 7)
 }
 
-/// 查询 [start_date, end_date]（YYYY-MM-DD）范围内每天的 token 用量，
-/// 每天附带按项目与按模型的分布，供"Token 用量"页面展示。
+/// 查询指定日期范围内每天的 token 用量；省略日期边界时查询全部历史。
+/// 每天附带按项目与按模型的分布，供「Token 用量」页面展示。
 #[tauri::command]
-pub(crate) fn get_token_usage(
-    state: State<'_, AppState>,
-    start_date: String,
-    end_date: String,
+pub(crate) async fn get_token_usage(
+    app: tauri::AppHandle,
+    start_date: Option<String>,
+    end_date: Option<String>,
 ) -> Result<Vec<DailyTokenUsage>, String> {
-    if !is_date_str(&start_date) || !is_date_str(&end_date) {
+    crate::db::with_db(app, move |db| {
+        query_token_usage(db, start_date.as_deref(), end_date.as_deref())
+    })
+    .await
+}
+
+fn query_token_usage(
+    db: &rusqlite::Connection,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<Vec<DailyTokenUsage>, String> {
+    if start_date.is_some_and(|date| !is_date_str(date))
+        || end_date.is_some_and(|date| !is_date_str(date))
+    {
         return Err("日期格式无效，应为 YYYY-MM-DD".to_string());
     }
-
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    if matches!((start_date, end_date), (Some(start), Some(end)) if start > end) {
+        return Err("起始日期不能晚于结束日期".to_string());
+    }
 
     let mut days: Vec<DailyTokenUsage> = Vec::new();
     {
         let mut stmt = db
             .prepare(
-                "SELECT date, SUM(total_tokens), SUM(input_tokens), SUM(cached_input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date ORDER BY date",
+                "SELECT date, SUM(total_tokens), SUM(input_tokens), SUM(cached_input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE (?1 IS NULL OR date >= ?1) AND (?2 IS NULL OR date <= ?2) GROUP BY date ORDER BY date",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -114,7 +126,7 @@ pub(crate) fn get_token_usage(
     {
         let mut stmt = db
             .prepare(
-                "SELECT date, project_path, COUNT(DISTINCT session_id), SUM(total_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date, project_path ORDER BY date, SUM(total_tokens) DESC",
+                "SELECT date, project_path, COUNT(DISTINCT session_id), SUM(total_tokens) FROM session_daily_tokens WHERE (?1 IS NULL OR date >= ?1) AND (?2 IS NULL OR date <= ?2) GROUP BY date, project_path ORDER BY date, SUM(total_tokens) DESC",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -148,7 +160,7 @@ pub(crate) fn get_token_usage(
     {
         let mut stmt = db
             .prepare(
-                "SELECT date, COALESCE(model, '未知'), COUNT(DISTINCT session_id), SUM(total_tokens), SUM(input_tokens), SUM(cached_input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE date BETWEEN ?1 AND ?2 GROUP BY date, COALESCE(model, '未知') ORDER BY date, SUM(total_tokens) DESC",
+                "SELECT date, COALESCE(model, '未知'), COUNT(DISTINCT session_id), SUM(total_tokens), SUM(input_tokens), SUM(cached_input_tokens), SUM(output_tokens), SUM(reasoning_tokens) FROM session_daily_tokens WHERE (?1 IS NULL OR date >= ?1) AND (?2 IS NULL OR date <= ?2) GROUP BY date, COALESCE(model, '未知') ORDER BY date, SUM(total_tokens) DESC",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt

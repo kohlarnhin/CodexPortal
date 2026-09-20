@@ -9,7 +9,6 @@ const PAGE_SIZE = 50;
 interface SessionListViewProps {
   refreshKey: string | null;
   onOpenDetail: (session: SessionRecord) => void;
-  onCopyResume: (session: SessionRecord) => void;
   onRevealInFinder: (session: SessionRecord) => void;
 }
 
@@ -20,7 +19,7 @@ interface ListResult {
 }
 
 const SessionListView: React.FC<SessionListViewProps> = ({
-  refreshKey, onOpenDetail, onCopyResume, onRevealInFinder,
+  refreshKey, onOpenDetail, onRevealInFinder,
 }) => {
   const [{ search, page }, setQuery] = useState({ search: '', page: 0 });
   const [result, setResult] = useState<ListResult | null>(null);
@@ -106,7 +105,6 @@ const SessionListView: React.FC<SessionListViewProps> = ({
                 search={keyword}
                 showProject
                 onOpenDetail={onOpenDetail}
-                onCopyResume={onCopyResume}
                 onRevealInFinder={onRevealInFinder}
               />
             ))}

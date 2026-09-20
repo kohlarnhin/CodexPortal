@@ -80,9 +80,11 @@ pub(crate) struct AccountStore {
 }
 
 #[tauri::command]
-pub(crate) fn get_accounts(state: State<'_, AppState>) -> Result<AccountStore, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+pub(crate) async fn get_accounts(app: tauri::AppHandle) -> Result<AccountStore, String> {
+    crate::db::with_db(app, read_accounts).await
+}
 
+pub(crate) fn read_accounts(db: &rusqlite::Connection) -> Result<AccountStore, String> {
     let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, auto_activate_window FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
     let account_iter = stmt
         .query_map([], |row| {

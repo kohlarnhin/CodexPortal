@@ -84,9 +84,8 @@ fn read_quiet_hours(db: &Connection) -> Result<QuotaQuietHours, String> {
 }
 
 #[tauri::command]
-pub(crate) fn get_quota_quiet_hours(state: State<'_, AppState>) -> Result<QuotaQuietHours, String> {
-    let db = state.db.lock().map_err(|error| error.to_string())?;
-    read_quiet_hours(&db)
+pub(crate) async fn get_quota_quiet_hours(app: tauri::AppHandle) -> Result<QuotaQuietHours, String> {
+    crate::db::with_db(app, read_quiet_hours).await
 }
 
 #[tauri::command]

@@ -43,16 +43,22 @@ export interface SessionSyncResult {
 }
 
 export interface SessionSyncStatus {
+  isSyncing: boolean;
   lastSyncedAt: string | null;
   nextSyncAt: string | null;
   totalProjects: number;
   totalSessions: number;
 }
 
-/** 会话内容预览中提取出的一条消息。 */
-export interface SessionPreviewMessage {
-  role: 'user' | 'assistant';
+/** 会话日志中的一条完整记录，按原始行顺序保留。 */
+export interface SessionEntry {
+  id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  title: string;
+  timestamp: string | null;
   text: string;
+  raw: string;
+  defaultCollapsed: boolean;
 }
 
 /** 某日按项目聚合的 token 用量。 */

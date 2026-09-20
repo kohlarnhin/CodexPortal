@@ -2,7 +2,8 @@
   "gpt-6-astra": {
     "inputPer1M": 10.0,
     "cachedInputPer1M": 1.0,
-    "outputPer1M": 50.0
+    "outputPer1M": 50.0,
+    "costMultiplier": 2
   },
   "gpt-5.6-sol": {
     "inputPer1M": 4.0,

@@ -1,16 +1,16 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { SessionRecord } from '../../types/session';
 import { formatDateTime, formatFileSize, formatRelativeTime } from '../../utils/time';
 import { formatTokens } from '../../utils/format';
 import { findTextMatches } from '../../utils/sessionSearch';
 import HighlightedText from './HighlightedText';
+import SessionCopyMenu from './SessionCopyMenu';
 
 interface SessionRowProps {
   session: SessionRecord;
   search?: string;
   showProject?: boolean;
   onOpenDetail: (session: SessionRecord) => void;
-  onCopyResume: (session: SessionRecord) => void;
   onRevealInFinder: (session: SessionRecord) => void;
 }
 
@@ -19,18 +19,8 @@ const SessionRow: React.FC<SessionRowProps> = ({
   search = '',
   showProject = false,
   onOpenDetail,
-  onCopyResume,
   onRevealInFinder,
 }) => {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onCopyResume(session);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
   return (
     <div
       onClick={() => onOpenDetail(session)}
@@ -90,18 +80,8 @@ const SessionRow: React.FC<SessionRowProps> = ({
           </span>
         )}
 
+        <SessionCopyMenu session={session} />
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-          <button
-            onClick={handleCopy}
-            title={copied ? '已复制' : '复制恢复命令'}
-            className="w-7 h-7 flex items-center justify-center rounded text-[#888888] hover:bg-[#F5F5F5] hover:text-black transition-colors"
-          >
-            {copied ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            )}
-          </button>
           <button
             onClick={e => {
               e.stopPropagation();

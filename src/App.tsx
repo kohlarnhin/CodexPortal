@@ -16,6 +16,7 @@ import { useUpdater } from './hooks/useUpdater';
 import { useEmailMasking } from './hooks/useEmailMasking';
 import { useAccountUsageScheduler } from './hooks/useAccountUsageScheduler';
 import { useAutostart } from './hooks/useAutostart';
+import { useSystemTray } from './hooks/useSystemTray';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -24,6 +25,7 @@ function App() {
   const { isEmailMaskingEnabled, toggleEmailMasking } = useEmailMasking();
   const usageScheduler = useAccountUsageScheduler(isEmailMaskingEnabled);
   const autostart = useAutostart();
+  const systemTray = useSystemTray(isEmailMaskingEnabled, setActiveTab);
 
   // 自动检查发现新版本时跳转到"关于"页，让用户看到版本更新提示。
   useEffect(() => {
@@ -236,6 +238,7 @@ function App() {
                 isAutoLaunchEnabled={autostart.isEnabled}
                 isAutoLaunchLoading={autostart.isLoading}
                 onToggleAutoLaunch={autostart.toggleAutostart}
+                systemTray={systemTray}
               />
             </div>
           )}

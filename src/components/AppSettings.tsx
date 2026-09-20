@@ -1,5 +1,6 @@
 import React from 'react';
 import { useQuotaQuietHours } from '../hooks/useQuotaQuietHours';
+import type { useSystemTray } from '../hooks/useSystemTray';
 import ToggleSwitch from './ToggleSwitch';
 
 interface AppSettingsProps {
@@ -8,6 +9,7 @@ interface AppSettingsProps {
   isAutoLaunchEnabled: boolean;
   isAutoLaunchLoading: boolean;
   onToggleAutoLaunch: (value: boolean) => void;
+  systemTray: ReturnType<typeof useSystemTray>;
 }
 
 const AppSettings: React.FC<AppSettingsProps> = ({
@@ -16,6 +18,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({
   isAutoLaunchEnabled,
   isAutoLaunchLoading,
   onToggleAutoLaunch,
+  systemTray,
 }) => {
   const quietHours = useQuotaQuietHours();
   const quietHoursDisabled = quietHours.isLoading || quietHours.isSaving || !quietHours.settings;
@@ -23,13 +26,13 @@ const AppSettings: React.FC<AppSettingsProps> = ({
     && quietHours.settings.startTime > quietHours.settings.endTime;
 
   return (
-    <div className="page-layout pt-4 overflow-y-auto">
+    <div className="page-layout pt-4 overflow-hidden">
       <div className="mb-8 shrink-0">
         <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">设置</h2>
         <p className="text-[14px] text-[#666666]">Codex Portal 本程序的应用级设置。</p>
       </div>
 
-      <div className="shrink-0 bg-white border border-[#EAEAEA] rounded-2xl shadow-sm overflow-hidden">
+      <div className="flex-1 min-h-0 bg-white border border-[#EAEAEA] rounded-2xl shadow-sm overflow-y-auto overscroll-contain">
         <div className="flex items-center justify-between gap-6 p-6 border-b border-[#EAEAEA]">
           <div className="flex items-center gap-4 min-w-0">
             <div className="w-10 h-10 shrink-0 rounded-lg bg-[#F5F5F5] border border-[#EAEAEA] flex items-center justify-center text-[#555555]">
@@ -38,7 +41,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({
             <div className="min-w-0">
               <div className="text-[15px] font-semibold text-black">邮箱脱敏</div>
               <div className="text-[12px] text-[#888888] mt-0.5">
-                {isEmailMaskingEnabled ? '隐私保护已开启' : '正在显示原邮箱'} · 作用于当前账号与账号列表
+                {isEmailMaskingEnabled ? '隐私保护已开启' : '正在显示原邮箱'} · 作用于账号页面与系统托盘
               </div>
             </div>
           </div>
@@ -63,6 +66,32 @@ const AppSettings: React.FC<AppSettingsProps> = ({
             disabled={isAutoLaunchLoading}
             onToggle={() => onToggleAutoLaunch(!isAutoLaunchEnabled)}
           />
+        </div>
+
+        <div className="border-t border-[#EAEAEA]">
+          <div className="flex items-center justify-between gap-6 p-6">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#EAEAEA] bg-[#F5F5F5] text-[#555555]">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M7 10h10M7 10v2M10 10v2"/></svg>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold text-black">系统托盘</div>
+                <div className="mt-0.5 text-[12px] leading-relaxed text-[#888888]">
+                  进度条显示当前账号第一窗口的剩余百分比，点击查看额度、快捷切换账号
+                </div>
+                <div className="mt-1 text-[11px] text-[#999999]">
+                  开启后关闭窗口可继续在后台运行，通过托盘菜单退出程序
+                </div>
+              </div>
+            </div>
+            <ToggleSwitch
+              label="系统托盘"
+              checked={systemTray.isEnabled}
+              disabled={systemTray.isLoading || systemTray.isSaving}
+              onToggle={() => void systemTray.toggle()}
+            />
+          </div>
+          {systemTray.error ? <p role="alert" className="px-6 pb-4 text-[12px] text-red-600">{systemTray.error}</p> : null}
         </div>
 
         <div className="border-t border-[#EAEAEA]">

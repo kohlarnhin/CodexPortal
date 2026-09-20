@@ -1,4 +1,4 @@
-use crate::accounts::get_accounts;
+use crate::accounts::read_accounts;
 use crate::accounts::messages::send_test_message;
 use crate::accounts::quiet_hours::defer_usage_during_quiet_hours;
 use crate::accounts::usage::{
@@ -146,7 +146,16 @@ pub(crate) fn start_usage_scheduler(app: tauri::AppHandle) {
 
             let now = Utc::now();
             if now >= next_usage_request_at {
-                if let Ok(store) = get_accounts(app.state::<AppState>()) {
+                let store = {
+                    let state = app.state::<AppState>();
+                    let result = state
+                        .db
+                        .lock()
+                        .map_err(|error| error.to_string())
+                        .and_then(|db| read_accounts(&db));
+                    result
+                };
+                if let Ok(store) = store {
                     let state = app.state::<AppState>();
                     let refreshing = state
                         .refreshing
