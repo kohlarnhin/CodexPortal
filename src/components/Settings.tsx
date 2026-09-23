@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useConfig, parseConfig, CodexConfig } from '../hooks/useConfig';
 import { stringify } from 'smol-toml';
-import Select, { Option } from './Select';
+import Select from './Select';
+import ModelSelect from './ModelSelect';
 import ToggleSwitch from './ToggleSwitch';
 import SegmentedControl from './SegmentedControl';
 import DiffModal, { DiffItem } from './DiffModal';
@@ -21,12 +22,14 @@ type PendingSave =
   | { kind: 'raw'; content: string; expectedContent: string }
   | { kind: 'structured'; value: CodexConfig; base: CodexConfig };
 
-const BUILTIN_MODELS: Option[] = [
-  { value: 'gpt-6-astra', label: 'gpt-6-astra' },
-  { value: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
-  { value: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
-  { value: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
-  { value: 'gpt-5.5', label: 'gpt-5.5' },
+const BUILTIN_MODELS = [
+  'gpt-6-astra',
+  'gpt-6-sol',
+  'gpt-6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.5',
 ];
 
 function configDiffItems(before: CodexConfig, after: CodexConfig): DiffItem[] {
@@ -60,17 +63,6 @@ export default function Settings() {
   const localConfig = draft ? draft.value : config;
   const localToml = draft?.toml ?? rawToml;
   const editingDisabled = isSaving || showDiffModal || !hasLoadedFile;
-
-  const modelOptions = useMemo(() => {
-    const list: Option[] = [
-      { value: '', label: '使用默认模型' },
-      ...BUILTIN_MODELS,
-    ];
-    if (localConfig?.model && !list.some(opt => opt.value === localConfig.model)) {
-      list.push({ value: localConfig.model, label: localConfig.model });
-    }
-    return list;
-  }, [localConfig?.model]);
 
   const setLocalConfig = (value: CodexConfig) => {
     if (!localConfig || editingDisabled || (!draft?.raw && !!error)) return;
@@ -296,15 +288,17 @@ export default function Settings() {
               <div className="flex items-center justify-between px-6 py-3.5 hover:bg-neutral-50/40 transition-colors">
                 <div className="min-w-0 flex-1 pr-6">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[13.5px] font-semibold text-neutral-900">模型选择</span>
+                    <label htmlFor="codex-model" className="text-[13.5px] font-semibold text-neutral-900">模型选择</label>
                     <span className="font-mono text-[11px] text-neutral-400 bg-neutral-100 px-1.5 py-0.2 rounded">model</span>
                   </div>
-                  <p className="text-[12px] text-neutral-500 leading-normal">
-                    默认会话交互与代码生成调用的主模型
+                  <p id="codex-model-hint" className="text-[12px] text-neutral-500 leading-normal">
+                    可选择预设模型或直接输入模型名，留空使用默认模型
                   </p>
                 </div>
                 <div className="shrink-0">
-                  <Select
+                  <ModelSelect
+                    id="codex-model"
+                    describedBy="codex-model-hint"
                     value={localConfig.model || ''}
                     onChange={value => {
                       const updated = { ...localConfig };
@@ -313,9 +307,8 @@ export default function Settings() {
                       setLocalConfig(updated);
                     }}
                     disabled={editingDisabled}
+                    models={BUILTIN_MODELS}
                     className="w-64"
-                    align="right"
-                    options={modelOptions}
                   />
                 </div>
               </div>
