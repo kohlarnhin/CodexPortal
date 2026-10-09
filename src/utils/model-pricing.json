@@ -5,6 +5,11 @@
     "outputPer1M": 50.0,
     "costMultiplier": 2
   },
+  "gpt-6.1-sol": {
+    "inputPer1M": 2.0,
+    "cachedInputPer1M": 0.1,
+    "outputPer1M": 10.0
+  },
   "gpt-6-sol": {
     "inputPer1M": 2.0,
     "cachedInputPer1M": 0.2,

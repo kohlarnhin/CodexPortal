@@ -66,6 +66,11 @@ const SessionRow: React.FC<SessionRowProps> = ({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 shrink-0 max-w-full">
+        {session.isSubagent && (
+          <span className="rounded-full border border-[#EAEAEA] bg-[#F5F5F5] px-2 py-0.5 text-[10px] text-[#666666]">
+            子会话
+          </span>
+        )}
         {session.model && (
           <span
             className="max-w-48 truncate rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2 py-0.5 text-[10px] font-mono text-[#666666]"

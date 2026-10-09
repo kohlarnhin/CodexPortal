@@ -9,6 +9,7 @@ export interface SessionProject {
 
 export interface SessionRecord {
   id: string;
+  isSubagent: boolean;
   projectPath: string;
   filePath: string;
   title: string;
@@ -37,8 +38,11 @@ export interface SessionSyncResult {
   updated: number;
   removed: number;
   skipped: number;
+  duplicates: number;
   failed: number;
   projects: number;
+  sessionCount: number;
+  subagentCount: number;
   syncedAt: string;
 }
 

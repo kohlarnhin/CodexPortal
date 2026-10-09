@@ -54,6 +54,8 @@ pub(crate) struct SessionRecord {
     pub(crate) reasoning_tokens: i64,
     #[serde(rename = "totalTokens")]
     pub(crate) total_tokens: i64,
+    #[serde(rename = "isSubagent")]
+    pub(crate) is_subagent: bool,
 }
 
 fn session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
@@ -74,6 +76,7 @@ fn session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> 
         output_tokens: row.get(13)?,
         reasoning_tokens: row.get(14)?,
         total_tokens: row.get(15)?,
+        is_subagent: row.get(16)?,
     })
 }
 
@@ -90,8 +93,13 @@ pub(crate) struct SessionSyncResult {
     pub(crate) updated: usize,
     pub(crate) removed: usize,
     pub(crate) skipped: usize,
+    pub(crate) duplicates: usize,
     pub(crate) failed: usize,
     pub(crate) projects: usize,
+    #[serde(rename = "sessionCount")]
+    pub(crate) session_count: usize,
+    #[serde(rename = "subagentCount")]
+    pub(crate) subagent_count: usize,
     #[serde(rename = "syncedAt")]
     pub(crate) synced_at: String,
 }
@@ -113,15 +121,28 @@ pub(crate) struct SessionSyncStatus {
 #[tauri::command]
 pub(crate) async fn list_session_projects(
     app: tauri::AppHandle,
+    include_subagents: Option<bool>,
 ) -> Result<Vec<SessionProject>, String> {
-    crate::db::with_db(app, query_session_projects).await
+    crate::db::with_db(app, move |db| {
+        query_session_projects(db, include_subagents.unwrap_or(false))
+    })
+    .await
 }
 
-fn query_session_projects(db: &rusqlite::Connection) -> Result<Vec<SessionProject>, String> {
+fn query_session_projects(
+    db: &rusqlite::Connection,
+    include_subagents: bool,
+) -> Result<Vec<SessionProject>, String> {
+    let sql = if include_subagents {
+        "SELECT path, name, session_count, total_tokens, first_session_at, last_session_at
+         FROM session_projects ORDER BY last_session_at DESC"
+    } else {
+        "SELECT p.path, p.name, COUNT(s.id), SUM(s.total_tokens), MIN(s.started_at), MAX(s.last_activity_at)
+         FROM session_projects p JOIN sessions s ON s.project_path = p.path
+         WHERE s.is_subagent = 0 GROUP BY p.path ORDER BY MAX(s.last_activity_at) DESC"
+    };
     let mut stmt = db
-        .prepare(
-            "SELECT path, name, session_count, total_tokens, first_session_at, last_session_at FROM session_projects ORDER BY last_session_at DESC",
-        )
+        .prepare(sql)
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -146,21 +167,26 @@ fn query_session_projects(db: &rusqlite::Connection) -> Result<Vec<SessionProjec
 pub(crate) async fn list_project_sessions(
     app: tauri::AppHandle,
     project_path: String,
+    include_subagents: Option<bool>,
 ) -> Result<Vec<SessionRecord>, String> {
-    crate::db::with_db(app, move |db| query_project_sessions(db, &project_path)).await
+    crate::db::with_db(app, move |db| {
+        query_project_sessions(db, &project_path, include_subagents.unwrap_or(false))
+    })
+    .await
 }
 
 fn query_project_sessions(
     db: &rusqlite::Connection,
     project_path: &str,
+    include_subagents: bool,
 ) -> Result<Vec<SessionRecord>, String> {
     let mut stmt = db
         .prepare(
-            "SELECT id, project_path, file_path, title, started_at, last_activity_at, model_provider, cli_version, file_size, message_count, model, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens FROM sessions WHERE project_path = ?1 ORDER BY started_at DESC",
+            "SELECT id, project_path, file_path, title, started_at, last_activity_at, model_provider, cli_version, file_size, message_count, model, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, is_subagent FROM sessions WHERE project_path = ?1 AND (?2 = 1 OR is_subagent = 0) ORDER BY started_at DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![project_path], session_from_row)
+        .query_map(params![project_path, include_subagents], session_from_row)
         .map_err(|e| e.to_string())?;
     let mut sessions = Vec::new();
     for row in rows {

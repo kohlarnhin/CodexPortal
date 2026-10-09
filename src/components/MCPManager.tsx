@@ -21,6 +21,7 @@ export default function MCPManager() {
   const { config, saveConfig, isLoading, error, refresh } = useConfig();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [copyingKey, setCopyingKey] = useState<string | null>(null);
   const [deleteConfirmKey, setDeleteConfirmKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -39,6 +40,8 @@ export default function MCPManager() {
 
   const servers = useMemo(() => config?.mcp_servers || {}, [config]);
   const serverKeys = useMemo(() => Object.keys(servers), [servers]);
+  const serverName = formName.trim();
+  const nameExists = serverName !== editingKey && Object.prototype.hasOwnProperty.call(servers, serverName);
 
   const activeCount = useMemo(
     () => serverKeys.filter((k) => !servers[k]?.disabled).length,
@@ -135,6 +138,7 @@ export default function MCPManager() {
 
   const openAddModal = () => {
     setEditingKey(null);
+    setCopyingKey(null);
     setFormName('');
     setFormType('stdio');
     setFormCommand('');
@@ -144,9 +148,18 @@ export default function MCPManager() {
     setIsModalOpen(true);
   };
 
-  const openEditModal = (key: string, server: MCPServer) => {
-    setEditingKey(key);
-    setFormName(key);
+  const openServerModal = (key: string, server: MCPServer, mode: 'edit' | 'copy') => {
+    setEditingKey(mode === 'edit' ? key : null);
+    setCopyingKey(mode === 'copy' ? key : null);
+    let name = key;
+    if (mode === 'copy') {
+      name = `${key}_copy`;
+      let suffix = 2;
+      while (Object.prototype.hasOwnProperty.call(servers, name)) {
+        name = `${key}_copy_${suffix++}`;
+      }
+    }
+    setFormName(name);
     if (server.url) {
       setFormType('sse');
       setFormUrl(server.url);
@@ -167,10 +180,12 @@ export default function MCPManager() {
   };
 
   const handleSaveModal = async () => {
-    if (!formName.trim() || !config) return;
+    if (!serverName || nameExists || !config) return;
 
     // 保留认证头、超时等未在表单中展示的配置，只更新表单负责的字段。
-    const newServer: MCPServer = editingKey ? { ...servers[editingKey] } : {};
+    const sourceKey = editingKey ?? copyingKey;
+    const sourceServer = sourceKey !== null ? servers[sourceKey] : undefined;
+    const newServer: MCPServer = { ...sourceServer };
     if (formType === 'sse') {
       if (!formUrl.trim()) return;
       newServer.url = formUrl.trim();
@@ -181,12 +196,15 @@ export default function MCPManager() {
       if (!formCommand.trim()) return;
       delete newServer.url;
       newServer.command = formCommand.trim();
-      const args = formArgs
-        .split('\n')
-        .map((a) => a.trim())
-        .filter(Boolean);
-      if (args.length > 0) newServer.args = args;
-      else delete newServer.args;
+      // 未改动参数时沿用原数组，保留空参数、首尾空格和参数中的换行。
+      if (!sourceServer || formArgs !== (sourceServer.args?.join('\n') ?? '')) {
+        const args = formArgs
+          .split('\n')
+          .map((a) => a.trim())
+          .filter(Boolean);
+        if (args.length > 0) newServer.args = args;
+        else delete newServer.args;
+      }
       const envObj: Record<string, string> = {};
       formEnv.forEach((e) => {
         if (e.key.trim()) envObj[e.key.trim()] = e.value;
@@ -197,14 +215,14 @@ export default function MCPManager() {
 
     const newConfig = { ...config, mcp_servers: { ...config.mcp_servers } };
 
-    if (editingKey && editingKey !== formName.trim()) {
+    if (editingKey && editingKey !== serverName) {
       delete newConfig.mcp_servers[editingKey];
     }
 
-    newConfig.mcp_servers[formName.trim()] = newServer;
+    newConfig.mcp_servers[serverName] = newServer;
 
     const diffs: DiffItem[] = [];
-    if (editingKey && editingKey !== formName.trim()) {
+    if (editingKey && editingKey !== serverName) {
       diffs.push({
         key: `mcp_servers.${editingKey}`,
         oldVal: config.mcp_servers?.[editingKey],
@@ -212,8 +230,8 @@ export default function MCPManager() {
       });
     }
     diffs.push({
-      key: `mcp_servers.${formName.trim()}`,
-      oldVal: editingKey ? config.mcp_servers?.[editingKey] : undefined,
+      key: `mcp_servers.${serverName}`,
+      oldVal: config.mcp_servers?.[serverName],
       newVal: newServer,
     });
 
@@ -445,7 +463,7 @@ export default function MCPManager() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          onClick={() => openEditModal(key, server)}
+                          onClick={() => openServerModal(key, server, 'edit')}
                           aria-label="编辑配置"
                           className="h-7 w-7 text-neutral-400 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg"
                         >
@@ -462,6 +480,32 @@ export default function MCPManager() {
                           >
                             <path d="M12 20h9" />
                             <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                          </svg>
+                        </Button>
+                      </ActionTooltip>
+                      <ActionTooltip label="复制配置">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => openServerModal(key, server, 'copy')}
+                          aria-label={`复制 ${key} 配置`}
+                          className="h-7 w-7 text-neutral-400 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="13.5"
+                            height="13.5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <rect x="8" y="8" width="12" height="12" rx="2" />
+                            <path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4" />
                           </svg>
                         </Button>
                       </ActionTooltip>
@@ -523,7 +567,7 @@ export default function MCPManager() {
         onCancel={() => setDeleteConfirmKey(null)}
       />
 
-      {/* 添加 / 编辑弹窗 */}
+      {/* 添加 / 编辑 / 复制弹窗 */}
       <Dialog
         open={isModalOpen}
         onOpenChange={(open) => {
@@ -533,27 +577,37 @@ export default function MCPManager() {
         <DialogContent className="max-w-[490px] p-6 gap-4 max-h-[88vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="text-[17px] font-semibold text-neutral-900">
-              {editingKey ? '编辑 MCP 配置' : '添加 MCP 配置'}
+              {editingKey ? '编辑 MCP 配置' : copyingKey ? '复制 MCP 配置' : '添加 MCP 配置'}
             </DialogTitle>
             <DialogDescription className="text-[13px] text-neutral-500">
               {editingKey
                 ? `修改 ${editingKey} 的服务协议与运行参数配置。`
-                : '新增一个 Model Context Protocol 服务器。'}
+                : copyingKey
+                  ? `复制 ${copyingKey} 的配置，可修改后保存为新的 MCP 服务器。`
+                  : '新增一个 Model Context Protocol 服务器。'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto space-y-3.5 pr-1.5 -mr-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-neutral-200 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-neutral-300">
             <div>
-              <label className="block text-[12px] font-medium text-neutral-700 mb-1.5">
+              <label htmlFor="mcp-server-name" className="block text-[12px] font-medium text-neutral-700 mb-1.5">
                 服务器名称 <span className="text-red-500">*</span>
               </label>
               <Input
+                id="mcp-server-name"
                 type="text"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
                 placeholder="例如: notion, context7, apcp..."
                 className="font-mono text-[12.5px]"
+                aria-invalid={nameExists}
+                aria-describedby={nameExists ? 'mcp-server-name-error' : undefined}
               />
+              {nameExists && (
+                <p id="mcp-server-name-error" role="alert" className="mt-1.5 text-[12px] text-red-600">
+                  已存在同名 MCP，请使用不同的名称。
+                </p>
+              )}
             </div>
 
             <div>
@@ -747,12 +801,12 @@ export default function MCPManager() {
               size="sm"
               onClick={handleSaveModal}
               disabled={
-                !formName.trim() ||
+                !serverName || nameExists ||
                 (formType === 'sse' ? !formUrl.trim() : !formCommand.trim())
               }
               className="min-w-[80px]"
             >
-              保存配置
+              {copyingKey ? '保存为新 MCP' : '保存配置'}
             </Button>
           </DialogFooter>
         </DialogContent>

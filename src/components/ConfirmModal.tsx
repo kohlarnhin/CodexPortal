@@ -13,11 +13,16 @@ interface ConfirmModalProps {
   isOpen: boolean;
   title: string;
   message: string;
+  confirmLabel?: string;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-const ConfirmModal: React.FC<ConfirmModalProps> = ({ isOpen, title, message, onConfirm, onCancel }) => {
+const ConfirmModal: React.FC<ConfirmModalProps> = ({
+  isOpen, title, message, onConfirm, onCancel,
+  confirmLabel = '确认删除', confirmDisabled = false,
+}) => {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onCancel(); }}>
       <DialogContent className="max-w-sm p-6 gap-4" showCloseButton={false}>
@@ -39,8 +44,9 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({ isOpen, title, message, onC
             variant="destructive"
             size="sm"
             onClick={onConfirm}
+            disabled={confirmDisabled}
           >
-            确认删除
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useSessions } from '../hooks/useSessions';
@@ -10,6 +10,7 @@ import SessionRow from './sessions/SessionRow';
 import SessionDetailPanel from './sessions/SessionDetailPanel';
 import SessionListView from './sessions/SessionListView';
 import SearchInput from './sessions/SearchInput';
+import ConfirmModal from './ConfirmModal';
 
 type ViewState =
   | { type: 'projects' }
@@ -21,10 +22,17 @@ interface SessionsPageProps {
 }
 
 const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
-  const sessions = useSessions();
   const [view, setView] = useState<ViewState>({ type: 'projects' });
   const [search, setSearch] = useState('');
+  const [includeSubagents, setIncludeSubagents] = useState(false);
   const [detailSession, setDetailSession] = useState<SessionRecord | null>(null);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const handleSessionsReset = useCallback(() => {
+    setView({ type: 'projects' });
+    setSearch('');
+    setDetailSession(null);
+  }, []);
+  const sessions = useSessions(handleSessionsReset, includeSubagents);
 
   const filteredProjects = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -56,6 +64,11 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
   };
 
   const isSyncing = sessions.isSyncing || sessions.syncProgress !== null;
+  const syncPercent = sessions.syncProgress
+    ? sessions.syncProgress.total === 0
+      ? 100
+      : Math.min(100, Math.max(0, Math.round((sessions.syncProgress.done / sessions.syncProgress.total) * 100)))
+    : undefined;
   const currentProjectPath = view.type === 'project' ? view.project.path : null;
 
   return (
@@ -70,7 +83,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-[#999999]">
-            {sessions.status?.lastSyncedAt ? (
+            {sessions.isResetting ? '正在重置并重新同步会话…' : sessions.status?.lastSyncedAt ? (
               <>
                 上次同步 {formatRelativeTime(sessions.status.lastSyncedAt)}
                 {sessions.status.nextSyncAt && !isSyncing && (
@@ -82,8 +95,16 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
             )}
           </span>
           <button
+            onClick={() => setIsResetConfirmOpen(true)}
+            disabled={isSyncing}
+            className="rounded-md border border-[#EAEAEA] bg-white px-3 py-1.5 text-[13px] font-medium text-[#666666] transition-colors hover:border-[#D4D4D4] hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {sessions.isResetting ? '重置中…' : '重置'}
+          </button>
+          <button
             onClick={() => void sessions.manualSync()}
             disabled={isSyncing}
+            aria-busy={isSyncing}
             className="flex items-center gap-2 px-4 py-1.5 bg-black hover:bg-[#333333] disabled:opacity-50 disabled:cursor-not-allowed text-white text-[13px] font-medium rounded-md transition-colors shadow-sm"
           >
             <svg
@@ -96,12 +117,12 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
               strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className={sessions.isSyncing ? 'animate-spin' : ''}
+              className={isSyncing ? 'animate-spin motion-reduce:animate-none' : ''}
             >
               <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
               <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
             </svg>
-            {sessions.isSyncing ? '同步中…' : '立即同步'}
+            {isSyncing ? '同步中…' : '立即同步'}
           </button>
         </div>
       </div>
@@ -109,26 +130,26 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
       {/* 同步进度条 */}
       {isSyncing && (
         <div className="mb-4 shrink-0">
-          {sessions.syncProgress ? (
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-[#EAEAEA]">
-                <div
-                  className="h-full rounded-full bg-black transition-all duration-300"
-                  style={{
-                    width: `${Math.max(2, Math.round((sessions.syncProgress.done / Math.max(1, sessions.syncProgress.total)) * 100))}%`,
-                  }}
-                />
-              </div>
-              <span className="text-[11px] text-[#666666] shrink-0">
-                正在同步 {sessions.syncProgress.done}/{sessions.syncProgress.total}
-              </span>
+          <div className="flex items-center gap-3">
+            <div
+              role="progressbar"
+              aria-label="会话同步进度"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={syncPercent}
+              className="flex-1 h-1.5 overflow-hidden rounded-full bg-[#EAEAEA]"
+            >
+              <div
+                className={`h-full rounded-full bg-black ${syncPercent === undefined ? 'w-1/3 animate-pulse motion-reduce:animate-none' : 'transition-[width] duration-300 motion-reduce:transition-none'}`}
+                style={syncPercent === undefined ? undefined : { width: `${Math.max(2, syncPercent)}%` }}
+              />
             </div>
-          ) : (
-            <div className="flex items-center gap-2 text-[11px] text-[#666666]">
-              <svg className="animate-spin" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              正在扫描 sessions 目录…
-            </div>
-          )}
+            <span className="text-[11px] text-[#666666] shrink-0">
+              {sessions.syncProgress
+                ? `正在同步 ${sessions.syncProgress.done}/${sessions.syncProgress.total}`
+                : sessions.isResetting ? '正在准备重置并重新同步…' : '正在扫描会话…'}
+            </span>
+          </div>
         </div>
       )}
 
@@ -138,7 +159,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
         </div>
       )}
 
-      <div className="flex items-center gap-1 mb-4 shrink-0 border-b border-[#EAEAEA]" aria-label="会话浏览方式">
+      <div className="flex flex-wrap items-center gap-1 mb-4 shrink-0 border-b border-[#EAEAEA]" aria-label="会话浏览方式">
         {([{ type: 'projects', label: '项目列表' }, { type: 'sessions', label: '会话列表' }] as const).map(tab => {
           const isActive = tab.type === 'sessions' ? view.type === 'sessions' : view.type !== 'sessions';
           return (
@@ -155,21 +176,35 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
             </button>
           );
         })}
+        <label
+          className="ml-auto flex cursor-pointer items-center gap-2 px-2 py-2.5 text-[12px] text-[#666666]"
+          title="子会话仍会同步并计入总用量，此开关仅控制列表显示范围"
+        >
+          <input
+            type="checkbox"
+            checked={includeSubagents}
+            onChange={event => setIncludeSubagents(event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-[#D4D4D4] accent-black focus-visible:outline-black"
+          />
+          包含子会话
+        </label>
       </div>
 
       {/* 内容区 */}
       <div className="page-scroll">
         {view.type === 'sessions' ? (
           <SessionListView
+            includeSubagents={includeSubagents}
             refreshKey={sessions.syncResult?.syncedAt ?? null}
             onOpenDetail={setDetailSession}
             onRevealInFinder={handleRevealInFinder}
           />
         ) : view.type === 'projects' ? (
           <ProjectsView
+            includeSubagents={includeSubagents}
             projects={filteredProjects}
-            totalProjects={sessions.status?.totalProjects ?? filteredProjects.length}
-            totalSessions={sessions.status?.totalSessions ?? 0}
+            totalProjects={sessions.projects.length}
+            totalSessions={sessions.projects.reduce((total, project) => total + project.sessionCount, 0)}
             search={search}
             onSearchChange={setSearch}
             isLoading={sessions.isLoading}
@@ -180,8 +215,10 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
         ) : (
           <ProjectSessionsView
             key={view.project.path}
-            project={sessions.projects.find(project => project.path === currentProjectPath) ?? view.project}
+            project={sessions.projects.find(project => project.path === currentProjectPath)
+              ?? { ...view.project, sessionCount: 0, totalTokens: 0, lastSessionAt: null }}
             sessions={sessions.sessions}
+            includeSubagents={includeSubagents}
             isLoading={sessions.isLoadingSessions}
             onBack={goBack}
             onOpenDetail={setDetailSession}
@@ -189,6 +226,20 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
           />
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={isResetConfirmOpen}
+        title="重置已同步会话？"
+        message="将清空已同步的会话、项目列表和用量统计，再重新导入本地全部会话（包含归档）。本地会话文件、账号和配置会保留，重新同步可能需要一些时间。"
+        confirmLabel="重置并重新同步"
+        confirmDisabled={isSyncing}
+        onCancel={() => setIsResetConfirmOpen(false)}
+        onConfirm={() => {
+          if (isSyncing) return;
+          setIsResetConfirmOpen(false);
+          void sessions.resetAndSync();
+        }}
+      />
 
       {detailSession && detailContainer && createPortal(
         <SessionDetailPanel
@@ -206,6 +257,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
 };
 
 interface ProjectsViewProps {
+  includeSubagents: boolean;
   projects: SessionProject[];
   totalProjects: number;
   totalSessions: number;
@@ -218,6 +270,7 @@ interface ProjectsViewProps {
 }
 
 const ProjectsView: React.FC<ProjectsViewProps> = ({
+  includeSubagents,
   projects,
   totalProjects,
   totalSessions,
@@ -236,7 +289,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
           {totalProjects} 个项目
         </span>
         <span className="rounded-full border border-[#EAEAEA] bg-white px-3 py-1 text-[11px] font-medium text-[#666666]">
-          {totalSessions} 个会话
+          {totalSessions} 个{includeSubagents ? '会话' : '主会话'}
         </span>
         <div className="ml-auto flex w-full @min-[520px]/page:w-56">
           <SearchInput
@@ -290,6 +343,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
 };
 
 interface ProjectSessionsViewProps {
+  includeSubagents: boolean;
   project: SessionProject;
   sessions: SessionRecord[];
   isLoading: boolean;
@@ -299,6 +353,7 @@ interface ProjectSessionsViewProps {
 }
 
 const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
+  includeSubagents,
   project,
   sessions,
   isLoading,
@@ -308,6 +363,7 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const keyword = search.trim().toLowerCase();
+  const sessionLabel = includeSubagents ? '会话' : '主会话';
   const filteredSessions = useMemo(
     () => keyword ? sessions.filter(session => session.id.toLowerCase().includes(keyword)) : sessions,
     [sessions, keyword],
@@ -332,10 +388,10 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] text-[#888888]">
           <span role="status">
-            {isLoading ? '正在加载…' : keyword ? `${filteredSessions.length} 个匹配 / 共 ${sessions.length} 个会话` : `${sessions.length} 个会话`}
+            {isLoading ? '正在加载…' : keyword ? `${filteredSessions.length} 个匹配 / 共 ${sessions.length} 个${sessionLabel}` : `${sessions.length} 个${sessionLabel}`}
           </span>
           {project.totalTokens > 0 && <span>{formatTokens(project.totalTokens)} tokens</span>}
-          <span title={formatDateTime(project.lastSessionAt)}>最近活跃 {formatRelativeTime(project.lastSessionAt)}</span>
+          {project.lastSessionAt && <span title={formatDateTime(project.lastSessionAt)}>最近活跃 {formatRelativeTime(project.lastSessionAt)}</span>}
           <div className="ml-auto flex w-full @min-[520px]/page:w-60">
             <SearchInput value={search} onChange={setSearch} label="搜索项目内会话 ID" placeholder="搜索会话 ID…" />
           </div>
@@ -350,7 +406,8 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
         </div>
       ) : filteredSessions.length === 0 ? (
         <div className="bg-white rounded-xl border border-[#EAEAEA] py-14 px-8 text-center">
-          <p className="text-[13px] text-[#999999]">{keyword ? '没有找到匹配的会话，试试更短的 ID 片段' : '该项目暂无会话'}</p>
+          <p className="text-[13px] text-[#999999]">{keyword ? '没有找到匹配的会话，试试更短的 ID 片段' : `该项目暂无${sessionLabel}`}</p>
+          {!includeSubagents && <p className="mt-2 text-[12px] text-[#999999]">开启“包含子会话”可查看子会话</p>}
         </div>
       ) : (
         <div className="space-y-3">

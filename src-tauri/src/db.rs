@@ -174,8 +174,27 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
             reasoning_tokens INTEGER NOT NULL DEFAULT 0,
             total_tokens INTEGER NOT NULL DEFAULT 0,
             content TEXT NOT NULL,
-            synced_at TEXT NOT NULL
+            synced_at TEXT NOT NULL,
+            is_subagent INTEGER NOT NULL DEFAULT 0
         )",
+        [],
+    )?;
+
+    let has_subagent_column: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'is_subagent')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_subagent_column {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN is_subagent INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+
+    // 同步收尾通过 MAX(synced_at) 检查汇总是否过期，使用索引避免读取大日志行。
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_synced_at ON sessions(synced_at)",
         [],
     )?;
 

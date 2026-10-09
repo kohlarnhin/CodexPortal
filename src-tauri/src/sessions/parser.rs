@@ -14,6 +14,7 @@ pub(super) struct SessionFileMeta {
     pub(super) started_at: String,
     pub(super) model_provider: Option<String>,
     pub(super) cli_version: Option<String>,
+    pub(super) is_subagent: bool,
 }
 
 /// 解析 JSONL 首行的 session_meta 记录。
@@ -24,7 +25,11 @@ pub(super) fn parse_session_meta(line: &str) -> Option<SessionFileMeta> {
     let payload = event.get("payload");
     if payload.is_none() {
         // 旧格式：无 payload 且带 id / timestamp 才视为会话元数据（排除 state 等记录）。
-        let id = event.get("id").and_then(Value::as_str)?.to_string();
+        let id = event
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())?
+            .to_string();
         let started_at = event
             .get("timestamp")
             .and_then(Value::as_str)
@@ -36,16 +41,24 @@ pub(super) fn parse_session_meta(line: &str) -> Option<SessionFileMeta> {
             started_at,
             model_provider: None,
             cli_version: None,
+            is_subagent: false,
         });
     }
     let payload = payload?;
     if event.get("type").and_then(Value::as_str) != Some("session_meta") {
         return None;
     }
+    // 子代理可能沿用父会话的 session_id；id 才是当前会话的独立标识。
     let id = payload
-        .get("session_id")
+        .get("id")
         .and_then(Value::as_str)
-        .or_else(|| payload.get("id").and_then(Value::as_str))?
+        .filter(|id| !id.trim().is_empty())
+        .or_else(|| {
+            payload
+                .get("session_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+        })?
         .to_string();
     let started_at = payload
         .get("timestamp")
@@ -65,12 +78,21 @@ pub(super) fn parse_session_meta(line: &str) -> Option<SessionFileMeta> {
         .get("cli_version")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let is_subagent = payload
+        .get("source")
+        .is_some_and(|source| source.as_str() == Some("subagent") || source.get("subagent").is_some())
+        || payload.get("thread_source").and_then(Value::as_str) == Some("subagent")
+        || payload
+            .get("parent_thread_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.trim().is_empty());
     Some(SessionFileMeta {
         id,
         project_path,
         started_at,
         model_provider,
         cli_version,
+        is_subagent,
     })
 }
 

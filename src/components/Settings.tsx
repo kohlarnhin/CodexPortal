@@ -24,6 +24,7 @@ type PendingSave =
 
 const BUILTIN_MODELS = [
   'gpt-6-astra',
+  'gpt-6.1-sol',
   'gpt-6-sol',
   'gpt-6-luna',
   'gpt-5.6-sol',
@@ -512,19 +513,20 @@ export default function Settings() {
                 {OFFICIAL_FEATURE_KEYS.map((key) => {
                   const feature = OFFICIAL_FEATURES[key];
                   const enabled = localConfig.features?.[key] ?? feature.defaultEnabled ?? false;
+                  const toggleFeature = () => {
+                    if (editingDisabled) return;
+                    setLocalConfig({
+                      ...localConfig,
+                      features: {
+                        ...(localConfig.features || {}),
+                        [key]: !enabled
+                      }
+                    });
+                  };
                   return (
                     <div
                       key={key}
-                      onClick={() => {
-                        if (editingDisabled) return;
-                        setLocalConfig({
-                          ...localConfig,
-                          features: {
-                            ...(localConfig.features || {}),
-                            [key]: !enabled
-                          }
-                        });
-                      }}
+                      onClick={toggleFeature}
                       className={cn(
                         "flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors cursor-pointer select-none border-b border-neutral-100/80",
                         enabled ? "bg-neutral-50/80 hover:bg-neutral-100/80" : "hover:bg-neutral-50/50"
@@ -553,7 +555,8 @@ export default function Settings() {
                       <ToggleSwitch
                         checked={enabled}
                         label={feature.label}
-                        onToggle={() => {}}
+                        disabled={editingDisabled}
+                        onToggle={toggleFeature}
                         size="sm"
                       />
                     </div>

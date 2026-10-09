@@ -7,6 +7,7 @@ import SessionRow from './SessionRow';
 const PAGE_SIZE = 50;
 
 interface SessionListViewProps {
+  includeSubagents: boolean;
   refreshKey: string | null;
   onOpenDetail: (session: SessionRecord) => void;
   onRevealInFinder: (session: SessionRecord) => void;
@@ -19,13 +20,13 @@ interface ListResult {
 }
 
 const SessionListView: React.FC<SessionListViewProps> = ({
-  refreshKey, onOpenDetail, onRevealInFinder,
+  includeSubagents, refreshKey, onOpenDetail, onRevealInFinder,
 }) => {
   const [{ search, page }, setQuery] = useState({ search: '', page: 0 });
   const [result, setResult] = useState<ListResult | null>(null);
   const [retry, setRetry] = useState(0);
   const keyword = search.trim();
-  const requestKey = JSON.stringify([keyword, page, refreshKey, retry]);
+  const requestKey = JSON.stringify([keyword, page, includeSubagents, refreshKey, retry]);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +34,7 @@ const SessionListView: React.FC<SessionListViewProps> = ({
       try {
         const data = await invoke<SessionListPage>('list_sessions', {
           search: keyword, offset: page * PAGE_SIZE, limit: PAGE_SIZE,
+          includeSubagents,
         });
         if (cancelled) return;
         const lastPage = Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1);
@@ -51,7 +53,7 @@ const SessionListView: React.FC<SessionListViewProps> = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [keyword, page, requestKey]);
+  }, [keyword, page, includeSubagents, requestKey]);
 
   // 输入或同步变化后立即隐藏旧结果，迟到的请求也不会覆盖当前查询。
   const isLoading = result?.key !== requestKey;
@@ -63,12 +65,12 @@ const SessionListView: React.FC<SessionListViewProps> = ({
     <div>
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="min-w-0">
-          <p className="text-[13px] font-medium text-black">全部项目的会话</p>
+          <p className="text-[13px] font-medium text-black">全部项目的{includeSubagents ? '会话' : '主会话'}</p>
           <p className="mt-1 text-[11px] text-[#888888]">按开始时间倒序排列，支持输入完整或部分会话 ID</p>
         </div>
         <div className="ml-auto flex w-full items-center gap-3 @min-[640px]/page:w-auto">
           <span role="status" className="shrink-0 text-[11px] text-[#888888]">
-            {isLoading ? '正在查找…' : error ? '加载失败' : `${data?.total ?? 0} 个${keyword ? '匹配' : ''}会话`}
+            {isLoading ? '正在查找…' : error ? '加载失败' : `${data?.total ?? 0} 个${keyword ? '匹配' : ''}${includeSubagents ? '会话' : '主会话'}`}
           </span>
           <div className="flex min-w-0 flex-1 @min-[640px]/page:w-72">
             <SearchInput
@@ -94,6 +96,7 @@ const SessionListView: React.FC<SessionListViewProps> = ({
         <div className="bg-white rounded-xl border border-[#EAEAEA] py-14 px-8 text-center">
           <p className="text-[14px] font-medium text-black">{keyword ? '没有找到匹配的会话' : '还没有会话数据'}</p>
           <p className="mt-2 text-[12px] text-[#888888]">{keyword ? '试试更短的 ID 片段，或清除搜索查看全部会话' : '点击上方“立即同步”，导入本地历史会话'}</p>
+          {!includeSubagents && <p className="mt-2 text-[12px] text-[#888888]">开启“包含子会话”可查看子会话</p>}
         </div>
       ) : (
         <>

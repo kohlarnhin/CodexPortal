@@ -2,6 +2,7 @@ import React from 'react';
 import { useQuotaQuietHours } from '../hooks/useQuotaQuietHours';
 import type { useSystemTray } from '../hooks/useSystemTray';
 import ToggleSwitch from './ToggleSwitch';
+import ModelPricingModal from './ModelPricingModal';
 
 interface AppSettingsProps {
   isEmailMaskingEnabled: boolean;
@@ -172,6 +173,21 @@ const AppSettings: React.FC<AppSettingsProps> = ({
             <p className="px-6 pb-4 text-[12px] text-[#888888]">正在读取免打扰设置…</p>
           ) : null}
           {quietHours.error ? <p role="alert" className="px-6 pb-4 text-[12px] text-red-600">{quietHours.error}</p> : null}
+        </div>
+
+        <div className="flex items-center justify-between gap-6 border-t border-[#EAEAEA] p-6">
+          <div className="flex min-w-0 items-center gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#EAEAEA] bg-[#F5F5F5] text-[#555555]">
+              <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 9v12M9 15h12" /></svg>
+            </div>
+            <div className="min-w-0">
+              <div className="text-[15px] font-semibold text-black">模型价格</div>
+              <div className="mt-0.5 text-[12px] leading-relaxed text-[#888888]">
+                查看内置模型的输入、缓存输入、输出单价与计费倍率
+              </div>
+            </div>
+          </div>
+          <ModelPricingModal />
         </div>
       </div>
     </div>

@@ -124,6 +124,7 @@ pub fn run() {
             codex::config::save_codex_config,
             codex::version::get_codex_versions,
             sessions::sync::sync_sessions,
+            sessions::sync::reset_sessions,
             sessions::sync::get_session_sync_status,
             sessions::list_session_projects,
             sessions::list::list_sessions,

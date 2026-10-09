@@ -180,7 +180,7 @@ const TokenUsagePage: React.FC = () => {
   useEffect(() => {
     let disposed = false;
     let requestId = 0;
-    let unlisten: (() => void) | undefined;
+    const unlisteners: Array<() => void> = [];
     const load = async () => {
       if (disposed) return;
       const currentRequest = ++requestId;
@@ -203,14 +203,20 @@ const TokenUsagePage: React.FC = () => {
       }
     };
 
-    void listen('session-sync-completed', () => void load()).then(stop => {
-      if (disposed) stop();
-      else unlisten = stop;
-    }).catch(err => console.error('Failed to listen for session sync:', err));
+    for (const event of ['session-sync-completed', 'session-sync-failed', 'sessions-reset']) {
+      void listen(event, () => {
+        if (disposed) return;
+        if (event === 'sessions-reset') setDays([]);
+        void load();
+      }).then(stop => {
+        if (disposed) stop();
+        else unlisteners.push(stop);
+      }).catch(err => console.error('Failed to listen for session sync:', err));
+    }
     void load();
     return () => {
       disposed = true;
-      unlisten?.();
+      unlisteners.forEach(stop => stop());
     };
   }, [queryStartDate, queryEndDate]);
 
