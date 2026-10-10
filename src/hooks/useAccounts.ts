@@ -137,6 +137,11 @@ export function useAccounts() {
     }
   };
 
+  const setAutoSwitchThreshold = async (id: string, threshold: number) => {
+    await invoke('set_auto_switch_threshold', { id, threshold });
+    await loadAccounts(false);
+  };
+
   return {
     accounts: store.accounts,
     activeAccountId: store.activeAccountId,
@@ -146,6 +151,7 @@ export function useAccounts() {
     updateAccount,
     deleteAccount,
     setActiveAccount,
+    setAutoSwitchThreshold,
     validatePersonalToken,
     exchangeRefreshToken,
     saveRtAccount,

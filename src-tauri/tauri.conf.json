@@ -1,6 +1,6 @@
 {
   "productName": "Codex Portal",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "identifier": "com.codex.portal",
   "build": {
     "frontendDist": "../dist",
@@ -13,11 +13,15 @@
       {
         "title": "Codex Portal",
         "width": 1000,
-        "height": 660,
+        "height": 760,
         "minWidth": 1000,
         "maxWidth": 1000,
         "minHeight": 660,
-        "maxHeight": 660,
+        "maxHeight": 760,
+        "preventOverflow": {
+          "width": 32,
+          "height": 48
+        },
         "resizable": false,
         "maximizable": false,
         "decorations": true,

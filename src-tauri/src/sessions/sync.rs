@@ -187,6 +187,13 @@ fn sync_sessions_inner(
         *syncing = true;
     }
 
+    crate::logging::info("session-sync", if reset {
+        "开始清空并重新同步会话。"
+    } else if force_full {
+        "开始全量同步会话。"
+    } else {
+        "开始增量同步会话。"
+    });
     let mut reset_completed = false;
     let result = (|| {
         let scan_started_at = Utc::now().to_rfc3339();
@@ -369,8 +376,12 @@ fn sync_sessions_inner(
                 .map_err(|e| e.to_string())?;
             }
 
-            // 仅同步会话接口返回的剩余额度，不生成账号消费账本或估算。
+            // 当前账号由实时推送维护，历史文件同步只补充非当前账号的额度缓存。
+            let current_account_id: Option<String> = tx.query_row(
+                "SELECT id FROM accounts WHERE is_active = 1 LIMIT 1", [], |row| row.get(0),
+            ).optional().map_err(|error| error.to_string())?;
             for (account_id, usage) in &parsed.account_usage {
+                if current_account_id.as_ref() == Some(account_id) { continue; }
                 if update_account_usage_from_session(&tx, account_id, usage)? {
                     usage_updated_accounts.insert(account_id.clone());
                 }
@@ -627,7 +638,19 @@ fn sync_sessions_inner(
         };
     }
     if let Err(error) = &result {
+        crate::logging::error("session-sync", "会话同步失败，请在会话管理中查看错误详情并重试。");
         let _ = app.emit("session-sync-failed", error);
+    } else if let Ok(summary) = &result {
+        let message = format!(
+            "同步完成：扫描 {} 个文件，新增 {}，更新 {}，删除 {}，未变化 {}，重复文件 {}，失败 {}，共 {} 个会话、{} 个项目。",
+            summary.total, summary.imported, summary.updated, summary.removed,
+            summary.skipped, summary.duplicates, summary.failed, summary.session_count, summary.projects,
+        );
+        if summary.failed > 0 {
+            crate::logging::warn("session-sync", message);
+        } else {
+            crate::logging::info("session-sync", message);
+        }
     }
     result
 }
@@ -681,22 +704,9 @@ pub(crate) fn start_session_sync_scheduler(app: tauri::AppHandle) {
             if due {
                 match sync_sessions_inner(&app, force_full, false) {
                     Ok(result) => {
-                        eprintln!(
-                        "[session-sync] 同步完成：扫描 {} 个文件，新增 {}，更新 {}，删除 {}，未变化 {}，重复文件 {}，失败 {}，共 {} 个会话、{} 个项目",
-                        result.total,
-                        result.imported,
-                        result.updated,
-                        result.removed,
-                        result.skipped,
-                        result.duplicates,
-                        result.failed,
-                        result.session_count,
-                        result.projects
-                    );
                         let _ = app.emit("session-sync-completed", result);
                     }
                     Err(error) => {
-                        eprintln!("[session-sync] 同步失败: {error}");
                         if requested && error == "会话正在同步中，请稍候" {
                             thread::park_timeout(Duration::from_secs(1));
                             SESSION_SYNC_REQUESTED.store(true, Ordering::Release);
@@ -704,7 +714,7 @@ pub(crate) fn start_session_sync_scheduler(app: tauri::AppHandle) {
                     }
                 }
             } else {
-                eprintln!("[session-sync] 未到下次同步时间，{sleep_secs}s 后检查");
+                crate::logging::info("session-sync", format!("未到下次同步时间，{sleep_secs}s 后检查。"));
             }
 
             if !SESSION_SYNC_REQUESTED.load(Ordering::Acquire) {

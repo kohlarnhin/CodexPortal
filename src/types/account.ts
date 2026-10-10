@@ -23,6 +23,7 @@ export interface Account {
   canActivate: boolean;
   nextRefreshAt?: string | null;
   autoActivateWindow: boolean;
+  autoSwitchThreshold: number;
   chatgptPlanType?: string | null;
   hasAccessToken: boolean;
   resetCredits: ResetCreditsInfo | null;

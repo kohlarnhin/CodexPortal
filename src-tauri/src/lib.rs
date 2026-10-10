@@ -3,6 +3,7 @@ mod auth;
 mod codex;
 mod db;
 mod http;
+mod logging;
 mod process;
 mod sessions;
 mod skills;
@@ -38,6 +39,7 @@ pub fn run() {
         ))
         .on_window_event(windows::handle_window_event)
         .setup(|app| {
+            logging::initialize(app.handle());
             #[cfg(desktop)]
             {
                 let updater = tauri_plugin_updater::Builder::new();
@@ -64,6 +66,8 @@ pub fn run() {
                 oauth: Mutex::new(OAuthSession::default()),
                 syncing_sessions: Mutex::new(false),
             });
+            app.manage(codex::events::EventListenerState::default());
+            app.manage(accounts::auto_switch::AutoSwitchState::default());
 
             tray::start(app.handle().clone())?;
             start_usage_scheduler(app.handle().clone());
@@ -76,7 +80,7 @@ pub fn run() {
                     let state = import_app.state::<AppState>();
                     match accounts::import_account_from_auth_json(state).await {
                         Ok(_) => {}
-                        Err(error) => eprintln!("[auth-import] 自动导入失败: {error}"),
+                        Err(_) => logging::warn("auth-import", "自动导入账号失败，请在账号管理中手动导入。"),
                     }
                 });
             }
@@ -92,9 +96,15 @@ pub fn run() {
             #[cfg(desktop)]
             show_main_window(app.handle());
 
+            logging::info("app", "应用已就绪，账号与会话后台调度已启动。");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            logging::get_recent_logs,
+            codex::events::get_codex_event_url,
+            codex::events::get_codex_event_context,
+            codex::events::save_codex_live_usage,
+            codex::events::report_codex_listener_event,
             accounts::get_accounts,
             tray::get_tray_settings,
             tray::set_tray_enabled,
@@ -113,6 +123,9 @@ pub fn run() {
             accounts::set_active_account,
             accounts::set_account_access_token,
             accounts::set_auto_activate_window,
+            accounts::auto_switch::set_auto_switch_threshold,
+            accounts::auto_switch::get_auto_switch_enabled,
+            accounts::auto_switch::set_auto_switch_enabled,
             accounts::quiet_hours::get_quota_quiet_hours,
             accounts::quiet_hours::set_quota_quiet_hours,
             accounts::credits::get_reset_credits,
@@ -145,6 +158,7 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_app_handle, event| match event {
+        tauri::RunEvent::Exit => codex::events::stop_event_listener(_app_handle),
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
             has_visible_windows,

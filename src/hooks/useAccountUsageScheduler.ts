@@ -7,8 +7,8 @@ import { getDisplayedEmail } from '../utils/accountEmail';
 /**
  * 账号额度刷新调度。
  *
- * 后端每 5 分钟同步会话，并保存会话返回的账号额度。
- * 同步完成后重新读取本地账号缓存；启动补刷、重置到期和手动刷新使用额度接口。
+ * 当前账号由 app-server 实时推送维护；其余账号保留原有额度调度。
+ * 监听账号与额度缓存变更，手动刷新账号管理中的额度仍使用额度接口。
  */
 export function useAccountUsageScheduler(isEmailMaskingEnabled: boolean) {
   const emailMasking = useRef(isEmailMaskingEnabled);
@@ -42,12 +42,14 @@ export function useAccountUsageScheduler(isEmailMaskingEnabled: boolean) {
     };
 
     void Promise.allSettled([
+      listen<string>('account-switch-warning', (event) => {
+        if (!disposed) window.alert(event.payload);
+      }),
       listen<{ accountName: string; message: string }>('account-request-failed', (event) => {
         if (!disposed) window.alert(`${getDisplayedEmail(event.payload.accountName, emailMasking.current)}\n${event.payload.message}`);
       }),
       listen('usage-updated', handleUsageUpdated),
       listen('accounts-updated', handleUsageUpdated),
-      listen('session-sync-completed', handleUsageUpdated),
       listen<{ accountId: string }>('usage-refresh-started', handleRefreshStarted),
       listen<{ accountId: string }>('usage-refresh-finished', handleRefreshFinished),
     ]).then((resolved) => {

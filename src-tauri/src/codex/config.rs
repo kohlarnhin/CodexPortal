@@ -87,5 +87,11 @@ fn write_codex_config_file(
 #[tauri::command]
 pub(crate) fn save_codex_config(content: String, expected_content: String) -> Result<(), String> {
     let _guard = CONFIG_FILE_LOCK.lock().map_err(|e| e.to_string())?;
-    write_codex_config_file(&codex_config_path()?, &content, &expected_content)
+    let result = write_codex_config_file(&codex_config_path()?, &content, &expected_content);
+    match &result {
+        Ok(()) if content != expected_content => crate::logging::info("config", "Codex 配置已保存。"),
+        Err(_) => crate::logging::error("config", "Codex 配置保存失败，请重新载入后检查配置。"),
+        _ => {}
+    }
+    result
 }

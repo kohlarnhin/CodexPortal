@@ -171,6 +171,7 @@ pub(crate) fn start_usage_scheduler(app: tauri::AppHandle) {
                                 .map(|time| time.with_timezone(&Utc))
                                 .unwrap_or(DateTime::<Utc>::MIN_UTC);
                             (account.can_refresh_usage
+                                && (store.active_account_id.as_ref() != Some(&account.id) || account.auto_activate_window)
                                 && !refreshing.contains(&account.id)
                                 && due_at <= now)
                                 .then_some((due_at, account))

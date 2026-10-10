@@ -22,6 +22,7 @@ interface AccountCardProps {
   onRefreshUsage: (id: string) => void;
   onActivateWindow: (account: Account) => void;
   onShowReset: (account: Account) => void;
+  onConfigureAutoSwitch: (account: Account) => void;
   isUsageRefreshing: boolean;
 }
 
@@ -72,6 +73,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
   onRefreshUsage,
   onActivateWindow,
   onShowReset,
+  onConfigureAutoSwitch,
   isUsageRefreshing,
 }) => {
   const usageWindows: Array<{
@@ -209,7 +211,14 @@ const AccountCard: React.FC<AccountCardProps> = ({
         </div>
         
         <div className="flex flex-wrap items-center justify-between gap-y-2 pt-4 border-t border-[#EAEAEA] mt-auto">
-          <div className="flex items-center gap-2 overflow-hidden mr-4">
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden mr-4">
+            <ActionTooltip label="设置剩余额度达到阈值时自动切换账号">
+              <Button type="button" variant="secondary" size="sm" className="h-6 shrink-0 px-2 text-[10px]"
+                onClick={() => onConfigureAutoSwitch(account)}>
+                <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" /></svg>
+                自动切换 ≤ {account.autoSwitchThreshold}%
+              </Button>
+            </ActionTooltip>
             {account.notes && (
               <>
                 <div className="w-5 h-5 shrink-0 rounded bg-[#F5F5F5] flex items-center justify-center border border-[#EAEAEA]">

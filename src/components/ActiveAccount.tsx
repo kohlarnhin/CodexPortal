@@ -2,9 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import PlanBadge from './PlanBadge';
+import CodexSessionsPanel from './CodexSessionsPanel';
+import type { CodexLiveUsage, CodexSessionMonitor } from '../types/codexEvents';
 import Button from './ui/button';
 import { ActionTooltip } from './ui/tooltip';
-import { AccountUsage, AccountUsageWindow } from '../types/account';
+import { AccountUsageWindow } from '../types/account';
 import {
   formatUsageResetAt,
   formatUsageSyncedAt,
@@ -17,8 +19,11 @@ interface ActiveAccountProps {
   isEmailMaskingEnabled: boolean;
   onNavigateToAccounts: () => void;
   usageRevision: number;
-  onRefreshUsage: (accountId: string) => Promise<AccountUsage>;
-  isUsageRefreshing: (accountId: string) => boolean;
+  liveUsage: CodexLiveUsage;
+  onRefreshUsage: () => Promise<void>;
+  sessionMonitor: CodexSessionMonitor;
+  onRefreshSessions: () => void;
+  onViewLogs: () => void;
 }
 
 function getRelativeResetTime(resetsAt: number | null): string | null {
@@ -53,7 +58,9 @@ const UsageCard = ({
   const isLow = remainingPercent !== null && remainingPercent > 0 && remainingPercent <= 20;
   const isMedium = remainingPercent !== null && remainingPercent > 20 && remainingPercent <= 50;
 
-  const statusLabel = isExhausted
+  const statusLabel = remainingPercent === null
+    ? '额度未知'
+    : isExhausted
     ? '额度耗尽'
     : isLow
       ? '余量紧张'
@@ -61,13 +68,17 @@ const UsageCard = ({
         ? '余量正常'
         : '余量充裕';
 
-  const statusBadgeClass = isExhausted || isLow
+  const statusBadgeClass = remainingPercent === null
+    ? 'bg-neutral-50 text-neutral-500 border-neutral-200/60'
+    : isExhausted || isLow
     ? 'bg-red-50 text-red-700 border-red-200/60'
     : isMedium
       ? 'bg-amber-50 text-amber-700 border-amber-200/60'
       : 'bg-emerald-50 text-emerald-700 border-emerald-200/60';
 
-  const dotColorClass = isExhausted || isLow
+  const dotColorClass = remainingPercent === null
+    ? 'bg-neutral-400'
+    : isExhausted || isLow
     ? 'bg-[#EF4444]'
     : isMedium
       ? 'bg-[#F59E0B]'
@@ -223,8 +234,11 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   isEmailMaskingEnabled,
   onNavigateToAccounts,
   usageRevision,
+  liveUsage,
   onRefreshUsage,
-  isUsageRefreshing,
+  sessionMonitor,
+  onRefreshSessions,
+  onViewLogs,
 }) => {
   const { accounts, activeAccountId, isLoading, refresh } = useAccounts();
   const [usageError, setUsageError] = useState<string | null>(null);
@@ -240,7 +254,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
 
   useEffect(() => {
     setUsageError(null);
-  }, [activeAccountId]);
+  }, [activeAccountId, liveUsage.usage?.syncedAt]);
 
   if (isLoading) {
     return (
@@ -310,20 +324,22 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
     window: AccountUsageWindow;
     kind: 'primary' | 'secondary';
   }> = [];
-  if (activeAccount.usage?.primary) {
-    usageWindows.push({ window: activeAccount.usage.primary, kind: 'primary' });
+  const currentUsage = liveUsage.accountId === activeAccount.id ? liveUsage.usage : null;
+  if (currentUsage?.primary) {
+    usageWindows.push({ window: currentUsage.primary, kind: 'primary' });
   }
-  if (activeAccount.usage?.secondary) {
-    usageWindows.push({ window: activeAccount.usage.secondary, kind: 'secondary' });
+  if (currentUsage?.secondary) {
+    usageWindows.push({ window: currentUsage.secondary, kind: 'secondary' });
   }
-  const usageRefreshing = activeAccount.canRefreshUsage && isUsageRefreshing(activeAccount.id);
+  const usageRefreshing = liveUsage.accountId === activeAccount.id && liveUsage.isRefreshing;
+  const displayedUsageError = usageError ?? (liveUsage.accountId === activeAccount.id ? liveUsage.error : null);
   const firstChar = (activeAccount.name || '').trim().charAt(0).toUpperCase();
   const avatarLetter = /^[A-Z0-9]$/i.test(firstChar) ? firstChar : null;
 
   const handleRefreshUsage = async () => {
     setUsageError(null);
     try {
-      await onRefreshUsage(activeAccount.id);
+      await onRefreshUsage();
     } catch (error: any) {
       if (activeAccountRef.current === activeAccount.id) {
         setUsageError(error?.message || error?.toString() || '额度刷新失败');
@@ -348,15 +364,15 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
         <div>
           <div className="flex items-center gap-2.5">
             <h2 className="text-[20px] font-semibold tracking-tight text-neutral-900">当前账号</h2>
-            {activeAccount.usage && (
+            {currentUsage && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200/60">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
-                {formatUsageSyncedAt(activeAccount.usage.syncedAt)}
+                {liveUsage.source === 'push' ? '实时推送' : liveUsage.source === 'manualRead' ? '手动读取' : '初始额度'} · {formatUsageSyncedAt(currentUsage.syncedAt)}
               </span>
             )}
           </div>
           <p className="text-[13px] text-neutral-500 mt-1">
-            Codex 活跃会话凭据 · 每 5 分钟自动同步剩余额度窗口。
+            当前账号额度由官方会话推送实时更新。
           </p>
         </div>
       </div>
@@ -493,7 +509,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                     variant="ghost"
                     size="icon"
                     onClick={() => void handleRefreshUsage()}
-                    disabled={!activeAccount.canRefreshUsage || usageRefreshing}
+                    disabled={sessionMonitor.connectionStatus !== 'connected' || usageRefreshing}
                     aria-label="刷新额度"
                     className="h-8 w-8 rounded-md text-neutral-600 hover:text-black hover:bg-white hover:shadow-2xs transition-all cursor-pointer"
                   >
@@ -549,7 +565,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
         </section>
 
         {/* 错误提示 */}
-        {usageError && (
+        {displayedUsageError && (
           <div
             role="alert"
             className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50/80 px-4 py-3 text-[12px] text-red-700 shadow-2xs"
@@ -569,7 +585,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               <line x1="12" y1="8" x2="12" y2="12" />
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
-            <span className="flex-1 break-all">{usageError}</span>
+            <span className="flex-1 break-all">{displayedUsageError}</span>
           </div>
         )}
 
@@ -601,35 +617,15 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               <path d="m7 16 4-5 4 3 4-7" />
             </svg>
             <p className="text-[13.5px] font-medium text-neutral-700">
-              {activeAccount.canRefreshUsage
-                ? activeAccount.usage
-                  ? '接口暂未返回额度明细'
-                  : '尚未同步额度数据'
-                : '暂无可用认证，无法同步额度'}
+              {usageRefreshing ? '正在读取初始额度…' : currentUsage ? '接口暂未返回额度明细' : '等待当前账号额度'}
             </p>
             <p className="mt-1.5 max-w-sm text-[12px] leading-relaxed text-neutral-400">
-              {activeAccount.canRefreshUsage
-                ? '系统每 5 分钟自动读取会话返回的最新额度，也可点击账号卡片上的刷新按钮。'
-                : '请前往账号管理页面，配置 PAT 或完成 OAuth 登录。'}
+              连接时读取初始值；在任意项目中使用 Codex，官方额度推送会直接更新此处。也可点击刷新按钮主动查询。
             </p>
           </div>
         )}
 
-        {/* 底部优化状态条 */}
-        <div className="rounded-xl border border-neutral-200/70 bg-white/80 px-5 py-3.5 shrink-0 flex items-center justify-between text-[12px] text-neutral-500 shadow-2xs">
-          <div className="flex items-center gap-2.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#10B981]" />
-            </span>
-            <span className="text-neutral-700 font-medium">后台会话监测中</span>
-            <span className="text-neutral-300">·</span>
-            <span className="text-neutral-500">每 5 分钟自动同步会话额度，额度重置后将自动回满</span>
-          </div>
-          <span className="text-[11.5px] font-mono text-neutral-400">
-            共配置 {accounts.length} 个账号
-          </span>
-        </div>
+        <CodexSessionsPanel monitor={sessionMonitor} onRefresh={onRefreshSessions} onViewLogs={onViewLogs} />
       </div>
     </div>
   );

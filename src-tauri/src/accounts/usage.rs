@@ -177,7 +177,7 @@ pub(crate) fn fetch_account_usage(
 }
 
 /// 成功和失败都按短周期重置时间加一分钟安排刷新。
-fn compute_next_refresh_at(usage: &AccountUsage, now: DateTime<Utc>) -> DateTime<Utc> {
+pub(crate) fn compute_next_refresh_at(usage: &AccountUsage, now: DateTime<Utc>) -> DateTime<Utc> {
     usage
         .primary
         .as_ref()
@@ -196,6 +196,7 @@ pub(crate) fn report_account_request_error(
     title: &str,
     error: &str,
 ) {
+    crate::logging::error("accounts", format!("{title}，请在账号管理中检查认证或网络。"));
     let name = state.db.lock().ok().and_then(|db| {
         db.query_row(
             "SELECT name FROM accounts WHERE id = ?1",
@@ -263,7 +264,7 @@ pub(crate) fn save_fallback_reset(
 
 /// 根据额度响应的长周期（secondary）窗口时长推导账号限额类型（周限/月限）。
 /// 10080 分钟 = 7 天 → 周限；38880~46080 分钟 ≈ 30 天 → 月限。
-fn derive_plan_type_from_usage(usage: &AccountUsage) -> Option<&'static str> {
+pub(crate) fn derive_plan_type_from_usage(usage: &AccountUsage) -> Option<&'static str> {
     let secondary = usage.secondary.as_ref()?;
     let minutes = secondary.window_minutes?;
     if minutes == 10_080 {
@@ -587,14 +588,17 @@ pub(crate) async fn refresh_account_usage_inner(
     state: &AppState,
     id: &str,
 ) -> Result<AccountUsage, String> {
+    crate::logging::info("account-usage", "开始刷新账号额度。");
     let result = fetch_and_persist_account_usage(app, state, id).await;
     if let Err(error) = &result {
         save_fallback_reset(app, state, id, "额度刷新失败", error);
+    } else {
+        crate::logging::info("account-usage", "账号额度刷新完成。");
     }
     result
 }
 
-async fn fetch_and_persist_account_usage(
+pub(super) async fn fetch_and_persist_account_usage(
     app: &tauri::AppHandle,
     state: &AppState,
     id: &str,

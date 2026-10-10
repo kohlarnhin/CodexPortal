@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
+import { useAutoSwitchSettings } from '../hooks/useAutoSwitchSettings';
 import AccountCard from './AccountCard';
 import AccountModal from './AccountModal';
+import AccountAutoSwitchModal from './AccountAutoSwitchModal';
 import ConfirmModal from './ConfirmModal';
 import QuotaActivationModal from './QuotaActivationModal';
 import ResetInfoModal from './ResetInfoModal';
@@ -32,14 +34,17 @@ const AccountList: React.FC<AccountListProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, setAutoSwitchThreshold, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
+  const autoSwitch = useAutoSwitchSettings();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [activationAccountId, setActivationAccountId] = useState<string | null>(null);
+  const [autoSwitchAccountId, setAutoSwitchAccountId] = useState<string | null>(null);
   const [resetAccount, setResetAccount] = useState<Account | null>(null);
   const [planFilter, setPlanFilter] = useState<string | null>(null);
   const activationAccount = accounts.find((account) => account.id === activationAccountId);
+  const autoSwitchAccount = accounts.find((account) => account.id === autoSwitchAccountId);
 
   // 各订阅类型的账号数量（用于筛选 chip）
   const planCounts = useMemo(() => {
@@ -130,16 +135,36 @@ const AccountList: React.FC<AccountListProps> = ({
           <h2 className="text-[20px] font-semibold text-black tracking-tight mb-1">账号管理</h2>
           <p className="text-[13px] text-[#666666]">管理并无缝切换本地的 Codex 认证配置。</p>
         </div>
-        <ActionTooltip label="添加账号">
-          <Button
-            onClick={handleAdd}
-            size="icon"
-            className="h-8 w-8 shadow-sm"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-          </Button>
-        </ActionTooltip>
+        <div className="flex shrink-0 items-center gap-2">
+          <ActionTooltip label={autoSwitch.enabled ? '关闭自动切换账号' : '开启自动切换账号'}>
+            <Button type="button" variant="outline" size="sm" role="switch"
+              aria-label="自动切换账号" aria-checked={autoSwitch.enabled === true}
+              disabled={autoSwitch.isLoading || autoSwitch.isSaving || autoSwitch.enabled === null}
+              onClick={() => void autoSwitch.toggle()} className="gap-2">
+              <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${autoSwitch.enabled ? 'bg-emerald-500' : 'bg-neutral-300'}`} />
+              {autoSwitch.isSaving ? '保存中…' : autoSwitch.isLoading ? '读取设置…'
+                : autoSwitch.enabled === null ? '设置不可用' : autoSwitch.enabled ? '自动切换已开启' : '自动切换已关闭'}
+            </Button>
+          </ActionTooltip>
+          <ActionTooltip label="添加账号">
+            <Button
+              onClick={handleAdd}
+              size="icon"
+              className="h-8 w-8 shadow-sm"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+            </Button>
+          </ActionTooltip>
+        </div>
       </div>
+
+      {autoSwitch.error && (
+        <div role="alert" className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[12px] text-red-600">
+          <p className="min-w-0 break-words">{autoSwitch.error}</p>
+          <Button type="button" variant="ghost" size="sm" disabled={autoSwitch.isLoading || autoSwitch.isSaving}
+            onClick={() => void autoSwitch.reload()}>重新读取</Button>
+        </div>
+      )}
 
       {accounts.length > 0 && (
         <div className="flex items-center gap-2 mb-3 flex-wrap shrink-0">
@@ -231,6 +256,7 @@ const AccountList: React.FC<AccountListProps> = ({
                 onRefreshUsage={(id) => void handleRefreshUsage(id)}
                 onActivateWindow={(target) => setActivationAccountId(target.id)}
                 onShowReset={(target) => setResetAccount(target)}
+                onConfigureAutoSwitch={(target) => setAutoSwitchAccountId(target.id)}
                 isUsageRefreshing={account.canRefreshUsage && isUsageRefreshing(account.id)}
               />
             </div>
@@ -276,6 +302,17 @@ const AccountList: React.FC<AccountListProps> = ({
           onClose={() => setActivationAccountId(null)}
           isUsageRefreshing={isUsageRefreshing(activationAccount.id)}
           isEmailMaskingEnabled={isEmailMaskingEnabled}
+        />
+      )}
+
+      {autoSwitchAccount && (
+        <AccountAutoSwitchModal
+          key={autoSwitchAccount.id}
+          account={autoSwitchAccount}
+          isEmailMaskingEnabled={isEmailMaskingEnabled}
+          autoSwitchEnabled={autoSwitch.enabled}
+          onClose={() => setAutoSwitchAccountId(null)}
+          onSave={setAutoSwitchThreshold}
         />
       )}
 

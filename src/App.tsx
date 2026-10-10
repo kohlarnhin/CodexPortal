@@ -8,6 +8,7 @@ import TokenUsagePage from './components/TokenUsagePage';
 import MCPManager from './components/MCPManager';
 import SkillManager from './components/SkillManager';
 import CodexInfo from './components/CodexInfo';
+import LogsPage from './components/LogsPage';
 import About from './components/About';
 import UpdateModal from './components/UpdateModal';
 import Logo from './components/Logo';
@@ -17,6 +18,7 @@ import { useEmailMasking } from './hooks/useEmailMasking';
 import { useAccountUsageScheduler } from './hooks/useAccountUsageScheduler';
 import { useAutostart } from './hooks/useAutostart';
 import { useSystemTray } from './hooks/useSystemTray';
+import { useCodexRateLimitListener } from './hooks/useCodexRateLimitListener';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -26,6 +28,7 @@ function App() {
   const usageScheduler = useAccountUsageScheduler(isEmailMaskingEnabled);
   const autostart = useAutostart();
   const systemTray = useSystemTray(isEmailMaskingEnabled, setActiveTab);
+  const codexEvents = useCodexRateLimitListener();
 
   // 自动检查发现新版本时跳转到"关于"页，让用户看到版本更新提示。
   useEffect(() => {
@@ -148,6 +151,18 @@ function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('logs')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
+              activeTab === 'logs'
+                ? 'bg-black/[0.06] text-black font-semibold'
+                : 'text-[#666666] hover:bg-black/[0.03] hover:text-black font-medium'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
+            日志
+          </button>
+
+          <button
             onClick={() => setActiveTab('app-settings')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-[15px] ${
               activeTab === 'app-settings'
@@ -185,8 +200,11 @@ function App() {
                 isEmailMaskingEnabled={isEmailMaskingEnabled}
                 onNavigateToAccounts={() => setActiveTab('accounts')}
                 usageRevision={usageScheduler.usageRevision}
-                onRefreshUsage={usageScheduler.refreshAccountUsage}
-                isUsageRefreshing={usageScheduler.isUsageRefreshing}
+                liveUsage={codexEvents.liveUsage}
+                onRefreshUsage={codexEvents.refreshUsage}
+                sessionMonitor={codexEvents.monitor}
+                onRefreshSessions={codexEvents.refreshSessions}
+                onViewLogs={() => setActiveTab('logs')}
               />
             </div>
           )}
@@ -240,6 +258,11 @@ function App() {
                 onToggleAutoLaunch={autostart.toggleAutostart}
                 systemTray={systemTray}
               />
+            </div>
+          )}
+          {activeTab === 'logs' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <LogsPage />
             </div>
           )}
           {activeTab === 'about' && (

@@ -6,9 +6,7 @@ pub(crate) fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unmaximize();
-        if let Some(config) = app.config().app.windows.iter().find(|config| config.label == window.label()) {
-            let _ = window.set_size(tauri::LogicalSize::new(config.width, config.height));
-        }
+        // 保留创建时按屏幕工作区限制的尺寸，避免从 Dock / 托盘恢复时重新撑出屏幕。
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();

@@ -12,6 +12,11 @@ use std::time::Duration;
 /// 启动时获取并缓存的 Codex CLI 版本号（用于 User-Agent）。
 static CODEX_VERSION: OnceLock<String> = OnceLock::new();
 
+#[cfg(windows)]
+const CLI_EXECUTABLE_NAMES: &[&str] = &["codex.exe", "codex.cmd", "codex.bat"];
+#[cfg(not(windows))]
+const CLI_EXECUTABLE_NAMES: &[&str] = &["codex"];
+
 /// 构造与 Codex CLI 一致的 User-Agent（originator/版本/系统/架构）。
 /// 版本号使用启动时获取并保存的 Codex CLI 版本；未获取到时回退为本应用版本。
 pub(crate) fn codex_cli_user_agent() -> String {
@@ -106,6 +111,49 @@ fn desktop_codex_executable_candidates() -> Vec<PathBuf> {
     Vec::new()
 }
 
+fn codex_cli_search_path() -> Option<std::ffi::OsString> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_cli_search_path()
+    }
+    #[cfg(windows)]
+    {
+        super::windows::cli_search_path()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        std::env::var_os("PATH")
+    }
+}
+
+/// 账号切换后的后台命令沿用版本检测的搜索范围，兼容桌面应用的精简 PATH。
+pub(super) fn codex_command() -> Result<Command, String> {
+    let search_path = codex_cli_search_path();
+    if let Some(path) = &search_path {
+        for directory in std::env::split_paths(path) {
+            for name in CLI_EXECUTABLE_NAMES {
+                let executable = directory.join(name);
+                if executable.is_file() {
+                    let mut command = command(executable);
+                    command.env("PATH", path);
+                    return Ok(command);
+                }
+            }
+        }
+    }
+    // 仅安装桌面应用时，使用其捆绑的 Codex 可执行文件。
+    for executable in desktop_codex_executable_candidates() {
+        if executable.is_file() {
+            let mut command = command(executable);
+            if let Some(path) = &search_path {
+                command.env("PATH", path);
+            }
+            return Ok(command);
+        }
+    }
+    Err("未找到 Codex 可执行文件，请检查 Codex CLI 或桌面应用的安装。".into())
+}
+
 /// 执行 `codex --version` 并提取版本号（失败返回 None）。
 /// 同时检查 stdout / stderr 的版本行，忽略警告；限制等待时间，避免异常安装一直卡住检测。
 fn run_codex_version(mut command: Command) -> Option<String> {
@@ -137,25 +185,15 @@ fn local_desktop_codex_version(desktop_executables: &[PathBuf]) -> Option<String
 
 /// 只检测独立 CLI，不把 PATH 中指向桌面内置引擎的软链接当作独立安装。
 fn local_codex_cli_version(desktop_candidates: &[PathBuf]) -> Option<String> {
-    #[cfg(target_os = "macos")]
-    let search_path = macos_cli_search_path()?;
-    #[cfg(windows)]
-    let search_path = super::windows::cli_search_path()?;
-    #[cfg(not(any(target_os = "macos", windows)))]
-    let search_path = std::env::var_os("PATH")?;
+    let search_path = codex_cli_search_path()?;
 
     let desktop_executables: HashSet<PathBuf> = desktop_candidates
         .iter()
         .filter_map(|path| fs::canonicalize(path).ok())
         .collect();
-    #[cfg(target_os = "windows")]
-    let executable_names = ["codex.exe", "codex.cmd", "codex.bat"];
-    #[cfg(not(target_os = "windows"))]
-    let executable_names = ["codex"];
-
     let mut checked = HashSet::new();
     for directory in std::env::split_paths(&search_path) {
-        for name in executable_names {
+        for name in CLI_EXECUTABLE_NAMES {
             let executable = directory.join(name);
             if !executable.is_file() {
                 continue;

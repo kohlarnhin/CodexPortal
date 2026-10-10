@@ -39,6 +39,7 @@ Use the date alone, without prefixes such as `feat/`, `feature/`, or `codex/`, a
 - Prefer browser-native APIs and existing dependencies. Do not install packages merely for small parsing, formatting, or state-persistence tasks.
 - Persist application-only UI preferences separately from Codex's `config.toml`; do not mix portal preferences into the user's Codex configuration.
 - Do not start services, build, package, install dependencies, deploy, modify unrelated configuration, or update documentation without explicit user authorization. Requested project skill and rule updates authorize editing those files.
+  An authorized release also covers the required README updates described below.
 
 ## No Tests or Browser Calls by Default
 
@@ -86,17 +87,24 @@ The user may simply say **发布** or **发布了**. Treat this as authorization
 
 When no version is specified, default to the latest published stable version plus exactly one patch increment. If the current work has already prepared an explicit unreleased version, publish that version without incrementing it again. Retrying a failed release also keeps the prepared version. Always check existing releases before selecting the target and respect any explicit version or narrower scope in the current request.
 
+## Update README Before Every Release
+
+Before every authorized release, read and update the repository-root `README.md` to reflect the target version's actual features and user workflows, including any affected installation or usage instructions. Base the update on the source and full release diff, and preserve the existing documentation structure.
+
+Complete this update before committing the release, and include `README.md` in the same release commit so the published documentation matches the shipped code. Release authorization covers these README changes without a separate confirmation. This requirement was explicitly adopted on 2026-10-09.
+
 ## Publish an Authorized Release
 
 After explicit release authorization:
 
 1. Select the target version using Release Shorthand and any explicit user instruction, apply Update the Application Version, then verify that the five version sources match and that the target version is not already released.
-2. Commit all workspace changes under Commit Scope, including existing work and project-skill updates, integrate them into `main` if needed, and push `main`. Use the release request's Git authorization without asking again; only pause for a remaining blocker or an action outside that scope.
-3. Prepare concise release notes from the actual diff and obtain the user's wording when their choice would materially affect the public notes.
-4. Dispatch the manual workflow on `main`:
+2. Apply Update README Before Every Release before preparing the release commit.
+3. Commit all workspace changes under Commit Scope, including the updated README, existing work, and project-skill updates, integrate them into `main` if needed, and push `main`. Use the release request's Git authorization without asking again; only pause for a remaining blocker or an action outside that scope.
+4. Prepare concise release notes from the actual diff and obtain the user's wording when their choice would materially affect the public notes.
+5. Dispatch the manual workflow on `main`:
    ```bash
    gh workflow run release.yml --ref main -f release_notes='<release notes>'
    ```
-5. Stop after the push and workflow dispatch succeed. Do not query or poll Actions status, watch logs, or wait for publication unless the user explicitly asks. The user receives build-failure emails and wants to avoid consuming quota on repeated checks. If a local watcher is already running when this instruction applies, stop only that watcher, leaving the remote workflow running. This preference was adopted on 2026-09-20.
-6. Perform all building, packaging, signing, and release uploads in GitHub Actions. Do not build local release artifacts. Let the workflow build both macOS architectures and the Windows portable executable, keep intermediate files in Actions artifacts, and create `v<version>` with a published GitHub Release only after all builds succeed. Mark the release as latest after every asset has uploaded. Do not create GitHub Release drafts or a competing manual tag or release. This project preference was explicitly adopted on 2026-09-09.
-7. Report the version, commit, successful push to `main`, and successful workflow dispatch. Link the workflow page or a run URL already available without further status queries. Do not claim the build or publication succeeded when its result has not been checked. Later rule-only updates do not require dispatching the same release again.
+6. Stop after the push and workflow dispatch succeed. Do not query or poll Actions status, watch logs, or wait for publication unless the user explicitly asks. The user receives build-failure emails and wants to avoid consuming quota on repeated checks. If a local watcher is already running when this instruction applies, stop only that watcher, leaving the remote workflow running. This preference was adopted on 2026-09-20.
+7. Perform all building, packaging, signing, and release uploads in GitHub Actions. Do not build local release artifacts. Let the workflow build both macOS architectures and the Windows portable executable, keep intermediate files in Actions artifacts, and create `v<version>` with a published GitHub Release only after all builds succeed. Mark the release as latest after every asset has uploaded. Do not create GitHub Release drafts or a competing manual tag or release. This project preference was explicitly adopted on 2026-09-09.
+8. Report the version, commit, successful push to `main`, and successful workflow dispatch. Link the workflow page or a run URL already available without further status queries. Do not claim the build or publication succeeded when its result has not been checked. Later rule-only updates do not require dispatching the same release again.

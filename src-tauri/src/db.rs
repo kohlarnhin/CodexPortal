@@ -40,7 +40,8 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
             reset_credits_json TEXT,
             refresh_token TEXT,
             at_expires_at TEXT,
-            auto_activate_window INTEGER NOT NULL DEFAULT 0
+            auto_activate_window INTEGER NOT NULL DEFAULT 0,
+            auto_switch_threshold REAL NOT NULL DEFAULT 0
         )",
         [],
     )?;
@@ -70,6 +71,10 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
     let _ = conn.execute("ALTER TABLE accounts ADD COLUMN at_expires_at TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE accounts ADD COLUMN auto_activate_window INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE accounts ADD COLUMN auto_switch_threshold REAL NOT NULL DEFAULT 0",
         [],
     );
 
