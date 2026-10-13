@@ -244,14 +244,23 @@ export function useCodexRateLimitListener() {
           refreshUsageRef.current = null;
           rpc.close();
         };
+        // 为两路引擎探测、连接回退和 RPC 初始化预留时间。
         connectionTimer = setTimeout(() => {
           if (!disposed && socket === current && !initialized) { fail('initializationFailed'); current.close(); }
-        }, 15000);
+        }, 45000);
         current.onopen = () => {
           void (async () => {
             try {
-              await rpc.request('initialize', { clientInfo: { name: 'codex_portal_events', title: 'Codex Portal quota listener', version },
-                capabilities: { experimentalApi: false } }, 15000);
+              const clientInfo = { name: 'codex_portal_events', title: 'Codex Portal quota listener', version };
+              try {
+                // excludeTurns 是受实验能力约束的字段；CLI 与桌面连接统一声明。
+                await rpc.request('initialize', { clientInfo, capabilities: { experimentalApi: true } }, 15000);
+              } catch (error) {
+                if (!live() || !(error instanceof CodexRpcError)
+                  || error.kind !== 'response' || error.code !== -32602) throw error;
+                // 老版本拒绝能力参数时，使用基础初始化；订阅参数按响应再降级。
+                await rpc.request('initialize', { clientInfo }, 15000);
+              }
               if (!live()) return;
               if (!rpc.notify('initialized')) throw new CodexRpcError('closed');
               initialized = true;

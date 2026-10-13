@@ -45,7 +45,7 @@ fn store_installation_roots() -> Vec<PathBuf> {
         "-Command",
         r#"$ErrorActionPreference = 'Stop';
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);
-$packages = @(Get-AppxPackage -Name 'OpenAI.Codex*'; Get-AppxPackage -Name 'OpenAI.ChatGPT*');
+$packages = @(Get-AppxPackage -Name 'OpenAI.ChatGPT*');
 $locations = @($packages | Sort-Object Version -Descending | Select-Object -ExpandProperty InstallLocation -Unique);
 ConvertTo-Json -InputObject $locations -Compress"#,
     ]);
@@ -78,13 +78,13 @@ pub(super) fn desktop_executable_candidates() -> Vec<PathBuf> {
     let mut roots = store_installation_roots();
     if let Some(local_data) = std::env::var_os("LOCALAPPDATA") {
         let base = PathBuf::from(local_data);
-        for suffix in ["Programs/Codex", "Programs/ChatGPT", "Codex", "ChatGPT"] {
+        for suffix in ["Programs/ChatGPT", "ChatGPT"] {
             add_directory(&mut roots, base.join(suffix));
         }
     }
     for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
         if let Some(base) = std::env::var_os(variable).map(PathBuf::from) {
-            for suffix in ["Codex", "ChatGPT", "OpenAI/Codex", "OpenAI/ChatGPT"] {
+            for suffix in ["ChatGPT", "OpenAI/ChatGPT"] {
                 add_directory(&mut roots, base.join(suffix));
             }
         }

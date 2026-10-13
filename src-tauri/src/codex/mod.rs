@@ -1,4 +1,5 @@
 pub(crate) mod config;
+mod connection;
 pub(crate) mod daemon;
 pub(crate) mod events;
 pub(crate) mod paths;

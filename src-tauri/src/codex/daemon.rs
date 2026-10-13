@@ -1,14 +1,10 @@
-use super::paths::codex_home;
-use super::version::codex_command;
+use super::connection::app_server_restart_command;
 use crate::process::status_with_timeout;
 use std::time::Duration;
 use tauri::Emitter;
 
 fn restart_app_server_daemon() -> Result<(), String> {
-    let mut command = codex_command()?;
-    command
-        .args(["app-server", "daemon", "restart"])
-        .env("CODEX_HOME", codex_home()?);
+    let command = app_server_restart_command()?;
     let status = status_with_timeout(command, Duration::from_secs(30))?;
     if status.success() {
         Ok(())

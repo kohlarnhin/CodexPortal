@@ -3,6 +3,7 @@ use crate::process::{command, output_with_timeout};
 use crate::state::AppState;
 use serde::Serialize;
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -80,25 +81,17 @@ fn macos_cli_search_path() -> Option<std::ffi::OsString> {
     std::env::join_paths(paths).ok()
 }
 
-/// macOS 上桌面应用捆绑的 Codex CLI 绝对路径候选（含用户级 ~/Applications 安装）。
+/// ChatGPT 桌面端捆绑的 Codex 引擎（含用户级 ~/Applications 安装）。
 #[cfg(target_os = "macos")]
 fn desktop_codex_executable_candidates() -> Vec<PathBuf> {
     let mut directories = vec![PathBuf::from("/Applications")];
     if let Some(home) = dirs::home_dir() {
         directories.push(home.join("Applications"));
     }
-    let mut candidates = Vec::new();
-    for base in directories {
-        for app in ["ChatGPT.app", "Codex.app"] {
-            candidates.push(
-                base.join(app)
-                    .join("Contents")
-                    .join("Resources")
-                    .join("codex"),
-            );
-        }
-    }
-    candidates
+    directories
+        .into_iter()
+        .map(|base| base.join("ChatGPT.app/Contents/Resources/codex"))
+        .collect()
 }
 
 #[cfg(windows)]
@@ -126,32 +119,64 @@ fn codex_cli_search_path() -> Option<std::ffi::OsString> {
     }
 }
 
-/// 账号切换后的后台命令沿用版本检测的搜索范围，兼容桌面应用的精简 PATH。
-pub(super) fn codex_command() -> Result<Command, String> {
+#[derive(Clone)]
+pub(super) struct CodexExecutable {
+    pub(super) path: PathBuf,
+    pub(super) is_desktop: bool,
+    search_path: Option<OsString>,
+}
+
+impl CodexExecutable {
+    pub(super) fn label(&self) -> &'static str {
+        if self.is_desktop { "ChatGPT 桌面内置引擎" } else { "Codex CLI" }
+    }
+
+    pub(super) fn command(&self) -> Command {
+        let mut command = command(&self.path);
+        if let Some(path) = &self.search_path {
+            command.env("PATH", path);
+        }
+        command
+    }
+
+    pub(super) fn with_path(&self, path: PathBuf) -> Self {
+        Self { path, ..self.clone() }
+    }
+}
+
+/// 同时发现 CLI 和 ChatGPT 引擎；命令能力与运行状态由连接层逐个探测。
+/// 按真实路径去重，PATH 中指向 ChatGPT 引擎的软链接仍归为桌面端。
+pub(super) fn codex_executable_candidates() -> Vec<CodexExecutable> {
     let search_path = codex_cli_search_path();
+    let desktop_candidates = desktop_codex_executable_candidates();
+    let desktop_paths: HashSet<PathBuf> = desktop_candidates
+        .iter()
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .collect();
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    let mut add = |path: PathBuf, is_desktop: bool| {
+        if !path.is_file() { return; }
+        let resolved = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if seen.insert(resolved.clone()) {
+            candidates.push(CodexExecutable {
+                path,
+                is_desktop: is_desktop || desktop_paths.contains(&resolved),
+                search_path: search_path.clone(),
+            });
+        }
+    };
     if let Some(path) = &search_path {
         for directory in std::env::split_paths(path) {
             for name in CLI_EXECUTABLE_NAMES {
-                let executable = directory.join(name);
-                if executable.is_file() {
-                    let mut command = command(executable);
-                    command.env("PATH", path);
-                    return Ok(command);
-                }
+                add(directory.join(name), false);
             }
         }
     }
-    // 仅安装桌面应用时，使用其捆绑的 Codex 可执行文件。
-    for executable in desktop_codex_executable_candidates() {
-        if executable.is_file() {
-            let mut command = command(executable);
-            if let Some(path) = &search_path {
-                command.env("PATH", path);
-            }
-            return Ok(command);
-        }
+    for path in desktop_candidates {
+        add(path, true);
     }
-    Err("未找到 Codex 可执行文件，请检查 Codex CLI 或桌面应用的安装。".into())
+    candidates
 }
 
 /// 执行 `codex --version` 并提取版本号（失败返回 None）。

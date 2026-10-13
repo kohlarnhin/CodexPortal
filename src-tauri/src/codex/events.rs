@@ -1,15 +1,12 @@
-use super::paths::codex_home;
-use super::version::codex_command;
+use super::connection::{connect_app_server, AppServerConnection};
 use crate::logging;
-use crate::process::{command, output_with_timeout};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
@@ -20,6 +17,7 @@ pub(crate) struct EventListenerState {
     bridge: Mutex<Option<EventBridge>>,
     epoch: Arc<AtomicU64>,
     switching: Arc<AtomicBool>,
+    connection_failure: Arc<Mutex<Option<String>>>,
 }
 
 struct EventBridge {
@@ -46,8 +44,7 @@ pub(crate) fn get_codex_event_url(
     if let Some(existing) = bridge.as_ref() {
         return Ok(existing.url.clone());
     }
-    // 提前确认 CLI 可用；不启动、重启或安装 daemon。
-    let _ = codex_command()?;
+    // 本地桥复用到退出；每次重连重新发现 CLI 与 ChatGPT 的已有服务。
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|_| "无法建立本地事件连接")?;
     listener
         .set_nonblocking(true)
@@ -73,6 +70,7 @@ pub(crate) fn get_codex_event_url(
     }
     let epoch = state.epoch.clone();
     let switching = state.switching.clone();
+    let connection_failure = state.connection_failure.clone();
 
     thread::spawn(move || {
         while !worker_stop.load(Ordering::Acquire) {
@@ -88,9 +86,10 @@ pub(crate) fn get_codex_event_url(
                     let origins = origins.clone();
                     let epoch = epoch.clone();
                     let switching = switching.clone();
+                    let connection_failure = connection_failure.clone();
                     thread::spawn(move || {
                         let _guard = guard;
-                        let _ = forward_connection(stream, &route, &origins, stopped, epoch, switching);
+                        let _ = forward_connection(stream, &route, &origins, stopped, epoch, switching, connection_failure);
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -192,6 +191,7 @@ fn forward_connection(
     stopped: Arc<AtomicBool>,
     account_epoch: Arc<AtomicU64>,
     switching: Arc<AtomicBool>,
+    connection_failure: Arc<Mutex<Option<String>>>,
 ) -> Result<(), ()> {
     if switching.load(Ordering::Acquire) { return Err(()); }
     let epoch = account_epoch.load(Ordering::Acquire);
@@ -248,100 +248,53 @@ fn forward_connection(
     }
     forwarded.push_str("\r\n");
 
-    if switching.load(Ordering::Acquire) || account_epoch.load(Ordering::Acquire) != epoch { return Err(()); }
-    let mut command = event_proxy_command()?;
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = command.spawn().map_err(|_| ())?;
-    let result = (|| -> Result<(), ()> {
-        let mut input = child.stdin.take().ok_or(())?;
-        let mut output = child.stdout.take().ok_or(())?;
-        let finished = Arc::new(AtomicBool::new(false));
-        input.write_all(forwarded.as_bytes()).map_err(|_| ())?;
-        input.write_all(&request[header_end..]).map_err(|_| ())?;
-        stream
-            .set_read_timeout(Some(Duration::from_millis(250)))
-            .map_err(|_| ())?;
-        let mut outgoing = stream.try_clone().map_err(|_| ())?;
-        let outgoing_finished = finished.clone();
-        let output_worker = thread::spawn(move || {
-            let _ = std::io::copy(&mut output, &mut outgoing);
-            outgoing_finished.store(true, Ordering::Release);
-            let _ = outgoing.shutdown(Shutdown::Both);
-        });
-        let mut buffer = [0; 8192];
-        while !stopped.load(Ordering::Acquire) && !finished.load(Ordering::Acquire)
-            && !switching.load(Ordering::Acquire) && account_epoch.load(Ordering::Acquire) == epoch {
-            match stream.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(length) => {
-                    if input.write_all(&buffer[..length]).is_err() {
-                        break;
+    let is_current = || !stopped.load(Ordering::Acquire)
+        && !switching.load(Ordering::Acquire) && account_epoch.load(Ordering::Acquire) == epoch;
+    if !is_current() { return Err(()); }
+    let mut proxy_request = forwarded.into_bytes();
+    proxy_request.extend_from_slice(&request[header_end..]);
+    let connection = match connect_app_server(&proxy_request, &is_current) {
+        Ok(connection) => connection,
+        Err(error) => {
+            if is_current() {
+                if let Ok(mut previous) = connection_failure.lock() {
+                    if previous.as_ref() != Some(&error) {
+                        logging::warn(SOURCE, &error);
+                        *previous = Some(error);
                     }
                 }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) => {}
-                Err(_) => break,
             }
+            return Err(());
         }
-        // 关闭客户端和代理输入，结束的仅是本应用创建的 proxy，不控制 daemon。
-        let _ = stream.shutdown(Shutdown::Both);
-        drop(input);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(50));
+    };
+    if !is_current() { return Err(()); }
+    stream.write_all(&connection.response).map_err(|_| ())?;
+    stream.set_read_timeout(Some(Duration::from_millis(250))).map_err(|_| ())?;
+    let mut outgoing = stream.try_clone().map_err(|_| ())?;
+    let AppServerConnection { mut input, mut output, guard, source, .. } = connection;
+    if let Ok(mut previous) = connection_failure.lock() { *previous = None; }
+    logging::info(SOURCE, format!("已通过 {source} 接入已有 app-server 控制入口。"));
+    let finished = Arc::new(AtomicBool::new(false));
+    let outgoing_finished = finished.clone();
+    let output_worker = thread::spawn(move || {
+        let _ = std::io::copy(&mut output, &mut outgoing);
+        outgoing_finished.store(true, Ordering::Release);
+        let _ = outgoing.shutdown(Shutdown::Both);
+    });
+    let mut buffer = [0; 8192];
+    while is_current() && !finished.load(Ordering::Acquire) {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(length) => { if input.write_all(&buffer[..length]).is_err() { break; } }
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+            Err(_) => break,
         }
-        if matches!(child.try_wait(), Ok(None)) {
-            let _ = child.kill();
-        }
-        let _ = child.wait();
-        // 输出线程随管道关闭退出；不等待共享 daemon 的生命周期。
-        drop(output_worker);
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
     }
-    result
-}
-
-fn event_proxy_command() -> Result<Command, ()> {
-    let home = codex_home().map_err(|_| ())?;
-    let mut inspect = codex_command().map_err(|_| ())?;
-    inspect
-        .args(["app-server", "daemon", "version"])
-        .env("CODEX_HOME", &home);
-    let output = output_with_timeout(inspect, Duration::from_secs(5)).ok_or(())?;
-    if !output.status.success() {
-        return Err(());
-    }
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| ())?;
-    if metadata.get("status").and_then(serde_json::Value::as_str) != Some("running") {
-        return Err(());
-    }
-    let socket = metadata
-        .get("socketPath")
-        .and_then(serde_json::Value::as_str)
-        .ok_or(())?;
-    // 使用运行中 daemon 的原生 CLI，避免 npm 启动器留下代理子进程，也兼容版本差异。
-    let executable = metadata
-        .get("managedCodexPath")
-        .and_then(serde_json::Value::as_str)
-        .ok_or(())?;
-    if !std::path::Path::new(executable).is_file() {
-        return Err(());
-    }
-    let mut proxy = command(executable);
-    proxy
-        .args(["app-server", "proxy", "--sock", socket])
-        .env("CODEX_HOME", home);
-    Ok(proxy)
+    let _ = stream.shutdown(Shutdown::Both);
+    drop(input);
+    drop(guard);
+    drop(output_worker);
+    Ok(())
 }
 
 pub(crate) fn stop_event_listener(app: &tauri::AppHandle) {
@@ -474,7 +427,7 @@ pub(crate) fn report_codex_listener_event(report: ListenerReport) {
         }
         ListenerReport::ConnectionFailed => logging::warn(
             SOURCE,
-            "Codex 额度事件连接失败，将自动重试；请确认已有 daemon 正在运行。",
+            "Codex 额度事件连接失败，将自动重试；请查看引擎探测日志并确认 CLI 或 ChatGPT 的本地会话服务正在运行。",
         ),
         ListenerReport::InitializationFailed => {
             logging::warn(SOURCE, "Codex 额度事件初始化失败，将自动重试。")

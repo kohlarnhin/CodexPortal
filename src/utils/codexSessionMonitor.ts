@@ -78,6 +78,7 @@ export function createCodexSessionTracker(options: TrackerOptions) {
   const ignored = new Set<string>();
   const operations = new Map<string, Promise<void>>();
   const retries = new Map<string, { at: number; attempts: number; signature: string }>();
+  let supportsExcludeTurns = true;
   let stopped = false;
   let revision = 0;
   let snapshotReady = false;
@@ -243,7 +244,18 @@ export function createCodexSessionTracker(options: TrackerOptions) {
               continue;
             }
             possibleSubscriptions.add(session.id);
-            const result = await rpc.request('thread/resume', { threadId: session.id, excludeTurns: true });
+            const excludeTurns = supportsExcludeTurns;
+            let result: Record<string, unknown>;
+            try {
+              result = await rpc.request('thread/resume', { threadId: session.id, ...(excludeTurns ? { excludeTurns: true } : {}) });
+            } catch (error) {
+              // 旧版 CLI/桌面引擎拒绝可选参数时，按稳定协议重试一次。
+              // 超时、会话关闭与其他服务错误仍交给原有重试逻辑。
+              if (!excludeTurns || !live() || !(error instanceof CodexRpcError)
+                || error.kind !== 'response' || error.code !== -32602) throw error;
+              supportsExcludeTurns = false;
+              result = await rpc.request('thread/resume', { threadId: session.id });
+            }
             if (!live()) return;
             if (history.get(session.id) !== session) {
               // 会话可能在接入请求期间关闭；不留下已从统计移除的 Portal 订阅。

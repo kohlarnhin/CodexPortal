@@ -8,7 +8,7 @@ interface CodexVersions {
 
 const VERSION_ENTRIES = [
   { key: 'cli', label: 'Codex CLI', description: '独立安装的命令行版本' },
-  { key: 'desktop', label: '桌面版 Codex', description: 'ChatGPT / Codex 桌面端内置引擎版本' },
+  { key: 'desktop', label: 'ChatGPT 桌面版', description: '桌面端内置的 Codex 引擎版本' },
 ] as const;
 
 export default function CodexInfo() {
