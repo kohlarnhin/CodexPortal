@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import PlanBadge from './PlanBadge';
 import CodexSessionsPanel from './CodexSessionsPanel';
-import type { CodexLiveUsage, CodexSessionMonitor } from '../types/codexEvents';
+import type { CodexLiveUsage, CodexSessionMonitor, CodexLiveTps } from '../types/codexEvents';
 import Button from './ui/button';
 import { ActionTooltip } from './ui/tooltip';
 import { AccountUsageWindow } from '../types/account';
@@ -20,6 +21,7 @@ interface ActiveAccountProps {
   onNavigateToAccounts: () => void;
   usageRevision: number;
   liveUsage: CodexLiveUsage;
+  tps: CodexLiveTps;
   onRefreshUsage: () => Promise<void>;
   sessionMonitor: CodexSessionMonitor;
   onRefreshSessions: () => void;
@@ -235,6 +237,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   onNavigateToAccounts,
   usageRevision,
   liveUsage,
+  tps,
   onRefreshUsage,
   sessionMonitor,
   onRefreshSessions,
@@ -242,9 +245,11 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
 }) => {
   const { accounts, activeAccountId, isLoading, refresh } = useAccounts();
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [syncingUsage, setSyncingUsage] = useState(false);
   const [copied, setCopied] = useState(false);
   const activeAccountRef = useRef(activeAccountId);
   activeAccountRef.current = activeAccountId;
+  const cachedUsageSyncedAt = accounts.find(account => account.id === activeAccountId)?.usage?.syncedAt;
 
   useEffect(() => {
     if (usageRevision > 0) {
@@ -254,7 +259,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
 
   useEffect(() => {
     setUsageError(null);
-  }, [activeAccountId, liveUsage.usage?.syncedAt]);
+  }, [activeAccountId, cachedUsageSyncedAt, liveUsage.usage?.syncedAt]);
 
   if (isLoading) {
     return (
@@ -324,26 +329,47 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
     window: AccountUsageWindow;
     kind: 'primary' | 'secondary';
   }> = [];
-  const currentUsage = liveUsage.accountId === activeAccount.id ? liveUsage.usage : null;
+  const pushedUsage = liveUsage.accountId === activeAccount.id ? liveUsage.usage : null;
+  const pushedAt = pushedUsage ? Date.parse(pushedUsage.syncedAt) : NaN;
+  const cachedAt = activeAccount.usage ? Date.parse(activeAccount.usage.syncedAt) : NaN;
+  const displayingLive = pushedUsage !== null && Number.isFinite(pushedAt)
+    && (!Number.isFinite(cachedAt) || pushedAt >= cachedAt);
+  // 同步后的缓存可比上一条推送更新；无订阅时仍显示正常同步的账号额度。
+  const currentUsage = displayingLive ? pushedUsage : activeAccount.usage;
+  const currentTps = tps.accountId === activeAccount.id && sessionMonitor.connectionStatus === 'connected' ? tps : null;
+  const tpsValue = currentTps?.tokensPerSecond ?? null;
+  const tpsStateLabel = currentTps?.status === 'measuring'
+    ? tpsValue === null ? '等待计数' : '统计中'
+    : currentTps?.status === 'completed'
+      ? tpsValue === null ? '数据不足' : '已完成'
+      : sessionMonitor.connectionStatus === 'unavailable' ? '暂无数据' : '等待会话';
+  const tpsDescription = currentTps && tpsValue !== null && currentTps.outputTokens !== null && currentTps.durationMs !== null
+    ? `最近活跃会话：${currentTps.outputTokens} 个输出 token / ${(currentTps.durationMs / 1000).toFixed(1)} 秒。输出 token 包含推理 token，耗时包含工具执行与等待时间。`
+    : '最近活跃会话的本轮平均输出速度，耗时包含工具执行与等待时间；尚未获得完整计数与计时时显示 —。';
   if (currentUsage?.primary) {
     usageWindows.push({ window: currentUsage.primary, kind: 'primary' });
   }
   if (currentUsage?.secondary) {
     usageWindows.push({ window: currentUsage.secondary, kind: 'secondary' });
   }
-  const usageRefreshing = liveUsage.accountId === activeAccount.id && liveUsage.isRefreshing;
-  const displayedUsageError = usageError ?? (liveUsage.accountId === activeAccount.id ? liveUsage.error : null);
+  const usageRefreshing = syncingUsage || liveUsage.accountId === activeAccount.id && liveUsage.isRefreshing;
+  const displayedUsageError = usageError ?? (displayingLive ? liveUsage.error : null);
   const firstChar = (activeAccount.name || '').trim().charAt(0).toUpperCase();
   const avatarLetter = /^[A-Z0-9]$/i.test(firstChar) ? firstChar : null;
 
   const handleRefreshUsage = async () => {
     setUsageError(null);
+    setSyncingUsage(true);
     try {
-      await onRefreshUsage();
+      if (sessionMonitor.connectionStatus === 'connected') await onRefreshUsage();
+      else await invoke('sync_sessions');
+      await refresh(false);
     } catch (error: any) {
       if (activeAccountRef.current === activeAccount.id) {
         setUsageError(error?.message || error?.toString() || '额度刷新失败');
       }
+    } finally {
+      setSyncingUsage(false);
     }
   };
 
@@ -367,13 +393,22 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
             {currentUsage && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200/60">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
-                {liveUsage.source === 'push' ? '实时推送' : liveUsage.source === 'manualRead' ? '手动读取' : '初始额度'} · {formatUsageSyncedAt(currentUsage.syncedAt)}
+                {displayingLive ? liveUsage.source === 'push' ? '实时推送' : liveUsage.source === 'manualRead' ? '手动读取' : '初始额度' : '已同步额度'} · {formatUsageSyncedAt(currentUsage.syncedAt)}
               </span>
             )}
           </div>
           <p className="text-[13px] text-neutral-500 mt-1">
-            当前账号额度由官方会话推送实时更新。
+            会话同步更新当前账号额度，启用实时监听后也会接收额度推送。
           </p>
+        </div>
+        <div role="group" title={tpsDescription} aria-label="当前账号最近活跃会话的本轮平均 TPS"
+          className="min-w-[148px] shrink-0 rounded-lg border border-neutral-200/80 bg-white px-3.5 py-2 text-right shadow-2xs">
+          <p className="text-[10px] leading-4 text-neutral-500">本轮平均 TPS · {tpsStateLabel}</p>
+          <p className="mt-0.5 flex items-baseline justify-end gap-1.5">
+            <span className="font-mono text-[20px] leading-6 tabular-nums text-neutral-900">{tpsValue === null ? '—' : tpsValue.toFixed(1)}</span>
+            <span className="text-[10px] text-neutral-400">tokens/s</span>
+          </p>
+          <span className="sr-only">{tpsDescription}</span>
         </div>
       </div>
 
@@ -504,12 +539,12 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
             {/* 右侧：集成式操作工具栏（纯图标 + 悬浮文字） */}
             <div className="flex items-center self-start sm:self-center shrink-0">
               <div className="flex items-center rounded-lg border border-neutral-200/80 bg-neutral-50/70 p-0.5 shadow-2xs">
-                <ActionTooltip label={usageRefreshing ? '正在刷新额度...' : '立即刷新额度'}>
+                <ActionTooltip label={usageRefreshing ? '正在刷新额度...' : sessionMonitor.connectionStatus === 'connected' ? '立即刷新额度' : '同步会话额度'}>
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => void handleRefreshUsage()}
-                    disabled={sessionMonitor.connectionStatus !== 'connected' || usageRefreshing}
+                    disabled={usageRefreshing}
                     aria-label="刷新额度"
                     className="h-8 w-8 rounded-md text-neutral-600 hover:text-black hover:bg-white hover:shadow-2xs transition-all cursor-pointer"
                   >
@@ -617,15 +652,17 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               <path d="m7 16 4-5 4 3 4-7" />
             </svg>
             <p className="text-[13.5px] font-medium text-neutral-700">
-              {usageRefreshing ? '正在读取初始额度…' : currentUsage ? '接口暂未返回额度明细' : '等待当前账号额度'}
+              {usageRefreshing ? '正在更新额度…' : currentUsage ? '暂未同步到额度明细' : '等待当前账号额度'}
             </p>
             <p className="mt-1.5 max-w-sm text-[12px] leading-relaxed text-neutral-400">
-              连接时读取初始值；在任意项目中使用 Codex，官方额度推送会直接更新此处。也可点击刷新按钮主动查询。
+              使用本地会话后，同步会话即可更新这里的额度；实时监听可用时也会接收额度推送。
             </p>
           </div>
         )}
 
-        <CodexSessionsPanel monitor={sessionMonitor} onRefresh={onRefreshSessions} onViewLogs={onViewLogs} />
+        {sessionMonitor.connectionStatus !== 'unavailable' && (
+          <CodexSessionsPanel monitor={sessionMonitor} onRefresh={onRefreshSessions} onViewLogs={onViewLogs} />
+        )}
       </div>
     </div>
   );

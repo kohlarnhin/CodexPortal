@@ -55,8 +55,9 @@ export default function CodexSessionsPanel({ monitor, onRefresh, onViewLogs }: C
   const projectSlots = Array.from({ length: MAX_VISIBLE_PROJECTS }, (_, index) => projects[index] ?? null);
   const connected = monitor.connectionStatus === 'connected';
   const status = monitor.discoveryFailed ? '刷新待重试' : connected ? '监听中'
-    : monitor.connectionStatus === 'reconnecting' ? '重新连接中' : '连接中';
+    : monitor.connectionStatus === 'unavailable' ? '实时监听未启用' : '连接中';
   const emptyTitle = monitor.discoveryFailed ? '项目信息暂时无法更新'
+    : monitor.connectionStatus === 'unavailable' ? '额度在会话同步后更新'
     : monitor.activeCount === null ? '正在获取活跃项目…' : '暂无活跃项目';
 
   return (

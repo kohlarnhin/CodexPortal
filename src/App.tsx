@@ -201,6 +201,7 @@ function App() {
                 onNavigateToAccounts={() => setActiveTab('accounts')}
                 usageRevision={usageScheduler.usageRevision}
                 liveUsage={codexEvents.liveUsage}
+                tps={codexEvents.tps}
                 onRefreshUsage={codexEvents.refreshUsage}
                 sessionMonitor={codexEvents.monitor}
                 onRefreshSessions={codexEvents.refreshSessions}

@@ -23,8 +23,18 @@ export interface CodexLiveUsage {
   error: string | null;
 }
 
+// 仅用于当前账号的内存展示，不参与额度缓存或会话入库。
+export interface CodexLiveTps {
+  accountId: string | null;
+  threadId: string | null;
+  tokensPerSecond: number | null;
+  outputTokens: number | null;
+  durationMs: number | null;
+  status: 'waiting' | 'measuring' | 'completed';
+}
+
 export interface CodexSessionMonitor {
-  connectionStatus: 'connecting' | 'connected' | 'reconnecting';
+  connectionStatus: 'connecting' | 'connected' | 'unavailable';
   activeCount: number | null;
   sessions: CodexActiveSession[];
   isRefreshing: boolean;

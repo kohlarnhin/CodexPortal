@@ -443,6 +443,11 @@ export function createCodexSessionTracker(options: TrackerOptions) {
   const pollTimer = setInterval(() => { void refresh(); }, DISCOVERY_INTERVAL_MS);
   return {
     refresh,
+    observesThread: (id: string) => {
+      const session = history.get(id);
+      return live() && !!session && session.verified && eligible(session);
+    },
+    isSubscribed: (id: string) => live() && subscribed.has(id),
     notify,
     stop() {
       stopped = true;

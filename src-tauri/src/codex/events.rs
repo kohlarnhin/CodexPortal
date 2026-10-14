@@ -141,7 +141,15 @@ pub(crate) fn save_codex_live_usage(
         window.window_minutes = window.window_minutes.filter(|minutes| *minutes > 0);
         window.resets_at = window.resets_at.filter(|timestamp| *timestamp > 0);
     }
-    usage.synced_at = chrono::Utc::now().to_rfc3339();
+    // 使用前端接收快照时的时间，避免排队保存的旧推送覆盖较新的会话同步。
+    let observed_at = crate::time::rfc3339_timestamp_millis(&usage.synced_at)
+        .filter(|time| *time <= chrono::Utc::now().timestamp_millis() + 1000)
+        .ok_or("额度快照时间无效")?;
+    let previous: Option<String> = db.query_row(
+        "SELECT usage_updated_at FROM accounts WHERE id = ?1", [&account_id], |row| row.get(0),
+    ).map_err(|_| "账号额度缓存不可用")?;
+    if previous.as_deref().and_then(crate::time::rfc3339_timestamp_millis)
+        .is_some_and(|previous| previous >= observed_at) { return Ok(()); }
     usage.request_started_at = None;
     usage.plan_type = None;
     let json = serde_json::to_string(&usage).map_err(|_| "额度缓存保存失败")?;
@@ -259,7 +267,7 @@ fn forward_connection(
             if is_current() {
                 if let Ok(mut previous) = connection_failure.lock() {
                     if previous.as_ref() != Some(&error) {
-                        logging::warn(SOURCE, &error);
+                        logging::info(SOURCE, format!("实时监听未启用：{error}"));
                         *previous = Some(error);
                     }
                 }
@@ -423,14 +431,14 @@ pub(crate) fn report_codex_listener_event(report: ListenerReport) {
             logging::info(SOURCE, "Codex app-server 监听已连接，正在发现活跃会话并订阅额度事件。")
         }
         ListenerReport::Disconnected => {
-            logging::warn(SOURCE, "Codex 额度查询连接已断开，正在自动重连。")
+            logging::info(SOURCE, "Codex 实时额度连接已断开，本次监听已结束；会话同步继续更新额度。")
         }
-        ListenerReport::ConnectionFailed => logging::warn(
+        ListenerReport::ConnectionFailed => logging::info(
             SOURCE,
-            "Codex 额度事件连接失败，将自动重试；请查看引擎探测日志并确认 CLI 或 ChatGPT 的本地会话服务正在运行。",
+            "未接入可用的 app-server，本次实时监听已结束；会话同步继续更新额度。",
         ),
         ListenerReport::InitializationFailed => {
-            logging::warn(SOURCE, "Codex 额度事件初始化失败，将自动重试。")
+            logging::info(SOURCE, "Codex 额度事件初始化未完成，本次实时监听已结束；会话同步继续更新额度。")
         }
         ListenerReport::InitialReadFailed => {
             logging::warn(SOURCE, "主动读取 Codex 额度失败；会话额度推送仍可更新展示。")

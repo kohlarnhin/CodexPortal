@@ -34,7 +34,8 @@ const SESSION_SYNC_INTERVAL_SECONDS: i64 = 5 * 60;
 /// 版本不一致时后台同步会一次性重解析已有会话，以更新会话摘要和每日 Token 用量；
 /// 完成后仍恢复为按 mtime/size 判断的纯增量同步。
 /// 首行 ID 和子会话标记每轮都会核对，无需因此触发正文全量重解析。
-const SESSIONS_SCHEMA_VERSION: &str = "6";
+/// 版本 7 同时补回旧缓存里被跳过的当前账号额度，之后继续按原间隔增量同步。
+const SESSIONS_SCHEMA_VERSION: &str = "7";
 
 fn sessions_schema_needs_reparse(db: &Connection) -> bool {
     db.query_row(
@@ -376,12 +377,8 @@ fn sync_sessions_inner(
                 .map_err(|e| e.to_string())?;
             }
 
-            // 当前账号由实时推送维护，历史文件同步只补充非当前账号的额度缓存。
-            let current_account_id: Option<String> = tx.query_row(
-                "SELECT id FROM accounts WHERE is_active = 1 LIMIT 1", [], |row| row.get(0),
-            ).optional().map_err(|error| error.to_string())?;
+            // 会话同步和 app-server 推送都能更新当前账号；写入时按观测时间防止旧数据覆盖。
             for (account_id, usage) in &parsed.account_usage {
-                if current_account_id.as_ref() == Some(account_id) { continue; }
                 if update_account_usage_from_session(&tx, account_id, usage)? {
                     usage_updated_accounts.insert(account_id.clone());
                 }

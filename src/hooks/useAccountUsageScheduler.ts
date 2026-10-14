@@ -7,7 +7,7 @@ import { getDisplayedEmail } from '../utils/accountEmail';
 /**
  * 账号额度刷新调度。
  *
- * 当前账号由 app-server 实时推送维护；其余账号保留原有额度调度。
+ * 当前账号由会话同步与 app-server 实时推送共同维护；其余账号保留原有额度调度。
  * 监听账号与额度缓存变更，手动刷新账号管理中的额度仍使用额度接口。
  */
 export function useAccountUsageScheduler(isEmailMaskingEnabled: boolean) {

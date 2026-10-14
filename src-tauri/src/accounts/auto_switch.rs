@@ -170,14 +170,18 @@ fn current_trigger(
     let Some(usage) = live_usage(app, request) else {
         return Ok(None);
     };
-    let threshold: Option<f64> = db.query_row(
-        "SELECT auto_switch_threshold FROM accounts WHERE id = ?1 AND is_active = 1",
+    let current: Option<(f64, Option<String>)> = db.query_row(
+        "SELECT auto_switch_threshold, usage_updated_at FROM accounts WHERE id = ?1 AND is_active = 1",
         params![request.account_id],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional().map_err(|error| error.to_string())?;
-    let Some(threshold) = threshold else {
+    let Some((threshold, updated_at)) = current else {
         return Ok(None);
     };
+    // 同步已写入更新的额度时，上一条推送不能继续驱动待提交的切换。
+    if updated_at.as_deref().and_then(crate::time::rfc3339_timestamp_millis)
+        .zip(crate::time::rfc3339_timestamp_millis(&usage.synced_at))
+        .is_some_and(|(cached, live)| cached > live) { return Ok(None); }
     Ok(reached_threshold(&usage, threshold, Utc::now().timestamp())
         .map(|(window, percent)| (threshold, window, percent)))
 }
