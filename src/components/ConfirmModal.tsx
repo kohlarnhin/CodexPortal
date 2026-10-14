@@ -27,8 +27,8 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onCancel(); }}>
       <DialogContent className="max-w-sm p-6 gap-4" showCloseButton={false}>
         <DialogHeader className="pr-0">
-          <DialogTitle className="text-[16px] font-semibold text-neutral-900">{title}</DialogTitle>
-          <DialogDescription className="text-[13px] text-neutral-600 leading-relaxed pt-1">
+          <DialogTitle className="text-[16px] font-semibold text-foreground">{title}</DialogTitle>
+          <DialogDescription className="text-[13px] text-muted-foreground leading-relaxed pt-1">
             {message}
           </DialogDescription>
         </DialogHeader>

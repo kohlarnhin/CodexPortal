@@ -4,6 +4,7 @@ import { SkillDetail, SkillInfo } from '../types/skill';
 import Markdown from './Markdown';
 import ConfirmModal from './ConfirmModal';
 import Button from './ui/button';
+import PageHeader from './ui/page-header';
 import { ActionTooltip } from './ui/tooltip';
 import { Dialog, DialogContent } from './ui/dialog';
 
@@ -90,28 +91,26 @@ const SkillManager: React.FC = () => {
   return (
     <div className="page-layout pt-4">
       {/* 标题栏 */}
-      <div className="page-header mb-4">
-        <div className="min-w-0">
-          <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">Skill 管理</h2>
-          <p className="text-[13px] text-[#999999]">~/.agents/skills · Codex 读取的 Skill 目录</p>
-        </div>
-        <ActionTooltip label="添加 Skill">
+      <PageHeader
+        title="Skill 管理"
+        description={<><code className="font-mono text-[12px]">~/.agents/skills</code> · Codex 读取的 Skill 目录</>}
+        actions={
           <Button
+            size="sm"
             onClick={() => {
               setIsAddOpen(true);
               setAddError(null);
               setAddPath('');
             }}
-            size="icon"
-            className="h-8 w-8 shadow-sm"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            添加 Skill
           </Button>
-        </ActionTooltip>
-      </div>
+        }
+      />
 
       {error && (
-        <div className="mb-4 shrink-0 rounded-lg border border-[#F3D1D1] bg-[#FFF5F5] px-4 py-2.5 text-[12px] text-[#B3261E]">
+        <div className="mb-4 shrink-0 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2.5 text-[12px] text-destructive">
           {error}
         </div>
       )}
@@ -121,12 +120,12 @@ const SkillManager: React.FC = () => {
         {isLoading ? (
           <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1024px]/page:grid-cols-3 @min-[1400px]/page:grid-cols-4 gap-4">
             {[1, 2, 3, 4].map(i => (
-              <div key={i} className="h-28 bg-white border border-[#EAEAEA] rounded-xl animate-pulse" />
+              <div key={i} className="h-28 bg-muted/50 rounded-xl animate-pulse" />
             ))}
           </div>
         ) : skills.length === 0 ? (
-          <div className="bg-white rounded-xl border border-[#EAEAEA] py-16 px-8 text-center">
-            <p className="text-[13px] text-[#999999]">~/.agents/skills 下暂无 Skill，点击右上角添加</p>
+          <div className="rounded-xl border border-dashed py-16 px-8 text-center">
+            <p className="text-[13px] text-muted-foreground">~/.agents/skills 下暂无 Skill，点击右上角添加</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1024px]/page:grid-cols-3 @min-[1400px]/page:grid-cols-4 gap-4">
@@ -134,18 +133,18 @@ const SkillManager: React.FC = () => {
               <div
                 key={skill.name}
                 onClick={() => void openDetail(skill.dirName)}
-                className="group relative min-w-0 bg-white rounded-xl border border-[#EAEAEA] hover:border-[#C8C8C8] hover:shadow-sm transition-all p-5 cursor-pointer"
+                className="group relative min-w-0 bg-card rounded-xl border shadow-xs hover:bg-accent/40 transition-colors p-4 cursor-pointer"
               >
                 <div className="flex items-start justify-between gap-3 mb-2">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-8 h-8 shrink-0 rounded-lg bg-[#F5F5F5] border border-[#EAEAEA] flex items-center justify-center text-[#777777] group-hover:bg-black group-hover:text-white group-hover:border-black transition-colors">
+                    <div className="w-8 h-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
                       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 4 5 5L7 22l-5-5Z"/><path d="m14 5 5 5"/><path d="M6 13l5 5"/><path d="M19 2v3"/><path d="M22 5h-3"/></svg>
                     </div>
-                    <h3 className="min-w-0 truncate text-[15px] font-semibold text-black tracking-tight">
+                    <h3 className="min-w-0 truncate text-[14px] font-medium text-foreground">
                       {skill.name}
                     </h3>
                     {skill.isSymlink && (
-                      <span className="shrink-0 rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2 py-0.5 text-[10px] font-medium text-[#888888]">
+                      <span className="shrink-0 rounded-md bg-muted border border-border px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground">
                         链接
                       </span>
                     )}
@@ -157,16 +156,16 @@ const SkillManager: React.FC = () => {
                         setDeleteName(skill.dirName);
                       }}
                       aria-label="删除 Skill"
-                      className="w-7 h-7 shrink-0 flex items-center justify-center rounded text-[#BBBBBB] opacity-0 group-hover:opacity-100 hover:bg-[#FFF0F0] hover:text-[#D32F2F] transition-all"
+                      className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                   </ActionTooltip>
                 </div>
-                <p className="text-[12px] text-[#666666] leading-relaxed line-clamp-2 min-h-[32px]">
+                <p className="text-[12px] text-muted-foreground leading-relaxed line-clamp-2 min-h-[32px]">
                   {skill.description || '（无描述）'}
                 </p>
-                <p className="mt-2 truncate text-[10px] font-mono text-[#AAAAAA]">{skill.path}</p>
+                <p className="mt-2 truncate text-[11px] font-mono text-muted-foreground/70">{skill.path}</p>
               </div>
             ))}
           </div>
@@ -176,27 +175,27 @@ const SkillManager: React.FC = () => {
       {/* 详情弹窗 */}
       <Dialog open={!!detail} onOpenChange={(open) => { if (!open) setDetail(null); }}>
         <DialogContent className="max-w-2xl p-0 max-h-[82vh] flex flex-col overflow-hidden gap-0" showCloseButton={false}>
-          <div className="px-6 py-4 border-b border-[#EAEAEA] flex items-start justify-between gap-4 shrink-0">
+          <div className="px-6 py-4 border-b border-border flex items-start justify-between gap-4 shrink-0">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-[15px] text-black tracking-tight">{detail?.name}</h3>
+                <h3 className="font-semibold text-[15px] text-foreground tracking-tight">{detail?.name}</h3>
                 {detail?.isSymlink && (
-                  <span className="rounded-full bg-[#F5F5F5] border border-[#EAEAEA] px-2 py-0.5 text-[10px] font-medium text-[#888888]">链接</span>
+                  <span className="rounded-md bg-muted border border-border px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground">链接</span>
                 )}
               </div>
-              <p className="mt-1 text-[11px] font-mono text-[#888888] truncate">{detail?.path}</p>
+              <p className="mt-1 text-[11px] font-mono text-muted-foreground truncate">{detail?.path}</p>
             </div>
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={() => setDetail(null)}
-              className="text-[#888888] hover:text-black"
+              className="text-muted-foreground hover:text-foreground"
               aria-label="关闭"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </Button>
           </div>
-          <div className="px-6 py-3 bg-[#F9F9F9] border-b border-[#EAEAEA] text-[11px] text-[#999999] shrink-0">
+          <div className="px-6 py-2 bg-muted/40 border-b text-[11.5px] text-muted-foreground shrink-0">
             {detail?.fileCount} 个文件
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
@@ -207,7 +206,7 @@ const SkillManager: React.FC = () => {
 
       {detailLoading && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/10">
-          <div className="bg-white rounded-xl shadow-2xl border border-[#EAEAEA] px-6 py-5 flex items-center gap-2.5 text-[13px] text-[#666666]">
+          <div className="bg-popover rounded-lg shadow-lg border px-5 py-4 flex items-center gap-2.5 text-[13px] text-muted-foreground">
             <svg className="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             加载详情中...
           </div>
@@ -217,12 +216,12 @@ const SkillManager: React.FC = () => {
       {/* 添加弹窗 */}
       <Dialog open={isAddOpen} onOpenChange={(open) => { if (!open) setIsAddOpen(false); }}>
         <DialogContent className="max-w-md p-0 overflow-hidden gap-0" showCloseButton={false}>
-          <div className="px-5 py-4 border-b border-[#EAEAEA]">
-            <h3 className="font-semibold text-[15px] text-black tracking-tight">添加 Skill</h3>
+          <div className="px-5 py-4 border-b border-border">
+            <h3 className="font-semibold text-[15px] text-foreground tracking-tight">添加 Skill</h3>
           </div>
           <div className="p-5 flex flex-col gap-4">
-            <div className="text-[12px] text-[#666666] leading-relaxed">
-              输入包含 <code className="font-mono text-black">SKILL.md</code> 的本地目录路径，
+            <div className="text-[12px] text-muted-foreground leading-relaxed">
+              输入包含 <code className="font-mono text-foreground">SKILL.md</code> 的本地目录路径，
               将复制到 <code className="font-mono">~/.agents/skills/</code>。
             </div>
             <input
@@ -232,15 +231,15 @@ const SkillManager: React.FC = () => {
                 setAddError(null);
               }}
               placeholder="例如：/Users/you/projects/my-skill"
-              className="w-full px-3 py-2 bg-white border border-[#EAEAEA] rounded-md focus:border-black focus:ring-1 focus:ring-black outline-none transition-all text-[13px] font-mono text-black placeholder-[#A0A0A0]"
+              className="h-9 w-full px-3 bg-background border border-input rounded-md shadow-xs focus:border-neutral-700 outline-none transition-[color,box-shadow] text-[13px] font-mono text-foreground placeholder:text-muted-foreground"
             />
             {addError && (
-              <div className="rounded-md bg-[#FFF0F0] border border-[#FFD0D0] px-3 py-2 text-[12px] text-[#D32F2F] break-all">
+              <div className="rounded-md bg-destructive/5 border border-destructive/20 px-3 py-2 text-[12px] text-destructive break-all">
                 {addError}
               </div>
             )}
           </div>
-          <div className="px-5 py-3.5 bg-[#FAFAFA] border-t border-[#EAEAEA] flex items-center justify-end gap-2.5">
+          <div className="px-5 py-3 bg-muted/40 border-t flex items-center justify-end gap-2">
             <Button
               variant="outline"
               size="sm"

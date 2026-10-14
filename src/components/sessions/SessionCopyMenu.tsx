@@ -121,7 +121,7 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
             close();
           }
         }}
-        className="flex h-7 items-center gap-1.5 rounded px-2 text-[11px] text-[#777777] transition-colors hover:bg-[#F5F5F5] hover:text-black focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-black/30"
+        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-black/30"
       >
         <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           {copied ? <path d="M20 6 9 17l-5-5" /> : <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>}
@@ -153,7 +153,7 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
               : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
             items[next].focus();
           }}
-          className="fixed z-[120] w-44 max-h-[calc(100vh-12px)] overflow-y-auto rounded-lg border border-[#EAEAEA] bg-white p-1 shadow-lg"
+          className="fixed z-[120] w-44 max-h-[calc(100vh-12px)] overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
         >
           {options.map(option => (
             <button
@@ -164,12 +164,12 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
               disabled={copying || !option.value.trim()}
               title={option.value || '此会话未记录该路径'}
               onClick={() => void copy(option.value)}
-              className="flex w-full rounded px-3 py-2 text-left text-[12px] text-[#555555] hover:bg-[#F5F5F5] hover:text-black focus:bg-[#F5F5F5] focus:text-black focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex w-full rounded-md px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
             >
               {option.label}
             </button>
           ))}
-          {error && <p role="alert" className="px-3 py-2 text-[11px] text-[#B3261E]">{error}</p>}
+          {error && <p role="alert" className="px-3 py-2 text-[11px] text-destructive">{error}</p>}
         </div>,
         document.body,
       )}

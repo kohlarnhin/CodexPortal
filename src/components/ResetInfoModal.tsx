@@ -34,8 +34,8 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   available: 'bg-emerald-50 text-emerald-600 border-emerald-200',
-  redeemed: 'bg-[#F5F5F5] text-[#888888] border-[#EAEAEA]',
-  expired: 'bg-[#FFF0F0] text-[#D32F2F] border-[#FFD0D0]',
+  redeemed: 'bg-muted text-muted-foreground border-border',
+  expired: 'bg-destructive/5 text-destructive border-destructive/20',
 };
 
 export default function ResetInfoModal({
@@ -138,14 +138,14 @@ export default function ResetInfoModal({
         className="max-w-lg p-0 max-h-[82vh] flex flex-col overflow-hidden gap-0"
         showCloseButton={false}
       >
-        <div className="px-5 py-4 border-b border-[#EAEAEA] flex items-center justify-between shrink-0">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 shrink-0 rounded-lg bg-black text-white flex items-center justify-center shadow-sm">
+            <div className="w-9 h-9 shrink-0 rounded-md border bg-muted text-foreground flex items-center justify-center">
               <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
             </div>
             <div className="min-w-0">
-              <h3 id="reset-modal-title" className="font-semibold text-[15px] text-black tracking-tight">重置卡</h3>
-              <p className="truncate text-[12px] text-[#888888] mt-0.5">{account.name}</p>
+              <h3 id="reset-modal-title" className="font-semibold text-[15px] text-foreground tracking-tight">重置卡</h3>
+              <p className="truncate text-[12px] text-muted-foreground mt-0.5">{account.name}</p>
             </div>
           </div>
 
@@ -153,7 +153,7 @@ export default function ResetInfoModal({
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="w-7 h-7 flex items-center justify-center rounded text-[#999999] hover:bg-[#F5F5F5] hover:text-black transition-colors shrink-0"
+            className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors shrink-0"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
@@ -165,36 +165,36 @@ export default function ResetInfoModal({
               <div className={`rounded-lg border px-4 py-3 text-[12px] leading-relaxed ${
                 atReason === 'expired'
                   ? 'border-[#FFE0B0] bg-[#FFF8F0] text-[#B45309]'
-                  : 'border-[#EAEAEA] bg-[#F9F9F9] text-[#666666]'
+                  : 'border-border bg-muted/50 text-muted-foreground'
               }`}>
                 {atReason === 'expired'
                   ? 'Access Token 已失效，请粘贴该账号新的 Access Token 后重试。'
                   : 'Team 账号的重置卡需要通过 Access Token（at）获取，Personal Access Token 无法访问。请粘贴该账号的 Access Token 以获取重置卡信息。'}
               </div>
               <div className="flex flex-col gap-2">
-                <label htmlFor="atInput" className="text-[12px] font-medium text-black">Access Token</label>
+                <label htmlFor="atInput" className="text-[12px] font-medium text-foreground">Access Token</label>
                 <input
                   type="text"
                   id="atInput"
                   value={atInput}
                   onChange={(e) => { setAtInput(e.target.value); setError(null); }}
                   placeholder="粘贴 Access Token..."
-                  className="w-full px-3 py-2 bg-white border border-[#EAEAEA] rounded-md focus:border-black focus:ring-1 focus:ring-black outline-none transition-all text-black placeholder-[#A0A0A0] text-[13px] font-mono"
+                  className="w-full px-3 py-2 bg-background border border-input rounded-md shadow-xs focus:border-neutral-700 outline-none transition-colors text-foreground placeholder:text-muted-foreground text-[13px] font-mono"
                 />
               </div>
               {error && (
-                <div className="flex items-start gap-2 break-all rounded-md bg-[#FFF0F0] border border-[#FFD0D0] px-3 py-2 text-[12px] text-[#D32F2F]">
+                <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3 py-2 text-[12px] text-destructive">
                   <span>{error}</span>
                 </div>
               )}
             </div>
           ) : isLoading ? (
-            <div className="flex items-center gap-2.5 py-8 justify-center text-[13px] text-[#666666]">
+            <div className="flex items-center gap-2.5 py-8 justify-center text-[13px] text-muted-foreground">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
               获取重置卡中...
             </div>
           ) : error ? (
-            <div className="flex items-start gap-2 break-all rounded-md bg-[#FFF0F0] border border-[#FFD0D0] px-3.5 py-3 text-[12px] text-[#D32F2F] leading-relaxed">
+            <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-3 text-[12px] text-destructive leading-relaxed">
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
               <div>
                 <p>{error}</p>
@@ -217,15 +217,15 @@ export default function ResetInfoModal({
                 </div>
               )}
               {consumeError && (
-                <div className="flex items-start gap-2 rounded-md bg-[#FFF0F0] border border-[#FFD0D0] px-3.5 py-2.5 text-[12px] text-[#D32F2F] break-all">
+                <div className="flex items-start gap-2 rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-2.5 text-[12px] text-destructive break-all">
                   <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
                   <span>{consumeError}</span>
                 </div>
               )}
 
-              <div className="flex items-center justify-between rounded-lg border border-[#EAEAEA] bg-[#FAFAFA] px-4 py-3">
-                <span className="text-[12px] text-[#888888]">可用的重置次数</span>
-                <span className="text-[22px] font-bold font-mono text-black leading-none">{info.availableCount}</span>
+              <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-4 py-3">
+                <span className="text-[12px] text-muted-foreground">可用的重置次数</span>
+                <span className="text-[22px] font-bold font-mono text-foreground leading-none">{info.availableCount}</span>
               </div>
 
               {info.credits.length > 0 ? (
@@ -234,9 +234,9 @@ export default function ResetInfoModal({
                     const status = (credit.status || '').toLowerCase();
                     const isAvailable = status === 'available' && !!credit.id;
                     return (
-                      <div key={index} className="rounded-lg border border-[#EAEAEA] px-3.5 py-3">
+                      <div key={index} className="rounded-lg border border-border px-3.5 py-3">
                         <div className="flex items-center justify-between gap-2 mb-1.5">
-                          <span className="text-[13px] font-medium text-black">
+                          <span className="text-[13px] font-medium text-foreground">
                             {credit.resetType || '重置'}
                           </span>
                           <div className="flex items-center gap-2 shrink-0">
@@ -259,7 +259,7 @@ export default function ResetInfoModal({
                             )}
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-[#888888]">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                           <span>到期：{formatTimestamp(credit.expiresAt)}</span>
                           <span>发放：{formatTimestamp(credit.grantedAt)}</span>
                           <span>兑换：{formatTimestamp(credit.redeemedAt)}</span>
@@ -302,19 +302,19 @@ export default function ResetInfoModal({
                   })}
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed border-[#DADADA] bg-[#FAFAFA] px-4 py-6 text-center text-[12px] text-[#999999]">
+                <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-[12px] text-muted-foreground/70">
                   暂无重置卡记录
                 </div>
               )}
 
-              <div className="text-[11px] text-[#999999]">
+              <div className="text-[11px] text-muted-foreground/70">
                 同步于 {info.syncedAt ? new Date(info.syncedAt).toLocaleString() : '—'}
               </div>
             </div>
           ) : null}
         </div>
 
-        <div className="px-6 py-3.5 bg-[#FAFAFA] border-t border-[#EAEAEA] flex items-center justify-end gap-2.5 shrink-0">
+        <div className="px-6 py-3.5 bg-muted/50 border-t border-border flex items-center justify-end gap-2.5 shrink-0">
           {needsAt ? (
             <>
               <Button

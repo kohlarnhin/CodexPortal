@@ -35,10 +35,10 @@ export default function DiffModal({ isOpen, onClose, onConfirm, diffs }: DiffMod
 
         <div className="max-h-[340px] overflow-y-auto space-y-2.5 pr-1 py-1">
           {diffs.map((diff, i) => (
-            <div key={i} className="flex flex-col bg-[#F9F9F9] border border-[#EAEAEA] rounded-xl p-3 text-[13px]">
-              <div className="font-mono font-medium text-black text-[12px] mb-2">{diff.key}</div>
+            <div key={i} className="flex flex-col bg-muted/40 border rounded-lg p-3 text-[13px]">
+              <div className="font-mono font-medium text-foreground text-[12px] mb-2">{diff.key}</div>
               <div className="flex items-center gap-2.5 font-mono text-[11px] flex-wrap">
-                <div className="bg-[#FFF0F0] text-[#D32F2F] px-2 py-0.5 rounded-md truncate max-w-[200px]">
+                <div className="bg-destructive/5 text-destructive px-2 py-0.5 rounded-md truncate max-w-[200px]">
                   {typeof diff.oldVal === 'object' ? JSON.stringify(diff.oldVal) : String(diff.oldVal ?? '未设置')}
                 </div>
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="m9 18 6-6-6-6"/></svg>

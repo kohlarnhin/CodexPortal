@@ -90,7 +90,7 @@ function renderInline(nodes: InlineNode[]): React.ReactNode {
         return <React.Fragment key={index}>{node.text}</React.Fragment>;
       case 'strong':
         return (
-          <strong key={index} className="font-semibold text-black">
+          <strong key={index} className="font-semibold text-foreground">
             {renderInline(node.children)}
           </strong>
         );
@@ -100,7 +100,7 @@ function renderInline(nodes: InlineNode[]): React.ReactNode {
         return (
           <code
             key={index}
-            className="rounded bg-[#F5F5F5] border border-[#EAEAEA] px-1 py-0.5 font-mono text-[12px] text-[#333333]"
+            className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[12px] text-foreground"
           >
             {node.text}
           </code>
@@ -165,12 +165,12 @@ function renderBlocks(body: string): React.ReactNode {
       const HeadingTag = (`h${Math.min(level, 6)}`) as HeadingTag;
       const headingClass =
         level === 1
-          ? 'mb-2 mt-4 text-[16px] font-bold text-black'
+          ? 'mb-2 mt-4 text-[16px] font-bold text-foreground'
           : level === 2
-            ? 'mb-2 mt-4 text-[15px] font-semibold text-black'
+            ? 'mb-2 mt-4 text-[15px] font-semibold text-foreground'
             : level === 3
-              ? 'mb-1.5 mt-3 text-[14px] font-semibold text-black'
-              : 'mb-1.5 mt-3 text-[13px] font-semibold text-black';
+              ? 'mb-1.5 mt-3 text-[14px] font-semibold text-foreground'
+              : 'mb-1.5 mt-3 text-[13px] font-semibold text-foreground';
       nodes.push(
         <HeadingTag key={key++} className={headingClass}>
           {renderInline(parseInline(heading[2]))}
@@ -181,7 +181,7 @@ function renderBlocks(body: string): React.ReactNode {
     }
 
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      nodes.push(<hr key={key++} className="my-4 border-[#EAEAEA]" />);
+      nodes.push(<hr key={key++} className="my-4 border-border" />);
       i += 1;
       continue;
     }
@@ -209,7 +209,7 @@ function renderBlocks(body: string): React.ReactNode {
           className={`my-2 space-y-1.5 pl-5 ${ordered ? 'list-decimal' : 'list-disc'}`}
         >
           {items.map((item, index) => (
-            <li key={index} className="text-[13px] leading-relaxed text-[#555555]">
+            <li key={index} className="text-[13px] leading-relaxed text-foreground/90">
               {renderInline(parseInline(item.text))}
             </li>
           ))}
@@ -231,7 +231,7 @@ function renderBlocks(body: string): React.ReactNode {
       i += 1;
     }
     nodes.push(
-      <p key={key++} className="my-2 text-[13px] leading-relaxed text-[#555555]">
+      <p key={key++} className="my-2 text-[13px] leading-relaxed text-foreground/90">
         {renderInline(parseInline(paraLines.join(' ')))}
       </p>,
     );

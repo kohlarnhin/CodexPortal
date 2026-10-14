@@ -243,7 +243,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
   const renderError = () =>
     error ? (
-      <div className="flex items-start gap-1.5 px-3 py-2 bg-[#FFF0F0] border border-[#FFD0D0] text-[#D32F2F] text-[12px] rounded-md">
+      <div className="flex items-start gap-1.5 px-3 py-2 bg-destructive/5 border border-destructive/20 text-destructive text-[12px] rounded-md">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
         <span className="break-all">{error}</span>
       </div>
@@ -299,7 +299,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
         {unsupportedFormat ? (
           <div className="py-6 text-center space-y-4">
-            <p className="text-[13px] text-[#666666] leading-relaxed">
+            <p className="text-[13px] text-muted-foreground leading-relaxed">
               该账号为 OAuth / Refresh Token 登录的账号，无法直接编辑。<br />可删除后重新添加。
             </p>
             <Button onClick={onClose} size="sm">
@@ -310,8 +310,8 @@ const AccountModal: React.FC<AccountModalProps> = ({
           <div className="flex flex-col gap-5">
             <div className="space-y-4">
               <div>
-                <label className="block text-[12px] font-medium text-[#222222] mb-1.5">
-                  认证方式 <span className="text-[#D32F2F]">*</span>
+                <label className="block text-[12px] font-medium text-foreground mb-1.5">
+                  认证方式 <span className="text-destructive">*</span>
                 </label>
                 <Select
                   value={authMethod}
@@ -323,12 +323,12 @@ const AccountModal: React.FC<AccountModalProps> = ({
                   ]}
                 />
                 {isRt && (
-                  <p className="text-[11px] text-[#888888] mt-1.5">
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
                     Refresh Token 一次性使用，兑换后旧 rt 失效；Team 账号同样支持。
                   </p>
                 )}
                 {isOauth && (
-                  <p className="text-[11px] text-[#888888] mt-1.5">
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
                     支持个人与 Team 账号。生成 Codex 登录链接，浏览器登录后自动回跳本机完成认证。
                   </p>
                 )}
@@ -336,8 +336,8 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
               {!isOauth && (
                 <div>
-                  <label htmlFor="tokenInput" className="block text-[12px] font-medium text-[#222222] mb-1.5">
-                    {isRt ? 'Refresh Token' : 'Personal Access Token'} <span className="text-[#D32F2F]">*</span>
+                  <label htmlFor="tokenInput" className="block text-[12px] font-medium text-foreground mb-1.5">
+                    {isRt ? 'Refresh Token' : 'Personal Access Token'} <span className="text-destructive">*</span>
                   </label>
                   <Input
                     type="text"
@@ -345,7 +345,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
                     value={input}
                     onChange={(e) => { setInput(e.target.value); setError(null); }}
                     placeholder={isRt ? '可粘贴 JSON（自动提取 refresh_token）或直接粘贴 rt...' : '在此输入或粘贴 Token...'}
-                    className="font-mono text-[12px]"
+                    className="font-mono text-[13px]"
                   />
                   {!isRt && isTokenUnchanged && (
                     <p className="mt-1.5 text-[11px] text-emerald-600">
@@ -356,7 +356,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
               )}
 
               <div>
-                <label htmlFor="notes" className="block text-[12px] font-medium text-[#222222] mb-1.5">
+                <label htmlFor="notes" className="block text-[12px] font-medium text-foreground mb-1.5">
                   备注 (可选)
                 </label>
                 <Input
@@ -369,8 +369,8 @@ const AccountModal: React.FC<AccountModalProps> = ({
                 />
               </div>
 
-              <div className="flex items-start gap-2.5 rounded-xl border border-[#EAEAEA] bg-[#F9F9F9] p-3 text-[12px] text-[#666666] leading-relaxed">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-[#888888]"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 text-[12px] text-muted-foreground leading-relaxed">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-muted-foreground"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                 <span>
                   {isOauth
                     ? '登录成功后邮箱与订阅自动解析；限额类型在额度刷新后自动判断。'
@@ -401,19 +401,19 @@ const AccountModal: React.FC<AccountModalProps> = ({
         ) : step === 'oauth' ? (
           <div className="flex flex-col gap-5">
             <div className="space-y-4">
-              <div className="flex items-center gap-2.5 text-[13px] text-[#555555]">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin text-black"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              <div className="flex items-center gap-2.5 text-[13px] text-muted-foreground">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin text-foreground"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                 等待登录回调...（在本机浏览器登录成功后自动完成）
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[12px] font-medium text-[#222222]">登录链接</label>
+                <label className="text-[12px] font-medium text-foreground">登录链接</label>
                 <div className="flex items-center gap-2">
                   <Input
                     type="text"
                     readOnly
                     value={oauthInfo?.url || ''}
-                    className="text-[11px] text-[#666666] font-mono bg-[#F7F7F7]"
+                    className="text-[11px] text-muted-foreground font-mono bg-muted/50"
                   />
                   <Button
                     type="button"
@@ -437,13 +437,13 @@ const AccountModal: React.FC<AccountModalProps> = ({
               </div>
 
               <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-[#EAEAEA]" />
-                <span className="text-[11px] text-[#999999]">或</span>
-                <div className="h-px flex-1 bg-[#EAEAEA]" />
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[11px] text-muted-foreground/70">或</span>
+                <div className="h-px flex-1 bg-border" />
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[12px] font-medium text-[#222222]">
+                <label className="text-[12px] font-medium text-foreground">
                   在其他设备登录后，粘贴浏览器回跳的 localhost 地址
                 </label>
                 <Input
@@ -483,19 +483,19 @@ const AccountModal: React.FC<AccountModalProps> = ({
         ) : (
           <div className="flex flex-col gap-5">
             <div className="space-y-4">
-              <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-3">
+              <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
                 <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-[#888888] shrink-0">账号邮箱</span>
-                  <span className="text-[14px] font-medium text-black select-text break-all text-right">{confirmEmail}</span>
+                  <span className="text-[12px] text-muted-foreground shrink-0">账号邮箱</span>
+                  <span className="text-[14px] font-medium text-foreground select-text break-all text-right">{confirmEmail}</span>
                 </div>
                 <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-[#888888] shrink-0">订阅方式</span>
-                  <span className="text-[14px] font-medium text-black">{confirmPlanLabel}</span>
+                  <span className="text-[12px] text-muted-foreground shrink-0">订阅方式</span>
+                  <span className="text-[14px] font-medium text-foreground">{confirmPlanLabel}</span>
                 </div>
               </div>
 
-              <div className="flex items-start gap-2.5 rounded-xl border border-[#EAEAEA] bg-[#F9F9F9] p-3 text-[12px] text-[#666666] leading-relaxed">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-[#888888]"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 text-[12px] text-muted-foreground leading-relaxed">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-muted-foreground"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                 <span>
                   {isOauth
                     ? '确认后保存账号；登录已成功，Refresh Token 将用于后续自动刷新。'

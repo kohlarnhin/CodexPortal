@@ -65,11 +65,11 @@ const SessionListView: React.FC<SessionListViewProps> = ({
     <div>
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="min-w-0">
-          <p className="text-[13px] font-medium text-black">全部项目的{includeSubagents ? '会话' : '主会话'}</p>
-          <p className="mt-1 text-[11px] text-[#888888]">按开始时间倒序排列，支持输入完整或部分会话 ID</p>
+          <p className="text-[13px] font-medium text-foreground">全部项目的{includeSubagents ? '会话' : '主会话'}</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">按开始时间倒序排列，支持输入完整或部分会话 ID</p>
         </div>
         <div className="ml-auto flex w-full items-center gap-3 @min-[640px]/page:w-auto">
-          <span role="status" className="shrink-0 text-[11px] text-[#888888]">
+          <span role="status" className="shrink-0 text-[11px] text-muted-foreground">
             {isLoading ? '正在查找…' : error ? '加载失败' : `${data?.total ?? 0} 个${keyword ? '匹配' : ''}${includeSubagents ? '会话' : '主会话'}`}
           </span>
           <div className="flex min-w-0 flex-1 @min-[640px]/page:w-72">
@@ -85,18 +85,18 @@ const SessionListView: React.FC<SessionListViewProps> = ({
 
       {isLoading ? (
         <div className="space-y-3" aria-label="正在加载会话列表" aria-busy="true">
-          {[1, 2, 3].map(index => <div key={index} className="h-28 bg-white border border-[#EAEAEA] rounded-xl animate-pulse" />)}
+          {[1, 2, 3].map(index => <div key={index} className="h-28 bg-muted/50 rounded-xl animate-pulse" />)}
         </div>
       ) : error ? (
-        <div role="alert" className="rounded-xl border border-[#F3D1D1] bg-[#FFF5F5] px-5 py-8 text-center">
-          <p className="text-[13px] text-[#B3261E]">{error}</p>
-          <button onClick={() => setRetry(value => value + 1)} className="mt-3 text-[13px] font-medium text-black underline underline-offset-4">重新加载</button>
+        <div role="alert" className="rounded-xl border border-destructive/20 bg-destructive/5 px-5 py-8 text-center">
+          <p className="text-[13px] text-destructive">{error}</p>
+          <button onClick={() => setRetry(value => value + 1)} className="mt-3 text-[13px] font-medium text-foreground underline underline-offset-4">重新加载</button>
         </div>
       ) : !data?.sessions.length ? (
-        <div className="bg-white rounded-xl border border-[#EAEAEA] py-14 px-8 text-center">
-          <p className="text-[14px] font-medium text-black">{keyword ? '没有找到匹配的会话' : '还没有会话数据'}</p>
-          <p className="mt-2 text-[12px] text-[#888888]">{keyword ? '试试更短的 ID 片段，或清除搜索查看全部会话' : '点击上方“立即同步”，导入本地历史会话'}</p>
-          {!includeSubagents && <p className="mt-2 text-[12px] text-[#888888]">开启“包含子会话”可查看子会话</p>}
+        <div className="rounded-xl border border-dashed py-14 px-8 text-center">
+          <p className="text-[14px] font-medium text-foreground">{keyword ? '没有找到匹配的会话' : '还没有会话数据'}</p>
+          <p className="mt-2 text-[12px] text-muted-foreground">{keyword ? '试试更短的 ID 片段，或清除搜索查看全部会话' : '点击上方“立即同步”，导入本地历史会话'}</p>
+          {!includeSubagents && <p className="mt-2 text-[12px] text-muted-foreground">开启“包含子会话”可查看子会话</p>}
         </div>
       ) : (
         <>
@@ -113,19 +113,19 @@ const SessionListView: React.FC<SessionListViewProps> = ({
             ))}
           </div>
           {totalPages > 1 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 py-4 text-[12px] text-[#888888]">
+            <div className="flex flex-wrap items-center justify-between gap-3 py-4 text-[12px] text-muted-foreground">
               <span>第 {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + data.sessions.length} 条，共 {data.total} 条</span>
               <div className="flex items-center gap-3">
                 <button
                   disabled={page === 0}
                   onClick={() => setQuery(current => ({ ...current, page: current.page - 1 }))}
-                  className="rounded-md border border-[#EAEAEA] bg-white px-3 py-1.5 text-[#555555] hover:border-[#AAAAAA] disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="h-8 rounded-md border bg-background px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
                 >上一页</button>
                 <span>{page + 1} / {totalPages}</span>
                 <button
                   disabled={page + 1 >= totalPages}
                   onClick={() => setQuery(current => ({ ...current, page: current.page + 1 }))}
-                  className="rounded-md border border-[#EAEAEA] bg-white px-3 py-1.5 text-[#555555] hover:border-[#AAAAAA] disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="h-8 rounded-md border bg-background px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
                 >下一页</button>
               </div>
             </div>

@@ -38,13 +38,13 @@ export default function Select({ value, onChange, options, className, disabled, 
           if (!disabled) setIsOpen(!isOpen);
         }}
         className={cn(
-          "w-full px-3 py-1.5 pr-7 bg-white border rounded-lg text-[13px] font-medium cursor-pointer flex items-center justify-between transition-all shadow-2xs select-none",
-          isOpen ? "border-neutral-900 ring-1 ring-neutral-900" : "border-neutral-200/90 hover:border-neutral-300",
-          disabled && "opacity-50 pointer-events-none cursor-not-allowed bg-neutral-100"
+          "w-full h-9 px-3 pr-8 bg-background border border-input rounded-md text-[13px] cursor-pointer flex items-center justify-between transition-[color,box-shadow] shadow-xs select-none",
+          isOpen && "border-neutral-700",
+          disabled && "opacity-50 pointer-events-none cursor-not-allowed"
         )}
       >
-        <span className="truncate text-neutral-900 leading-normal">{selectedOption?.label || value}</span>
-        <div className="absolute inset-y-0 right-0 flex items-center px-2 text-neutral-400 pointer-events-none">
+        <span className="truncate text-foreground leading-normal">{selectedOption?.label || value}</span>
+        <div className="absolute inset-y-0 right-0 flex items-center px-2 text-muted-foreground pointer-events-none">
           <svg 
             xmlns="http://www.w3.org/2000/svg" 
             width="13" 
@@ -65,7 +65,7 @@ export default function Select({ value, onChange, options, className, disabled, 
       {isOpen && !disabled && (
         <div 
           className={cn(
-            "absolute z-50 min-w-full w-max max-w-[320px] mt-1 bg-white border border-neutral-200 rounded-lg shadow-lg overflow-y-auto max-h-60 py-1 animate-in fade-in zoom-in-95 duration-100",
+            "absolute z-50 min-w-full w-max max-w-[320px] mt-1 bg-popover text-popover-foreground border rounded-md shadow-md overflow-y-auto max-h-60 p-1 animate-fade-in",
             align === 'right' ? "right-0" : "left-0"
           )}
         >
@@ -77,18 +77,16 @@ export default function Select({ value, onChange, options, className, disabled, 
                 setIsOpen(false);
               }}
               className={cn(
-                "px-3 py-1.5 text-[12.5px] cursor-pointer flex items-center gap-2 transition-colors select-none",
-                value === option.value 
-                  ? "bg-neutral-100 text-neutral-900 font-semibold" 
-                  : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
+                "px-2 py-1.5 rounded-sm text-[12.5px] cursor-pointer flex items-center justify-between gap-2 select-none text-foreground hover:bg-accent hover:text-accent-foreground",
+                value === option.value && "font-medium"
               )}
             >
-              <div className="w-3 flex justify-center shrink-0">
+              <span className="truncate">{option.label}</span>
+              <div className="w-3.5 flex justify-center shrink-0">
                 {value === option.value && (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-900"><polyline points="20 6 9 17 4 12"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 )}
               </div>
-              <span className="truncate">{option.label}</span>
             </div>
           ))}
         </div>

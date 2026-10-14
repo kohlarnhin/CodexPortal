@@ -28,17 +28,17 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
         e.stopPropagation();
         if (!disabled) onToggle();
       }}
-      className={`relative inline-flex items-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 focus-visible:ring-offset-2 ${
-        isSm ? 'w-8 h-4.5' : 'w-10 h-5'
+      className={`peer relative inline-flex items-center rounded-full border border-transparent shadow-xs transition-colors outline-none cursor-pointer shrink-0 focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
+        isSm ? 'h-4 w-7' : 'h-[1.15rem] w-8'
       } ${
-        disabled ? 'opacity-40 cursor-not-allowed' : ''
-      } ${checked ? 'bg-black' : 'bg-[#DCDCDC] hover:bg-[#D0D0D0]'}`}
+        disabled ? 'opacity-50 cursor-not-allowed' : ''
+      } ${checked ? 'bg-primary' : 'bg-input'}`}
     >
       <span
-        className={`bg-white rounded-full shadow-sm transform transition-transform duration-200 ease-in-out ${
+        className={`pointer-events-none block rounded-full bg-background ring-0 transition-transform ${
           isSm
-            ? `w-3.5 h-3.5 ${checked ? 'translate-x-[15px]' : 'translate-x-[2px]'}`
-            : `w-4 h-4 ${checked ? 'translate-x-5' : 'translate-x-[2px]'}`
+            ? `h-3 w-3 ${checked ? 'translate-x-[calc(100%+1px)]' : 'translate-x-px'}`
+            : `h-4 w-4 ${checked ? 'translate-x-[calc(100%-2px)]' : 'translate-x-0'}`
         }`}
       />
     </button>

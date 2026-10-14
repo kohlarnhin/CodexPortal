@@ -34,29 +34,29 @@ const CompactUsageMeter = ({
   kind: 'primary' | 'secondary';
 }) => {
   const remainingPercent = getRemainingPercent(window);
-  const progressColor = remainingPercent === null ? 'bg-[#E0E0E0]' : remainingPercent <= 20
-    ? 'bg-[#EF4444]'
+  const progressColor = remainingPercent === null ? 'bg-neutral-200' : remainingPercent <= 20
+    ? 'bg-red-500'
     : remainingPercent <= 50
-      ? 'bg-[#F59E0B]'
-      : 'bg-[#10B981]';
+      ? 'bg-amber-500'
+      : 'bg-emerald-500';
 
   return (
-    <div className="min-w-0 rounded-lg border border-[#EAEAEA] bg-[#FAFAFA] px-3 py-2.5">
+    <div className="min-w-0 rounded-lg bg-muted/60 px-3 py-2.5">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="truncate text-[11px] font-semibold text-[#444444]">
+        <span className="truncate text-[11.5px] text-muted-foreground">
           {formatUsageWindowLabel(window, kind)}
         </span>
-        <span className="shrink-0 font-mono text-[12px] font-bold text-black">
+        <span className="shrink-0 text-[12px] font-medium text-foreground tabular-nums">
           {remainingPercent === null ? '额度未知' : `剩余 ${Math.round(remainingPercent)}%`}
         </span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-[#EAEAEA]">
+      <div className="h-1.5 overflow-hidden rounded-full bg-primary/10">
         <div
           className={`h-full rounded-full transition-all duration-500 ${progressColor}`}
           style={{ width: `${remainingPercent ?? 0}%` }}
         />
       </div>
-      <p className="mt-1.5 truncate text-[10px] text-[#888888]">
+      <p className="mt-1.5 truncate text-[10px] text-muted-foreground">
         {formatUsageResetAt(window.resetsAt)}
       </p>
     </div>
@@ -88,21 +88,21 @@ const AccountCard: React.FC<AccountCardProps> = ({
   }
 
   return (
-    <div className={`@container/card h-full min-h-56 min-w-0 flex flex-col relative bg-white rounded-xl border-2 transition-all duration-200 ${
-      isActive ? 'border-black' : 'border-[#EAEAEA] hover:border-[#D0D0D0]'
+    <div className={`@container/card h-full min-h-56 min-w-0 flex flex-col relative bg-card rounded-xl border shadow-xs transition-colors ${
+      isActive ? 'border-primary ring-1 ring-inset ring-primary' : ''
     }`}>
       <div className="p-5 flex-1 flex flex-col">
         <div className="flex flex-col items-start justify-between gap-3 mb-4 @min-[560px]/card:flex-row">
           <div className="w-full min-w-0 @min-[560px]/card:flex-1 @min-[560px]/card:w-auto">
             <div className="flex items-center gap-2 min-w-0">
-              <h3 className="min-w-0 truncate text-[16px] font-bold font-mono text-black leading-tight select-text">
+              <h3 className="min-w-0 truncate text-[15px] font-semibold text-foreground leading-tight select-text">
                 {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
               </h3>
               <PlanBadge planType={account.chatgptPlanType} />
               <ActionTooltip label="查看重置卡详情">
                 <button
                   onClick={() => onShowReset(account)}
-                  className="shrink-0 px-2 py-0.5 bg-[#F5F5F5] text-[#555555] border border-[#E5E5E5] text-[10px] font-medium rounded-full hover:border-black/30 hover:text-black transition-all cursor-pointer shadow-2xs"
+                  className="shrink-0 px-2 py-0.5 bg-background text-muted-foreground border text-[11px] font-medium rounded-md hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
                 >
                   重置{account.resetCredits ? ` ×${account.resetCredits.availableCount}` : ''}
                 </button>
@@ -164,13 +164,13 @@ const AccountCard: React.FC<AccountCardProps> = ({
                   size="icon-sm"
                   onClick={() => onDelete(account.id)} 
                   aria-label="删除账号"
-                  className="hover:bg-red-50 hover:text-red-600"
+                  className="hover:bg-destructive/10 hover:text-destructive"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                 </Button>
               </ActionTooltip>
             </div>
-            <div className="w-[1px] h-4 bg-[#EAEAEA]"></div>
+            <div className="w-px h-4 bg-border"></div>
             <div className="flex items-center">
               <ToggleSwitch
                 label="切换当前账号"
@@ -192,15 +192,15 @@ const AccountCard: React.FC<AccountCardProps> = ({
               ))}
             </div>
           ) : (
-            <div className="flex min-h-[62px] items-center gap-3 rounded-lg border border-dashed border-[#DADADA] bg-[#FAFAFA] px-3.5 py-3">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[#EAEAEA] bg-white text-[#777777]">
+            <div className="flex min-h-[62px] items-center gap-3 rounded-lg bg-muted/60 px-3.5 py-3">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 4-7"/></svg>
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold text-[#555555]">
+                <p className="text-[12px] font-medium text-foreground">
                   {account.canRefreshUsage ? '尚未同步额度' : '暂无可用认证，无法同步额度'}
                 </p>
-                <p className="mt-0.5 truncate text-[10px] text-[#999999]">
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                   {account.canRefreshUsage
                     ? '点击刷新按钮获取最新额度'
                     : '请为该账号配置 PAT 或完成 OAuth 登录'}
@@ -210,10 +210,10 @@ const AccountCard: React.FC<AccountCardProps> = ({
           )}
         </div>
         
-        <div className="flex flex-wrap items-center justify-between gap-y-2 pt-4 border-t border-[#EAEAEA] mt-auto">
+        <div className="flex flex-wrap items-center justify-between gap-y-2 pt-4 border-t mt-auto">
           <div className="flex min-w-0 items-center gap-2 overflow-hidden mr-4">
             <ActionTooltip label="设置剩余额度达到阈值时自动切换账号">
-              <Button type="button" variant="secondary" size="sm" className="h-6 shrink-0 px-2 text-[10px]"
+              <Button type="button" variant="outline" size="sm" className="h-6 shrink-0 px-2 text-[11px] font-normal"
                 onClick={() => onConfigureAutoSwitch(account)}>
                 <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" /></svg>
                 自动切换 ≤ {account.autoSwitchThreshold}%
@@ -221,17 +221,17 @@ const AccountCard: React.FC<AccountCardProps> = ({
             </ActionTooltip>
             {account.notes && (
               <>
-                <div className="w-5 h-5 shrink-0 rounded bg-[#F5F5F5] flex items-center justify-center border border-[#EAEAEA]">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#999999]"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                <div className="w-5 h-5 shrink-0 rounded-md bg-muted flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground/70"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
                 </div>
-                <p className="text-[12px] text-[#666666] truncate">
+                <p className="text-[12px] text-muted-foreground truncate">
                   {account.notes}
                 </p>
               </>
             )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            <span className="text-[11px] text-[#999999] font-mono">
+            <span className="text-[11px] text-muted-foreground tabular-nums">
               {account.usage
                 ? formatUsageSyncedAt(account.usage.syncedAt)
                 : `账号更新于 ${new Date(account.updatedAt).toLocaleDateString()}`}

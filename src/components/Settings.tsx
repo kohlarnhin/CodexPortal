@@ -204,8 +204,8 @@ export default function Settings() {
     return (
       <div className="page-layout pt-4">
         <div className="animate-pulse flex flex-col gap-4">
-          <div className="h-8 bg-neutral-100 rounded w-1/4 mb-4"></div>
-          <div className="h-44 bg-neutral-100 rounded-xl w-full"></div>
+          <div className="h-8 bg-muted rounded-md w-1/4 mb-4"></div>
+          <div className="h-44 bg-muted/50 rounded-xl w-full"></div>
         </div>
       </div>
     );
@@ -214,15 +214,15 @@ export default function Settings() {
   return (
     <div className="page-layout pt-4">
       {/* 头部标题栏 */}
-      <div className="page-header relative z-10 mb-3">
+      <div className="page-header relative z-10">
         <div>
           <div className="flex items-center gap-2.5">
-            <h2 className="text-[20px] font-semibold text-neutral-900 tracking-tight">配置管理</h2>
+            <h2 className="text-[20px] font-semibold text-foreground tracking-tight">配置管理</h2>
             <button
               type="button"
               onClick={() => { void refresh(); }}
               disabled={isRefreshing || isSaving || showDiffModal}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-medium text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition-all cursor-pointer disabled:opacity-50"
+              className="inline-flex h-7 items-center gap-1.5 px-2 rounded-md text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer disabled:opacity-50"
               title="重新从本地 config.toml 读取配置"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isRefreshing ? 'animate-spin' : ''}>
@@ -232,18 +232,18 @@ export default function Settings() {
               <span>{isRefreshing ? '读取中...' : '刷新'}</span>
             </button>
           </div>
-          <p className="text-[13px] text-neutral-500 mt-1">
-            仅支持 OpenAI 官方订阅，配置修改后保存到本地 <code className="font-mono text-neutral-700 bg-neutral-100 px-1 py-0.5 rounded text-[11.5px]">config.toml</code>。
+          <p className="text-[13px] text-muted-foreground mt-1">
+            仅支持 OpenAI 官方订阅，配置修改后保存到本地 <code className="font-mono text-foreground bg-muted px-1 py-0.5 rounded-sm text-[11.5px]">config.toml</code>。
           </p>
         </div>
 
         {saveMessage && (
           <div role={saveMessage.type === 'error' ? 'alert' : 'status'} className={cn(
-            "px-3 py-1.5 rounded-lg text-[12.5px] font-medium animate-fade-in shadow-2xs flex items-center gap-2",
-            saveMessage.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'bg-red-50 text-red-700 border border-red-200/60'
+            "px-3 py-1.5 rounded-md text-[12.5px] font-medium animate-fade-in flex items-center gap-2",
+            saveMessage.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-destructive/5 text-destructive border border-destructive/20'
           )}>
             <span>{saveMessage.text}</span>
-            <button onClick={() => setSaveMessage(null)} className="text-neutral-400 hover:text-neutral-700 ml-1 text-[13px] cursor-pointer">×</button>
+            <button onClick={() => setSaveMessage(null)} className="text-muted-foreground hover:text-foreground ml-1 text-[13px] cursor-pointer">×</button>
           </div>
         )}
       </div>
@@ -265,7 +265,7 @@ export default function Settings() {
       />
 
       {error && (!draft?.raw || !hasLoadedFile) && (
-        <div role="alert" className="mb-3 px-4 py-2.5 rounded-lg border border-red-200 bg-red-50/70 text-red-700 text-[12.5px] shrink-0">
+        <div role="alert" className="mb-3 px-4 py-2.5 rounded-lg border border-destructive/20 bg-destructive/5 text-destructive text-[12.5px] shrink-0">
           {error}
         </div>
       )}
@@ -273,9 +273,9 @@ export default function Settings() {
       {/* 主视图卡片区 */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {activeTab !== 'advanced' && !localConfig && (
-          <div className="rounded-xl border border-neutral-200/80 bg-white px-6 py-12 text-center shadow-2xs">
-            <p className="mb-4 text-[13px] text-neutral-500">配置格式有效后即可使用快捷设置。</p>
-            <button type="button" onClick={() => setActiveTab('advanced')} className="rounded-lg bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white shadow-xs hover:bg-neutral-800 transition-colors cursor-pointer">
+          <div className="rounded-xl border bg-card px-6 py-12 text-center shadow-xs">
+            <p className="mb-4 text-[13px] text-muted-foreground">配置格式有效后即可使用快捷设置。</p>
+            <button type="button" onClick={() => setActiveTab('advanced')} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
               前往高级配置编辑
             </button>
           </div>
@@ -283,16 +283,16 @@ export default function Settings() {
 
         {/* Tab 1: 基础设置（原生 macOS 风格系统偏好设置列表，无嵌套卡片） */}
         {activeTab === 'general' && localConfig && (
-          <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-neutral-200/80 bg-white shadow-2xs overflow-hidden">
-            <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-neutral-100">
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl border bg-card shadow-xs overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-border">
               {/* 1. 模型选择 */}
-              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-neutral-50/40 transition-colors">
+              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/40 transition-colors">
                 <div className="min-w-0 flex-1 pr-6">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <label htmlFor="codex-model" className="text-[13.5px] font-semibold text-neutral-900">模型选择</label>
-                    <span className="font-mono text-[11px] text-neutral-400 bg-neutral-100 px-1.5 py-0.2 rounded">model</span>
+                    <label htmlFor="codex-model" className="text-[13.5px] font-medium text-foreground">模型选择</label>
+                    <span className="font-mono text-[11px] text-muted-foreground bg-muted px-1.5 py-px rounded-sm">model</span>
                   </div>
-                  <p id="codex-model-hint" className="text-[12px] text-neutral-500 leading-normal">
+                  <p id="codex-model-hint" className="text-[12px] text-muted-foreground leading-normal">
                     可选择预设模型或直接输入模型名，留空使用默认模型
                   </p>
                 </div>
@@ -315,13 +315,13 @@ export default function Settings() {
               </div>
 
               {/* 2. 思考程度 */}
-              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-neutral-50/40 transition-colors">
+              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/40 transition-colors">
                 <div className="min-w-0 flex-1 pr-6">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[13.5px] font-semibold text-neutral-900">思考程度</span>
-                    <span className="font-mono text-[11px] text-neutral-400 bg-neutral-100 px-1.5 py-0.2 rounded">model_reasoning_effort</span>
+                    <span className="text-[13.5px] font-medium text-foreground">思考程度</span>
+                    <span className="font-mono text-[11px] text-muted-foreground bg-muted px-1.5 py-px rounded-sm">model_reasoning_effort</span>
                   </div>
-                  <p className="text-[12px] text-neutral-500 leading-normal">
+                  <p className="text-[12px] text-muted-foreground leading-normal">
                     针对具备深度思考能力的模型调节推理深度与配额预算
                   </p>
                 </div>
@@ -346,13 +346,13 @@ export default function Settings() {
               </div>
 
               {/* 3. 沙盒安全模式 */}
-              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-neutral-50/40 transition-colors">
+              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/40 transition-colors">
                 <div className="min-w-0 flex-1 pr-6">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[13.5px] font-semibold text-neutral-900">沙盒安全模式</span>
-                    <span className="font-mono text-[11px] text-neutral-400 bg-neutral-100 px-1.5 py-0.2 rounded">sandbox_mode</span>
+                    <span className="text-[13.5px] font-medium text-foreground">沙盒安全模式</span>
+                    <span className="font-mono text-[11px] text-muted-foreground bg-muted px-1.5 py-px rounded-sm">sandbox_mode</span>
                   </div>
-                  <p className="text-[12px] text-neutral-500 leading-normal">
+                  <p className="text-[12px] text-muted-foreground leading-normal">
                     控制代码执行环境对宿主机文件系统与网络的隔离级别
                   </p>
                 </div>
@@ -374,13 +374,13 @@ export default function Settings() {
               </div>
 
               {/* 4. 审批策略 */}
-              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-neutral-50/40 transition-colors">
+              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/40 transition-colors">
                 <div className="min-w-0 flex-1 pr-6">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[13.5px] font-semibold text-neutral-900">审批策略</span>
-                    <span className="font-mono text-[11px] text-neutral-400 bg-neutral-100 px-1.5 py-0.2 rounded">approval_policy</span>
+                    <span className="text-[13.5px] font-medium text-foreground">审批策略</span>
+                    <span className="font-mono text-[11px] text-muted-foreground bg-muted px-1.5 py-px rounded-sm">approval_policy</span>
                   </div>
-                  <p className="text-[12px] text-neutral-500 leading-normal">
+                  <p className="text-[12px] text-muted-foreground leading-normal">
                     Shell 命令执行与文件写入等敏感操作的授权门禁
                   </p>
                 </div>
@@ -403,13 +403,13 @@ export default function Settings() {
               </div>
 
               {/* 5. 回复风格 */}
-              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-neutral-50/40 transition-colors">
+              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/40 transition-colors">
                 <div className="min-w-0 flex-1 pr-6">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[13.5px] font-semibold text-neutral-900">回复风格</span>
-                    <span className="font-mono text-[11px] text-neutral-400 bg-neutral-100 px-1.5 py-0.2 rounded">personality</span>
+                    <span className="text-[13.5px] font-medium text-foreground">回复风格</span>
+                    <span className="font-mono text-[11px] text-muted-foreground bg-muted px-1.5 py-px rounded-sm">personality</span>
                   </div>
-                  <p className="text-[12px] text-neutral-500 leading-normal">
+                  <p className="text-[12px] text-muted-foreground leading-normal">
                     Codex AI 回复交互时的语气习惯与沟通倾向
                   </p>
                 </div>
@@ -432,13 +432,13 @@ export default function Settings() {
               </div>
 
               {/* 6. 实验性特性警告 */}
-              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-neutral-50/40 transition-colors">
+              <div className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/40 transition-colors">
                 <div className="min-w-0 flex-1 pr-6">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[13.5px] font-semibold text-neutral-900">隐藏实验特性警告</span>
-                    <span className="font-mono text-[11px] text-neutral-400 bg-neutral-100 px-1.5 py-0.2 rounded">suppress_unstable_features_warning</span>
+                    <span className="text-[13.5px] font-medium text-foreground">隐藏实验特性警告</span>
+                    <span className="font-mono text-[11px] text-muted-foreground bg-muted px-1.5 py-px rounded-sm">suppress_unstable_features_warning</span>
                   </div>
-                  <p className="text-[12px] text-neutral-500 leading-normal">
+                  <p className="text-[12px] text-muted-foreground leading-normal">
                     开启新特性时静默运行，不弹出不稳定功能横幅
                   </p>
                 </div>
@@ -457,15 +457,15 @@ export default function Settings() {
             </div>
 
             {/* 底部操作条 */}
-            <div className="bg-neutral-50/90 border-t border-neutral-200/80 px-5 py-3 flex items-center justify-between shrink-0">
+            <div className="bg-muted/40 border-t px-5 py-2.5 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2 text-[12px]">
                 {draft ? (
                   <span className="inline-flex items-center gap-1.5 text-amber-700 font-medium">
-                    <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                     存在未保存的修改（保存前预览 Diff）
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 text-neutral-400 text-[12px]">
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px]">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
                     已是最新配置
                   </span>
@@ -477,7 +477,7 @@ export default function Settings() {
                     type="button"
                     onClick={discardDraft}
                     disabled={editingDisabled}
-                    className="text-[12.5px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex h-8 items-center rounded-md px-3 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
                   >
                     放弃修改
                   </button>
@@ -486,7 +486,7 @@ export default function Settings() {
                   type="button"
                   onClick={handleSave}
                   disabled={editingDisabled || !draft || (!draft.raw && !!error)}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-medium bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs transition-all cursor-pointer"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {isSaving ? (
                     <>
@@ -507,7 +507,7 @@ export default function Settings() {
 
         {/* Tab 2: 功能开关（列表化平铺，无嵌套卡片） */}
         {activeTab === 'features' && localConfig && (
-          <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-neutral-200/80 bg-white shadow-2xs overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl border bg-card shadow-xs overflow-hidden">
             <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5">
               <div className="grid grid-cols-1 @min-[620px]/page:grid-cols-2 gap-x-6 gap-y-1">
                 {OFFICIAL_FEATURE_KEYS.map((key) => {
@@ -528,26 +528,26 @@ export default function Settings() {
                       key={key}
                       onClick={toggleFeature}
                       className={cn(
-                        "flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors cursor-pointer select-none border-b border-neutral-100/80",
-                        enabled ? "bg-neutral-50/80 hover:bg-neutral-100/80" : "hover:bg-neutral-50/50"
+                        "flex items-center justify-between py-2.5 px-3 rounded-md transition-colors cursor-pointer select-none",
+                        enabled ? "bg-muted/50 hover:bg-muted" : "hover:bg-muted/50"
                       )}
                     >
                       <div className="min-w-0 flex-1 pr-3">
                         <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-medium text-neutral-900 truncate">
+                          <span className="text-[13px] font-medium text-foreground truncate">
                             {feature.label}
                           </span>
                           {feature.defaultEnabled && (
                             <span
                               title="官方默认开启：未配置时也生效"
-                              className="shrink-0 rounded bg-emerald-50 text-emerald-700 border border-emerald-200/70 px-1.5 py-0.2 text-[10px] font-mono"
+                              className="shrink-0 rounded-sm bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-px text-[10.5px] font-mono"
                             >
                               默认
                             </span>
                           )}
                         </div>
                         {feature.description && (
-                          <p className="text-[11.5px] text-neutral-400 truncate mt-0.5">
+                          <p className="text-[11.5px] text-muted-foreground truncate mt-0.5">
                             {feature.description}
                           </p>
                         )}
@@ -566,15 +566,15 @@ export default function Settings() {
             </div>
 
             {/* 底部操作条 */}
-            <div className="bg-neutral-50/90 border-t border-neutral-200/80 px-5 py-3 flex items-center justify-between shrink-0">
+            <div className="bg-muted/40 border-t px-5 py-2.5 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2 text-[12px]">
                 {draft ? (
                   <span className="inline-flex items-center gap-1.5 text-amber-700 font-medium">
-                    <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                     已变更开关选项（保存前预览 Diff）
                   </span>
                 ) : (
-                  <span className="text-neutral-400 text-[12px]">
+                  <span className="text-muted-foreground text-[12px]">
                     共支持 {OFFICIAL_FEATURE_KEYS.length} 项官方特性开关
                   </span>
                 )}
@@ -585,7 +585,7 @@ export default function Settings() {
                     type="button"
                     onClick={discardDraft}
                     disabled={editingDisabled}
-                    className="text-[12.5px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex h-8 items-center rounded-md px-3 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
                   >
                     放弃修改
                   </button>
@@ -594,7 +594,7 @@ export default function Settings() {
                   type="button"
                   onClick={handleSave}
                   disabled={editingDisabled || !draft || (!draft.raw && !!error)}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-medium bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs transition-all cursor-pointer"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {isSaving ? (
                     <>
@@ -615,32 +615,27 @@ export default function Settings() {
 
         {/* Tab 3: 高级配置 (TOML) */}
         {activeTab === 'advanced' && (
-          <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-neutral-800 bg-[#18181B] shadow-2xs overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl border bg-card shadow-xs overflow-hidden">
             {/* 编辑器顶部状态栏 */}
-            <div className="bg-[#1F1F23] border-b border-neutral-800 px-4 py-2.5 flex items-center justify-between shrink-0">
+            <div className="border-b bg-muted/40 px-4 py-2 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444]/90" />
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]/90" />
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]/90" />
-                </div>
-                <div className="flex items-center gap-1.5 text-neutral-300 text-[11.5px] font-mono bg-neutral-800/80 px-2.5 py-0.5 rounded border border-neutral-700/60">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400 shrink-0"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <div className="flex items-center gap-1.5 text-foreground text-[12px] font-mono">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground shrink-0"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
                   <span>config.toml</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
-                <span className="text-[11px] font-mono text-neutral-500">
+                <span className="text-[11px] font-mono text-muted-foreground">
                   {localToml.split('\n').length} 行 · {localToml.length} 字符
                 </span>
                 {tomlError ? (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-red-400 bg-red-950/60 border border-red-800/60 px-2 py-0.5 rounded-full">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-destructive bg-destructive/5 border border-destructive/20 px-2 py-0.5 rounded-md">
                     <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
                     语法错误
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                     语法有效
                   </span>
@@ -657,23 +652,23 @@ export default function Settings() {
               autoCapitalize="off"
               autoCorrect="off"
               wrap="off"
-              className="flex-1 min-h-0 w-full bg-[#18181B] text-neutral-200 font-mono text-[12.5px] p-4 focus:outline-none resize-none leading-relaxed custom-scrollbar selectable"
+              className="flex-1 min-h-0 w-full bg-card text-foreground font-mono text-[12.5px] p-4 focus:outline-none resize-none leading-relaxed selectable"
               spellCheck={false}
             />
 
             {/* 语法错误提示 */}
             {tomlError && (
-              <div role="alert" className="shrink-0 border-t border-red-900/60 bg-red-950/80 px-4 py-2 text-[12px] text-red-300 flex items-center gap-2">
+              <div role="alert" className="shrink-0 border-t border-destructive/20 bg-destructive/5 px-4 py-2 text-[12px] text-destructive flex items-center gap-2">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                 <span className="font-mono text-[11.5px]">{tomlError}</span>
               </div>
             )}
 
             {/* 编辑器底部操作条 */}
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-neutral-800 bg-[#1F1F23] px-4 py-2.5">
-              <p className="text-[11px] text-neutral-400 flex items-center gap-1.5">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-muted/40 px-4 py-2.5">
+              <p className="text-[11.5px] text-muted-foreground flex items-center gap-1.5">
                 <span>支持快捷键</span>
-                <kbd className="px-1 py-0.2 rounded bg-neutral-800 border border-neutral-700 font-mono text-[10px] text-neutral-300">⌘S</kbd>
+                <kbd className="px-1 rounded-sm border bg-background font-mono text-[10.5px] text-foreground">⌘S</kbd>
                 <span>快速保存 · 保存前预览 Diff 差异</span>
               </p>
               <div className="flex items-center gap-3">
@@ -682,7 +677,7 @@ export default function Settings() {
                     type="button"
                     onClick={discardDraft}
                     disabled={editingDisabled}
-                    className="text-[12px] text-neutral-400 hover:text-white transition-colors disabled:opacity-50 cursor-pointer"
+                    className="inline-flex h-8 items-center rounded-md px-3 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-50 cursor-pointer"
                   >
                     放弃修改
                   </button>
@@ -691,7 +686,7 @@ export default function Settings() {
                   type="button"
                   onClick={handleSave}
                   disabled={editingDisabled || !draft}
-                  className="rounded-lg bg-white px-4 py-1.5 text-[12.5px] font-medium text-neutral-900 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs transition-all cursor-pointer"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {isSaving ? '保存中...' : '保存配置'}
                 </button>

@@ -24,7 +24,7 @@ const HighlightedText: React.FC<HighlightedTextProps> = ({
         aria-current={matchIndex === activeMatchIndex ? 'true' : undefined}
         className={matchIndex === activeMatchIndex
           ? 'rounded-sm bg-black text-white scroll-mt-4'
-          : 'rounded-sm bg-[#E5E5E5] text-black scroll-mt-4'}
+          : 'rounded-sm bg-neutral-200 text-foreground scroll-mt-4'}
       >
         {text.slice(match.start, match.end)}
       </mark>,

@@ -11,6 +11,10 @@ import SessionDetailPanel from './sessions/SessionDetailPanel';
 import SessionListView from './sessions/SessionListView';
 import SearchInput from './sessions/SearchInput';
 import ConfirmModal from './ConfirmModal';
+import SegmentedControl from './SegmentedControl';
+import ToggleSwitch from './ToggleSwitch';
+import Button from './ui/button';
+import PageHeader from './ui/page-header';
 
 type ViewState =
   | { type: 'projects' }
@@ -77,55 +81,44 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
       style={{ visibility: detailSession && detailContainer ? 'hidden' : undefined }}
     >
       {/* 标题栏 + 同步状态 */}
-      <div className="page-header mb-4">
-        <div className="min-w-0">
-          <h2 className="text-[20px] font-semibold tracking-tight text-black mb-1">会话管理</h2>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[11px] text-[#999999]">
-            {sessions.isResetting ? '正在重置并重新同步会话…' : sessions.status?.lastSyncedAt ? (
-              <>
-                上次同步 {formatRelativeTime(sessions.status.lastSyncedAt)}
-                {sessions.status.nextSyncAt && !isSyncing && (
-                  <> · 下次同步 {formatDateTime(sessions.status.nextSyncAt)}</>
-                )}
-              </>
-            ) : (
-              '尚未同步 · 每 5 分钟自动同步'
+      <PageHeader
+        title="会话管理"
+        description={sessions.isResetting ? '正在重置并重新同步会话…' : sessions.status?.lastSyncedAt ? (
+          <>
+            上次同步 {formatRelativeTime(sessions.status.lastSyncedAt)}
+            {sessions.status.nextSyncAt && !isSyncing && (
+              <> · 下次同步 {formatDateTime(sessions.status.nextSyncAt)}</>
             )}
-          </span>
-          <button
-            onClick={() => setIsResetConfirmOpen(true)}
-            disabled={isSyncing}
-            className="rounded-md border border-[#EAEAEA] bg-white px-3 py-1.5 text-[13px] font-medium text-[#666666] transition-colors hover:border-[#D4D4D4] hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {sessions.isResetting ? '重置中…' : '重置'}
-          </button>
-          <button
-            onClick={() => void sessions.manualSync()}
-            disabled={isSyncing}
-            aria-busy={isSyncing}
-            className="flex items-center gap-2 px-4 py-1.5 bg-black hover:bg-[#333333] disabled:opacity-50 disabled:cursor-not-allowed text-white text-[13px] font-medium rounded-md transition-colors shadow-sm"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={isSyncing ? 'animate-spin motion-reduce:animate-none' : ''}
-            >
-              <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
-              <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
-            </svg>
-            {isSyncing ? '同步中…' : '立即同步'}
-          </button>
-        </div>
-      </div>
+          </>
+        ) : (
+          '尚未同步 · 每 5 分钟自动同步'
+        )}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => setIsResetConfirmOpen(true)} disabled={isSyncing}>
+              {sessions.isResetting ? '重置中…' : '重置'}
+            </Button>
+            <Button size="sm" onClick={() => void sessions.manualSync()} disabled={isSyncing} aria-busy={isSyncing}>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={isSyncing ? 'animate-spin motion-reduce:animate-none' : ''}
+              >
+                <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+                <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+              </svg>
+              {isSyncing ? '同步中…' : '立即同步'}
+            </Button>
+          </>
+        }
+      />
 
       {/* 同步进度条 */}
       {isSyncing && (
@@ -137,14 +130,14 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={syncPercent}
-              className="flex-1 h-1.5 overflow-hidden rounded-full bg-[#EAEAEA]"
+              className="flex-1 h-1.5 overflow-hidden rounded-full bg-primary/10"
             >
               <div
-                className={`h-full rounded-full bg-black ${syncPercent === undefined ? 'w-1/3 animate-pulse motion-reduce:animate-none' : 'transition-[width] duration-300 motion-reduce:transition-none'}`}
+                className={`h-full rounded-full bg-primary ${syncPercent === undefined ? 'w-1/3 animate-pulse motion-reduce:animate-none' : 'transition-[width] duration-300 motion-reduce:transition-none'}`}
                 style={syncPercent === undefined ? undefined : { width: `${Math.max(2, syncPercent)}%` }}
               />
             </div>
-            <span className="text-[11px] text-[#666666] shrink-0">
+            <span className="text-[11px] text-muted-foreground shrink-0">
               {sessions.syncProgress
                 ? `正在同步 ${sessions.syncProgress.done}/${sessions.syncProgress.total}`
                 : sessions.isResetting ? '正在准备重置并重新同步…' : '正在扫描会话…'}
@@ -154,40 +147,27 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ detailContainer }) => {
       )}
 
       {sessions.error && (
-        <div className="mb-4 shrink-0 rounded-lg border border-[#F3D1D1] bg-[#FFF5F5] px-4 py-2.5 text-[12px] text-[#B3261E]">
+        <div className="mb-4 shrink-0 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2.5 text-[12px] text-destructive">
           {sessions.error}
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-1 mb-4 shrink-0 border-b border-[#EAEAEA]" aria-label="会话浏览方式">
-        {([{ type: 'projects', label: '项目列表' }, { type: 'sessions', label: '会话列表' }] as const).map(tab => {
-          const isActive = tab.type === 'sessions' ? view.type === 'sessions' : view.type !== 'sessions';
-          return (
-            <button
-              key={tab.type}
-              aria-pressed={isActive}
-              onClick={() => {
-                sessions.activeProjectPathRef.current = null;
-                setView({ type: tab.type });
-              }}
-              className={`px-4 py-2.5 -mb-px border-b-2 text-[13px] font-medium transition-colors ${isActive ? 'border-black text-black' : 'border-transparent text-[#888888] hover:text-black'}`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-        <label
-          className="ml-auto flex cursor-pointer items-center gap-2 px-2 py-2.5 text-[12px] text-[#666666]"
+      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+        <SegmentedControl
+          value={view.type === 'sessions' ? 'sessions' : 'projects'}
+          onChange={type => {
+            sessions.activeProjectPathRef.current = null;
+            setView({ type });
+          }}
+          options={[{ id: 'projects', label: '项目列表' }, { id: 'sessions', label: '会话列表' }] as const}
+        />
+        <div
+          className="flex items-center gap-2 text-[12.5px] text-muted-foreground"
           title="子会话仍会同步并计入总用量，此开关仅控制列表显示范围"
         >
-          <input
-            type="checkbox"
-            checked={includeSubagents}
-            onChange={event => setIncludeSubagents(event.target.checked)}
-            className="h-3.5 w-3.5 rounded border-[#D4D4D4] accent-black focus-visible:outline-black"
-          />
-          包含子会话
-        </label>
+          <span>包含子会话</span>
+          <ToggleSwitch size="sm" label="包含子会话" checked={includeSubagents} onToggle={() => setIncludeSubagents(value => !value)} />
+        </div>
       </div>
 
       {/* 内容区 */}
@@ -285,10 +265,10 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
     <div>
       {/* 统计 + 搜索 */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <span className="rounded-full border border-[#EAEAEA] bg-white px-3 py-1 text-[11px] font-medium text-[#666666]">
+        <span className="rounded-md border px-2 py-0.5 text-[11.5px] font-medium text-muted-foreground tabular-nums">
           {totalProjects} 个项目
         </span>
-        <span className="rounded-full border border-[#EAEAEA] bg-white px-3 py-1 text-[11px] font-medium text-[#666666]">
+        <span className="rounded-md border px-2 py-0.5 text-[11.5px] font-medium text-muted-foreground tabular-nums">
           {totalSessions} 个{includeSubagents ? '会话' : '主会话'}
         </span>
         <div className="ml-auto flex w-full @min-[520px]/page:w-56">
@@ -304,18 +284,18 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
       {isLoading && !isSyncing ? (
         <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1024px]/page:grid-cols-3 @min-[1400px]/page:grid-cols-4 gap-4">
           {[1, 2, 3].map(i => (
-            <div key={i} className="h-32 bg-white border border-[#EAEAEA] rounded-xl animate-pulse" />
+            <div key={i} className="h-32 bg-muted/50 rounded-xl animate-pulse" />
           ))}
         </div>
       ) : projects.length === 0 ? (
-        <div className="bg-white rounded-xl border border-[#EAEAEA] py-16 px-8 text-center">
-          <div className="w-14 h-14 mx-auto bg-[#F5F5F5] rounded-xl flex items-center justify-center border border-[#EAEAEA] mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#999999]"><path d="M12 8v4l2.5 2.5"/><circle cx="12" cy="12" r="10"/></svg>
+        <div className="rounded-xl border border-dashed py-16 px-8 text-center">
+          <div className="w-12 h-12 mx-auto bg-muted rounded-lg flex items-center justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground"><path d="M12 8v4l2.5 2.5"/><circle cx="12" cy="12" r="10"/></svg>
           </div>
-          <h3 className="text-[16px] font-semibold text-black mb-1.5">
+          <h3 className="text-[15px] font-semibold text-foreground mb-1.5">
             {search.trim() ? '没有找到匹配的项目' : isSyncing ? '正在同步会话数据…' : '还没有会话数据'}
           </h3>
-          <p className="text-[13px] text-[#888888] mb-5">
+          <p className="text-[13px] text-muted-foreground mb-5">
             {search.trim()
               ? '试试其他项目名称或路径，或清除搜索查看全部项目'
               : isSyncing
@@ -323,12 +303,9 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({
               : '点击同步，将 ~/.codex/sessions 的历史会话按项目入库'}
           </p>
           {!isSyncing && !search.trim() && (
-            <button
-              onClick={onSyncNow}
-              className="px-4 py-1.5 bg-black hover:bg-[#333333] text-white text-[13px] font-medium rounded-md transition-colors shadow-sm"
-            >
+            <Button size="sm" onClick={onSyncNow}>
               立即同步
-            </button>
+            </Button>
           )}
         </div>
       ) : (
@@ -378,15 +355,15 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
             onClick={onBack}
             aria-label="返回项目列表"
             title="返回项目列表"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#666666] transition-colors hover:bg-black/5 hover:text-black focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-black/30"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
           </button>
-          <h3 className="max-w-[45%] shrink-0 truncate text-[14px] font-semibold tracking-tight text-black" title={project.name}>{project.name}</h3>
-          <span aria-hidden="true" className="text-[12px] text-[#D0D0D0]">/</span>
-          <p className="min-w-0 flex-1 truncate font-mono text-[10px] text-[#999999]" title={project.path}>{project.path}</p>
+          <h3 className="max-w-[45%] shrink-0 truncate text-[14px] font-semibold tracking-tight text-foreground" title={project.name}>{project.name}</h3>
+          <span aria-hidden="true" className="text-[12px] text-neutral-300">/</span>
+          <p className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground/70" title={project.path}>{project.path}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] text-[#888888]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] text-muted-foreground">
           <span role="status">
             {isLoading ? '正在加载…' : keyword ? `${filteredSessions.length} 个匹配 / 共 ${sessions.length} 个${sessionLabel}` : `${sessions.length} 个${sessionLabel}`}
           </span>
@@ -401,13 +378,13 @@ const ProjectSessionsView: React.FC<ProjectSessionsViewProps> = ({
       {isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
-            <div key={i} className="h-20 bg-white border border-[#EAEAEA] rounded-xl animate-pulse" />
+            <div key={i} className="h-20 bg-muted/50 rounded-xl animate-pulse" />
           ))}
         </div>
       ) : filteredSessions.length === 0 ? (
-        <div className="bg-white rounded-xl border border-[#EAEAEA] py-14 px-8 text-center">
-          <p className="text-[13px] text-[#999999]">{keyword ? '没有找到匹配的会话，试试更短的 ID 片段' : `该项目暂无${sessionLabel}`}</p>
-          {!includeSubagents && <p className="mt-2 text-[12px] text-[#999999]">开启“包含子会话”可查看子会话</p>}
+        <div className="rounded-xl border border-dashed py-14 px-8 text-center">
+          <p className="text-[13px] text-muted-foreground">{keyword ? '没有找到匹配的会话，试试更短的 ID 片段' : `该项目暂无${sessionLabel}`}</p>
+          {!includeSubagents && <p className="mt-2 text-[12px] text-muted-foreground/70">开启“包含子会话”可查看子会话</p>}
         </div>
       ) : (
         <div className="space-y-3">

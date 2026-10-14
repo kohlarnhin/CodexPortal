@@ -7,6 +7,7 @@ import { calcModelCost, formatCost } from '../utils/modelPricing';
 import { DateRangePicker } from './DatePicker';
 import SegmentedControl from './SegmentedControl';
 import { cn } from '../lib/utils';
+import PageHeader from './ui/page-header';
 
 function toDateStr(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -38,24 +39,24 @@ interface StatCardProps {
 }
 
 const StatCard: React.FC<StatCardProps> = ({ label, value, details, subtext, icon }) => (
-  <div className="flex flex-col justify-between rounded-xl border border-neutral-200/80 bg-white p-3.5 shadow-2xs transition-all hover:border-neutral-300">
+  <div className="flex flex-col justify-between rounded-xl border bg-card p-4 shadow-xs">
     <div className="flex items-center justify-between gap-1.5 mb-1.5">
-      <span className="text-[12px] font-medium text-neutral-500 truncate">{label}</span>
-      {icon && <div className="text-neutral-400 shrink-0">{icon}</div>}
+      <span className="text-[12.5px] text-muted-foreground truncate">{label}</span>
+      {icon && <div className="text-muted-foreground shrink-0">{icon}</div>}
     </div>
     <div>
-      <div className="font-mono text-[20px] sm:text-[22px] font-bold tracking-tight text-neutral-900 tabular-nums leading-tight">
+      <div className="text-[22px] font-semibold tracking-tight text-foreground tabular-nums leading-tight">
         {value}
       </div>
       {details && details.length > 0 ? (
-        <div className="mt-2.5 pt-2 border-t border-neutral-100 flex flex-col gap-1 text-[11px]">
+        <div className="mt-3 pt-2.5 border-t flex flex-col gap-1 text-[11.5px]">
           {details.map((d, i) => (
             <div key={i} className="flex items-center justify-between gap-2" title={`${d.label}: ${d.value}`}>
-              <span className="text-neutral-400 shrink-0 select-none">{d.label}</span>
+              <span className="text-muted-foreground shrink-0 select-none">{d.label}</span>
               <span
                 className={cn(
-                  'font-mono tabular-nums truncate text-right',
-                  d.highlight ? 'text-emerald-600 font-semibold' : 'text-neutral-600 font-medium'
+                  'tabular-nums truncate text-right',
+                  d.highlight ? 'text-emerald-600 font-medium' : 'text-foreground'
                 )}
               >
                 {d.value}
@@ -64,7 +65,7 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, details, subtext, ico
           ))}
         </div>
       ) : (
-        <div className="mt-1.5 text-[11px] text-neutral-400 min-h-[16px]">
+        <div className="mt-1.5 text-[11px] text-muted-foreground min-h-[16px]">
           {subtext || '\u00A0'}
         </div>
       )}
@@ -95,14 +96,14 @@ const DistributionItem: React.FC<DistributionItemProps> = ({
   const sharePercent = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
 
   return (
-    <div className="group rounded-lg p-2 transition-colors hover:bg-neutral-50/90 flex flex-col gap-1.5">
+    <div className="group rounded-md p-2 transition-colors hover:bg-muted/60 flex flex-col gap-1.5">
       {/* 头部行：序号 + 图标 + 项目/模型全名（独占空间，不被挤压截断） + Token用量 */}
       <div className="flex items-center justify-between gap-2.5 min-w-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-mono font-semibold text-neutral-400 group-hover:text-neutral-700 bg-neutral-100/90">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[11px] font-medium tabular-nums text-muted-foreground bg-muted">
             {rank}
           </span>
-          <div className="shrink-0 text-neutral-400 group-hover:text-neutral-600">
+          <div className="shrink-0 text-muted-foreground">
             {iconType === 'project' ? (
               <svg
                 width="14"
@@ -135,7 +136,7 @@ const DistributionItem: React.FC<DistributionItemProps> = ({
           </div>
           <span
             className={cn(
-              'truncate text-[13px] font-medium text-neutral-800 select-text leading-tight',
+              'truncate text-[13px] font-medium text-foreground select-text leading-tight',
               iconType === 'model' && 'font-mono text-[12.5px]'
             )}
             title={label}
@@ -143,23 +144,23 @@ const DistributionItem: React.FC<DistributionItemProps> = ({
             {label}
           </span>
         </div>
-        <span className="font-mono text-[13px] font-bold text-neutral-900 tabular-nums shrink-0">
+        <span className="text-[13px] font-medium text-foreground tabular-nums shrink-0">
           {formatTokens(value)}
         </span>
       </div>
 
       {/* 第二行：与名称左对齐的细进度条 + 会话数与占比信息 */}
       <div className="flex items-center gap-3 pl-7">
-        <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-neutral-100">
+        <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-primary/10">
           <div
-            className="h-full rounded-full bg-neutral-800 group-hover:bg-neutral-900 transition-all duration-500"
+            className="h-full rounded-full bg-primary transition-all duration-500"
             style={{ width: `${relativePercent}%` }}
           />
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 text-[11px] font-mono text-neutral-400">
+        <div className="flex items-center gap-1.5 shrink-0 text-[11px] tabular-nums text-muted-foreground">
           {sublabel && <span>{sublabel}</span>}
           {sublabel && <span className="text-neutral-300">·</span>}
-          <span className="font-semibold text-neutral-600">{sharePercent}%</span>
+          <span className="font-medium text-foreground">{sharePercent}%</span>
         </div>
       </div>
     </div>
@@ -313,11 +314,10 @@ const TokenUsagePage: React.FC = () => {
   return (
     <div className="page-layout pt-4">
       {/* 标题栏 + 日期控制 */}
-      <div className="page-header mb-3">
-        <div className="min-w-0">
-          <h2 className="text-[20px] font-semibold tracking-tight text-neutral-900 mb-1">Token 用量</h2>
-          <p className="text-[13px] text-neutral-500">按天统计会话消耗，支持任意历史日期查询与费用估算</p>
-        </div>
+      <PageHeader
+        title="Token 用量"
+        description="按天统计会话消耗，支持任意历史日期查询与费用估算"
+        actions={
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <DateRangePicker
             startDate={startDate}
@@ -342,10 +342,11 @@ const TokenUsagePage: React.FC = () => {
             ]}
           />
         </div>
-      </div>
+        }
+      />
 
       {error && (
-        <div className="mb-3 shrink-0 rounded-lg border border-red-200 bg-red-50/70 px-4 py-2 text-[12px] text-red-600">
+        <div className="mb-3 shrink-0 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 text-[12px] text-destructive">
           {error}
         </div>
       )}
@@ -355,12 +356,12 @@ const TokenUsagePage: React.FC = () => {
         {isLoading ? (
           <div className="grid grid-cols-2 @min-[640px]/page:grid-cols-4 gap-3">
             {[1, 2, 3, 4].map(i => (
-              <div key={i} className="h-28 bg-white border border-neutral-200/80 rounded-xl animate-pulse" />
+              <div key={i} className="h-28 bg-muted/50 rounded-xl animate-pulse" />
             ))}
           </div>
         ) : days.length === 0 ? (
-          <div className="flex-1 min-h-[260px] bg-white rounded-xl border border-neutral-200/80 flex items-center justify-center shadow-2xs">
-            <p className="text-[13px] text-neutral-400">该时间段暂无 token 用量数据（同步完成后可见）</p>
+          <div className="flex-1 min-h-[260px] rounded-xl border border-dashed flex items-center justify-center">
+            <p className="text-[13px] text-muted-foreground">该时间段暂无 token 用量数据（同步完成后可见）</p>
           </div>
         ) : (
           <>
@@ -432,19 +433,19 @@ const TokenUsagePage: React.FC = () => {
             {/* 双栏分布看板：自适应填满剩余空间，仅各卡片内部超出时滚动 */}
             <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 gap-3.5 flex-1 min-h-0 pb-0.5">
               {/* 按项目分布 */}
-              <div className="flex flex-col rounded-xl border border-neutral-200/80 bg-white p-4 shadow-2xs min-h-0">
-                <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-neutral-100 shrink-0">
+              <div className="flex flex-col rounded-xl border bg-card p-4 shadow-xs min-h-0">
+                <div className="flex items-center justify-between pb-3 mb-2 border-b shrink-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-[13.5px] font-semibold text-neutral-900">按项目分布</h3>
-                    <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-mono font-medium text-neutral-500">
+                    <h3 className="text-[14px] font-semibold text-foreground">按项目分布</h3>
+                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
                       {mergedProjects.length}
                     </span>
                   </div>
-                  <span className="text-[11px] text-neutral-400">消耗占比</span>
+                  <span className="text-[11.5px] text-muted-foreground">消耗占比</span>
                 </div>
                 {mergedProjects.length === 0 ? (
                   <div className="flex-1 min-h-[140px] flex items-center justify-center">
-                    <p className="text-[12px] text-neutral-400">暂无项目数据</p>
+                    <p className="text-[12px] text-muted-foreground">暂无项目数据</p>
                   </div>
                 ) : (
                   <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">
@@ -465,19 +466,19 @@ const TokenUsagePage: React.FC = () => {
               </div>
 
               {/* 按模型分布 */}
-              <div className="flex flex-col rounded-xl border border-neutral-200/80 bg-white p-4 shadow-2xs min-h-0">
-                <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-neutral-100 shrink-0">
+              <div className="flex flex-col rounded-xl border bg-card p-4 shadow-xs min-h-0">
+                <div className="flex items-center justify-between pb-3 mb-2 border-b shrink-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-[13.5px] font-semibold text-neutral-900">按模型分布</h3>
-                    <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-mono font-medium text-neutral-500">
+                    <h3 className="text-[14px] font-semibold text-foreground">按模型分布</h3>
+                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
                       {mergedModels.length}
                     </span>
                   </div>
-                  <span className="text-[11px] text-neutral-400">消耗占比</span>
+                  <span className="text-[11.5px] text-muted-foreground">消耗占比</span>
                 </div>
                 {mergedModels.length === 0 ? (
                   <div className="flex-1 min-h-[140px] flex items-center justify-center">
-                    <p className="text-[12px] text-neutral-400">暂无模型数据</p>
+                    <p className="text-[12px] text-muted-foreground">暂无模型数据</p>
                   </div>
                 ) : (
                   <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">

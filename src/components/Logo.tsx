@@ -2,16 +2,13 @@ import React, { useId } from 'react';
 
 interface LogoProps {
   className?: string;
-  animated?: boolean;
 }
 
 /**
  * SleekPortalLogo:
- * 科技感十足的动态 Portal Logo。
- * 内部金属质感的 C 字上，电光蓝小圆点（Dot）与外圈微光长条（Strip）
- * 沿着 C 字轨道做优雅平滑的相对往复滑动（Relative Sliding）。
+ * 静态 Portal Logo：金属质感的 C 字，搭配电光蓝小圆点与外圈长条。
  */
-export const SleekPortalLogo: React.FC<LogoProps> = ({ className = "w-7 h-7", animated = true }) => {
+export const SleekPortalLogo: React.FC<LogoProps> = ({ className = "w-7 h-7" }) => {
   const rawId = useId();
   const id = rawId.replace(/:/g, '_');
 
@@ -29,10 +26,7 @@ export const SleekPortalLogo: React.FC<LogoProps> = ({ className = "w-7 h-7", an
       />
       
       {/* Outer Portal Ring (Dynamic glowing accent strip sliding along C) */}
-      <g
-        className={animated ? "portal-logo-strip" : ""}
-        style={{ transformOrigin: '50px 50px', transformBox: 'view-box' }}
-      >
+      <g>
         <path 
           d="M77 23 A 38 38 0 0 0 40.2 13.3" 
           stroke={`url(#${id}-ring-grad)`} 
@@ -51,10 +45,7 @@ export const SleekPortalLogo: React.FC<LogoProps> = ({ className = "w-7 h-7", an
       />
       
       {/* Floating accent dot sliding along C */}
-      <g
-        className={animated ? "portal-logo-dot" : ""}
-        style={{ transformOrigin: '50px 50px', transformBox: 'view-box' }}
-      >
+      <g>
         <circle 
           cx="67" 
           cy="67" 

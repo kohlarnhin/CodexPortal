@@ -4,7 +4,7 @@ import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import PlanBadge from './PlanBadge';
 import CodexSessionsPanel from './CodexSessionsPanel';
-import type { CodexLiveUsage, CodexSessionMonitor, CodexLiveTps } from '../types/codexEvents';
+import type { CodexLiveUsage, CodexSessionMonitor } from '../types/codexEvents';
 import Button from './ui/button';
 import { ActionTooltip } from './ui/tooltip';
 import { AccountUsageWindow } from '../types/account';
@@ -21,7 +21,6 @@ interface ActiveAccountProps {
   onNavigateToAccounts: () => void;
   usageRevision: number;
   liveUsage: CodexLiveUsage;
-  tps: CodexLiveTps;
   onRefreshUsage: () => Promise<void>;
   sessionMonitor: CodexSessionMonitor;
   onRefreshSessions: () => void;
@@ -71,7 +70,7 @@ const UsageCard = ({
         : '余量充裕';
 
   const statusBadgeClass = remainingPercent === null
-    ? 'bg-neutral-50 text-neutral-500 border-neutral-200/60'
+    ? 'bg-muted/40 text-muted-foreground border-border'
     : isExhausted || isLow
     ? 'bg-red-50 text-red-700 border-red-200/60'
     : isMedium
@@ -81,30 +80,30 @@ const UsageCard = ({
   const dotColorClass = remainingPercent === null
     ? 'bg-neutral-400'
     : isExhausted || isLow
-    ? 'bg-[#EF4444]'
+    ? 'bg-red-500'
     : isMedium
-      ? 'bg-[#F59E0B]'
-      : 'bg-[#10B981]';
+      ? 'bg-amber-500'
+      : 'bg-emerald-500';
 
   const progressColor =
     remainingPercent === null
-      ? 'bg-[#E0E0E0]'
+      ? 'bg-neutral-200'
       : isExhausted || isLow
-        ? 'bg-[#EF4444]'
+        ? 'bg-red-500'
         : isMedium
-          ? 'bg-[#F59E0B]'
-          : 'bg-[#10B981]';
+          ? 'bg-amber-500'
+          : 'bg-emerald-500';
 
   const usedPercent =
     remainingPercent !== null ? Math.max(0, 100 - Math.round(remainingPercent)) : null;
 
   return (
-    <div className="flex flex-col justify-between rounded-xl border border-neutral-200/80 bg-white p-5 sm:p-6 shadow-2xs transition-all hover:border-neutral-300">
+    <div className="flex flex-col justify-between rounded-xl border bg-card p-5 shadow-xs">
       <div>
         {/* 卡片头部 */}
         <div className="flex items-center justify-between gap-2 mb-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100/80 text-neutral-700 border border-neutral-200/60">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">
               {kind === 'primary' ? (
                 <svg
                   width="15"
@@ -137,14 +136,14 @@ const UsageCard = ({
                 </svg>
               )}
             </div>
-            <h4 className="text-[13px] font-semibold text-neutral-800 tracking-tight">
+            <h4 className="text-[13px] font-medium text-foreground">
               {label}
             </h4>
           </div>
 
           <span
             className={cn(
-              'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-medium border',
+              'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border',
               statusBadgeClass
             )}
           >
@@ -153,27 +152,27 @@ const UsageCard = ({
           </span>
         </div>
 
-        {/* 核心数值展示：还原原版巨幅等宽数字与纵向呼吸感 */}
-        <div className="my-5 flex items-baseline justify-between">
+        {/* 核心数值展示 */}
+        <div className="mt-5 mb-3 flex items-baseline justify-between">
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-[52px] sm:text-[62px] font-medium leading-none tracking-[-0.06em] text-neutral-900 tabular-nums">
+            <span className="text-[36px] font-semibold leading-none tracking-tight text-foreground tabular-nums">
               {remainingPercent === null ? '—' : Math.round(remainingPercent)}
             </span>
             {remainingPercent !== null && (
-              <span className="text-[22px] font-medium text-neutral-400 font-mono">%</span>
+              <span className="text-[18px] font-medium text-muted-foreground">%</span>
             )}
-            <span className="ml-1 text-[13px] font-medium text-neutral-400">剩余</span>
+            <span className="ml-1 text-[12.5px] text-muted-foreground">剩余</span>
           </div>
 
           {usedPercent !== null && (
-            <span className="text-[12.5px] font-mono font-medium text-neutral-400">
+            <span className="text-[12px] text-muted-foreground tabular-nums">
               已消耗 {usedPercent}%
             </span>
           )}
         </div>
 
-        {/* 额度进度条：与账号管理页面完全一致的极简轨道 */}
-        <div className="my-4.5">
+        {/* 额度进度条 */}
+        <div className="mb-5">
           <div
             role="progressbar"
             aria-label={`${label}剩余`}
@@ -183,7 +182,7 @@ const UsageCard = ({
             aria-valuetext={
               remainingPercent === null ? '额度未知' : `剩余 ${Math.round(remainingPercent)}%`
             }
-            className="h-2 w-full overflow-hidden rounded-full bg-[#EAEAEA]"
+            className="h-2 w-full overflow-hidden rounded-full bg-primary/10"
           >
             <div
               className={cn(
@@ -197,7 +196,7 @@ const UsageCard = ({
       </div>
 
       {/* 卡片底栏信息 */}
-      <div className="flex items-center justify-between text-[11.5px] text-neutral-500 pt-3.5 border-t border-neutral-100">
+      <div className="flex items-center justify-between text-[11.5px] text-muted-foreground pt-3.5 border-t">
         <span className="flex items-center gap-1.5">
           <svg
             width="13"
@@ -208,7 +207,7 @@ const UsageCard = ({
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="text-neutral-400 shrink-0"
+            className="text-muted-foreground shrink-0"
           >
             <circle cx="12" cy="12" r="10" />
             <polyline points="12 6 12 12 16 14" />
@@ -216,12 +215,12 @@ const UsageCard = ({
           <span>
             {formatUsageResetAt(window.resetsAt)}
             {relativeTime && (
-              <span className="ml-1 text-neutral-400 font-normal">({relativeTime})</span>
+              <span className="ml-1 text-muted-foreground font-normal">({relativeTime})</span>
             )}
           </span>
         </span>
         {window.windowMinutes && (
-          <span className="text-neutral-400 text-[10.5px] font-mono shrink-0">
+          <span className="text-muted-foreground text-[10.5px] font-mono shrink-0">
             {window.windowMinutes >= 1440
               ? `${Math.round(window.windowMinutes / 1440)} 天周期`
               : `${Math.round(window.windowMinutes / 60)} 小时周期`}
@@ -237,7 +236,6 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   onNavigateToAccounts,
   usageRevision,
   liveUsage,
-  tps,
   onRefreshUsage,
   sessionMonitor,
   onRefreshSessions,
@@ -264,14 +262,14 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   if (isLoading) {
     return (
       <div className="page-layout pt-4">
-        <div className="page-header mb-6">
-          <div className="h-6 w-28 bg-[#EAEAEA] rounded animate-pulse mb-2"></div>
-          <div className="h-3.5 w-56 bg-[#F0F0F0] rounded animate-pulse"></div>
+        <div className="page-header block">
+          <div className="h-6 w-28 bg-muted rounded-md animate-pulse mb-2"></div>
+          <div className="h-3.5 w-56 bg-muted rounded-md animate-pulse"></div>
         </div>
-        <div className="h-24 bg-white border border-[#EAEAEA] rounded-xl animate-pulse mb-4"></div>
+        <div className="h-24 bg-muted/50 rounded-xl animate-pulse mb-4"></div>
         <div className="grid grid-cols-1 @min-[600px]/page:grid-cols-2 gap-4">
-          <div className="h-40 bg-white border border-[#EAEAEA] rounded-xl animate-pulse"></div>
-          <div className="h-40 bg-white border border-[#EAEAEA] rounded-xl animate-pulse"></div>
+          <div className="h-40 bg-muted/50 rounded-xl animate-pulse"></div>
+          <div className="h-40 bg-muted/50 rounded-xl animate-pulse"></div>
         </div>
       </div>
     );
@@ -282,8 +280,8 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   if (!activeAccount) {
     return (
       <div className="page-layout pt-4">
-        <div className="flex min-h-[420px] flex-col items-center justify-center rounded-2xl border border-dashed border-neutral-200 bg-white/60 p-8 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-neutral-100 text-neutral-400">
+        <div className="flex min-h-[420px] flex-col items-center justify-center rounded-xl border border-dashed p-8 text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="24"
@@ -300,8 +298,8 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
           </div>
-          <h2 className="mb-1.5 text-[16px] font-semibold text-neutral-900">未设置活跃账号</h2>
-          <p className="mb-6 max-w-sm text-[13px] text-neutral-500 leading-relaxed">
+          <h2 className="mb-1.5 text-[16px] font-semibold text-foreground">未设置活跃账号</h2>
+          <p className="mb-6 max-w-sm text-[13px] text-muted-foreground leading-relaxed">
             当前没有正在使用的 Codex 账号配置。请前往“账号管理”页面选择或添加一个账号。
           </p>
           <Button onClick={onNavigateToAccounts} size="sm" className="gap-2">
@@ -336,16 +334,6 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
     && (!Number.isFinite(cachedAt) || pushedAt >= cachedAt);
   // 同步后的缓存可比上一条推送更新；无订阅时仍显示正常同步的账号额度。
   const currentUsage = displayingLive ? pushedUsage : activeAccount.usage;
-  const currentTps = tps.accountId === activeAccount.id && sessionMonitor.connectionStatus === 'connected' ? tps : null;
-  const tpsValue = currentTps?.tokensPerSecond ?? null;
-  const tpsStateLabel = currentTps?.status === 'measuring'
-    ? tpsValue === null ? '等待计数' : '统计中'
-    : currentTps?.status === 'completed'
-      ? tpsValue === null ? '数据不足' : '已完成'
-      : sessionMonitor.connectionStatus === 'unavailable' ? '暂无数据' : '等待会话';
-  const tpsDescription = currentTps && tpsValue !== null && currentTps.outputTokens !== null && currentTps.durationMs !== null
-    ? `最近活跃会话：${currentTps.outputTokens} 个输出 token / ${(currentTps.durationMs / 1000).toFixed(1)} 秒。输出 token 包含推理 token，耗时包含工具执行与等待时间。`
-    : '最近活跃会话的本轮平均输出速度，耗时包含工具执行与等待时间；尚未获得完整计数与计时时显示 —。';
   if (currentUsage?.primary) {
     usageWindows.push({ window: currentUsage.primary, kind: 'primary' });
   }
@@ -386,50 +374,39 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
   return (
     <div className="page-layout pt-4 pb-2">
       {/* 标题栏 */}
-      <div className="page-header mb-4">
+      <div className="page-header">
         <div>
           <div className="flex items-center gap-2.5">
-            <h2 className="text-[20px] font-semibold tracking-tight text-neutral-900">当前账号</h2>
+            <h2 className="text-[20px] font-semibold tracking-tight text-foreground">当前账号</h2>
             {currentUsage && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200/60">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium bg-background text-muted-foreground border">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                 {displayingLive ? liveUsage.source === 'push' ? '实时推送' : liveUsage.source === 'manualRead' ? '手动读取' : '初始额度' : '已同步额度'} · {formatUsageSyncedAt(currentUsage.syncedAt)}
               </span>
             )}
           </div>
-          <p className="text-[13px] text-neutral-500 mt-1">
+          <p className="text-[13px] text-muted-foreground mt-1">
             会话同步更新当前账号额度，启用实时监听后也会接收额度推送。
           </p>
         </div>
-        <div role="group" title={tpsDescription} aria-label="当前账号最近活跃会话的本轮平均 TPS"
-          className="min-w-[148px] shrink-0 rounded-lg border border-neutral-200/80 bg-white px-3.5 py-2 text-right shadow-2xs">
-          <p className="text-[10px] leading-4 text-neutral-500">本轮平均 TPS · {tpsStateLabel}</p>
-          <p className="mt-0.5 flex items-baseline justify-end gap-1.5">
-            <span className="font-mono text-[20px] leading-6 tabular-nums text-neutral-900">{tpsValue === null ? '—' : tpsValue.toFixed(1)}</span>
-            <span className="text-[10px] text-neutral-400">tokens/s</span>
-          </p>
-          <span className="sr-only">{tpsDescription}</span>
-        </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col space-y-4 sm:space-y-5 overflow-y-auto overflow-x-hidden">
+      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
         {/* 账号身份卡片 */}
         <section
           aria-label="账号信息"
-          className="rounded-xl border border-neutral-200/80 bg-white p-5 sm:p-6 shadow-2xs transition-all hover:border-neutral-300 shrink-0"
+          className="rounded-xl border bg-card p-5 shadow-xs shrink-0"
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
-              {/* 头像：渐变质感 + 动态账号首字母 + 底部脉动在线状态灯 */}
-              <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-700 text-white shadow-xs ring-1 ring-black/5 select-none">
+              {/* 头像：账号首字母 + 当前生效状态点 */}
+              <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border bg-muted text-foreground select-none">
                 {avatarLetter ? (
-                  <span className="font-mono text-[19px] font-bold tracking-tight text-neutral-100">
-                    {avatarLetter}
-                  </span>
+                  <span className="text-[16px] font-semibold">{avatarLetter}</span>
                 ) : (
                   <svg
-                    width="20"
-                    height="20"
+                    width="18"
+                    height="18"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -441,30 +418,24 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                     <circle cx="12" cy="7" r="4" />
                   </svg>
                 )}
-                {/* 活跃指示呼吸灯徽标 */}
                 <span
-                  className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white ring-2 ring-white"
+                  className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-background"
                   title="当前生效账号"
-                >
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#10B981]" />
-                  </span>
-                </span>
+                />
               </div>
 
               {/* 账号信息区：邮箱为主标题，属性与备注更富层次 */}
               <div className="min-w-0 flex-1">
                 {/* 第一行：邮箱主体 + 复制按钮 + 计划徽标 + 当前生效徽标 */}
-                <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                  <h3 className="break-all font-mono text-[17px] sm:text-[19px] font-bold tracking-tight text-neutral-900 leading-none select-text">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <h3 className="break-all text-[16px] font-semibold tracking-tight text-foreground leading-6 select-text">
                     {getDisplayedEmail(activeAccount.name, isEmailMaskingEnabled)}
                   </h3>
                   <ActionTooltip label={copied ? '已复制' : '复制账号'}>
                     <button
                       type="button"
                       onClick={handleCopyEmail}
-                      className="p-1 rounded-md text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100 transition-colors cursor-pointer"
+                      className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
                       aria-label="复制账号"
                     >
                       {copied ? (
@@ -475,7 +446,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                           fill="none"
                           stroke="currentColor"
                           strokeWidth="2.5"
-                          className="text-[#10B981]"
+                          className="text-emerald-600"
                         >
                           <polyline points="20 6 9 17 4 12" />
                         </svg>
@@ -499,23 +470,23 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
 
                   <PlanBadge planType={activeAccount.chatgptPlanType} />
 
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                     当前生效
                   </span>
                 </div>
 
                 {/* 第二行：备注与辅助属性标签 */}
-                <div className="flex flex-wrap items-center gap-2 text-[12px] text-neutral-500">
+                <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
                   {activeAccount.notes ? (
                     <span
-                      className="text-neutral-600 font-medium line-clamp-1"
+                      className="text-foreground/80 line-clamp-1"
                       title={activeAccount.notes}
                     >
                       {activeAccount.notes}
                     </span>
                   ) : (
-                    <span className="text-neutral-400">Codex 活跃会话凭据</span>
+                    <span className="text-muted-foreground">Codex 活跃会话凭据</span>
                   )}
 
                   {(activeAccount.autoActivateWindow || activeAccount.resetCredits) && (
@@ -523,12 +494,12 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                   )}
 
                   {activeAccount.autoActivateWindow && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200/60">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-muted text-muted-foreground">
                       自动唤醒已开
                     </span>
                   )}
                   {activeAccount.resetCredits && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200/60">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700">
                       重置卡 ×{activeAccount.resetCredits.availableCount}
                     </span>
                   )}
@@ -538,15 +509,15 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
 
             {/* 右侧：集成式操作工具栏（纯图标 + 悬浮文字） */}
             <div className="flex items-center self-start sm:self-center shrink-0">
-              <div className="flex items-center rounded-lg border border-neutral-200/80 bg-neutral-50/70 p-0.5 shadow-2xs">
+              <div className="flex items-center gap-2">
                 <ActionTooltip label={usageRefreshing ? '正在刷新额度...' : sessionMonitor.connectionStatus === 'connected' ? '立即刷新额度' : '同步会话额度'}>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="icon"
                     onClick={() => void handleRefreshUsage()}
                     disabled={usageRefreshing}
                     aria-label="刷新额度"
-                    className="h-8 w-8 rounded-md text-neutral-600 hover:text-black hover:bg-white hover:shadow-2xs transition-all cursor-pointer"
+                    className="text-foreground"
                   >
                     <svg
                       width="14"
@@ -567,15 +538,13 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                   </Button>
                 </ActionTooltip>
 
-                <div className="h-4 w-px bg-neutral-200/90 mx-0.5" />
-
                 <ActionTooltip label="前往账号管理与切换">
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="icon"
                     onClick={onNavigateToAccounts}
                     aria-label="切换账号"
-                    className="h-8 w-8 rounded-md text-neutral-600 hover:text-black hover:bg-white hover:shadow-2xs transition-all cursor-pointer"
+                    className="text-foreground"
                   >
                     <svg
                       width="14"
@@ -603,7 +572,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
         {displayedUsageError && (
           <div
             role="alert"
-            className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50/80 px-4 py-3 text-[12px] text-red-700 shadow-2xs"
+            className="flex items-start gap-2.5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-[12px] text-destructive"
           >
             <svg
               width="15"
@@ -614,7 +583,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="mt-0.5 shrink-0 text-red-600"
+              className="mt-0.5 shrink-0"
             >
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
@@ -629,14 +598,14 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
           <div
             className={`grid grid-cols-1 ${
               usageWindows.length > 1 ? '@min-[600px]/page:grid-cols-2' : ''
-            } gap-6`}
+            } gap-4`}
           >
             {usageWindows.map(({ window, kind }) => (
               <UsageCard key={kind} window={window} kind={kind} />
             ))}
           </div>
         ) : (
-          <div className="flex min-h-[200px] flex-col items-center justify-center rounded-xl border border-dashed border-neutral-200 bg-white/50 px-6 py-8 text-center">
+          <div className="flex min-h-[200px] flex-col items-center justify-center rounded-xl border border-dashed px-6 py-8 text-center">
             <svg
               width="24"
               height="24"
@@ -646,15 +615,15 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="mb-3 text-neutral-400"
+              className="mb-3 text-muted-foreground"
             >
               <path d="M3 3v18h18" />
               <path d="m7 16 4-5 4 3 4-7" />
             </svg>
-            <p className="text-[13.5px] font-medium text-neutral-700">
+            <p className="text-[13.5px] font-medium text-foreground">
               {usageRefreshing ? '正在更新额度…' : currentUsage ? '暂未同步到额度明细' : '等待当前账号额度'}
             </p>
-            <p className="mt-1.5 max-w-sm text-[12px] leading-relaxed text-neutral-400">
+            <p className="mt-1.5 max-w-sm text-[12px] leading-relaxed text-muted-foreground">
               使用本地会话后，同步会话即可更新这里的额度；实时监听可用时也会接收额度推送。
             </p>
           </div>

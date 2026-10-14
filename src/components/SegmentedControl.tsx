@@ -65,7 +65,7 @@ export default function SegmentedControl<T extends string>({
     <div
       ref={containerRef}
       className={cn(
-        'relative inline-flex items-center rounded-lg bg-neutral-100/90 p-1 border border-neutral-200/70 shadow-2xs select-none shrink-0',
+        'relative inline-flex items-center rounded-lg bg-muted p-[3px] text-muted-foreground select-none shrink-0',
         className
       )}
     >
@@ -73,7 +73,7 @@ export default function SegmentedControl<T extends string>({
       <span
         aria-hidden="true"
         className={cn(
-          'absolute top-1 bottom-1 left-0 rounded-md bg-white shadow-2xs pointer-events-none transition-all duration-200 ease-out',
+          'absolute top-[3px] bottom-[3px] left-0 rounded-md border border-border/60 bg-background shadow-xs pointer-events-none transition-all duration-200 ease-out',
           indicator.visible ? 'opacity-100' : 'opacity-0'
         )}
         style={{
@@ -96,8 +96,8 @@ export default function SegmentedControl<T extends string>({
             disabled={disabled}
             className={cn(
               'relative z-10 rounded-md font-medium transition-colors cursor-pointer select-none whitespace-nowrap',
-              size === 'sm' ? 'px-2.5 py-1 text-[12px]' : 'px-3.5 py-1.5 text-[12.5px]',
-              isActive ? 'text-neutral-900 font-semibold' : 'text-neutral-500 hover:text-neutral-900',
+              size === 'sm' ? 'h-6 px-2.5 text-[12px]' : 'h-7 px-3 text-[12.5px]',
+              isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
               disabled && 'opacity-50 cursor-not-allowed'
             )}
           >

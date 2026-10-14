@@ -1,13 +1,95 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+/* shadcn/ui neutral 主题 token */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.955 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
 }
 
-/* Custom scrollbar for macOS feel */
+@theme inline {
+  --font-sans: 'Inter', 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, Menlo, Monaco, 'Cascadia Mono', monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline-color: color-mix(in oklab, var(--color-ring) 50%, transparent);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 输入类控件聚焦只加深边框，不画外溢光晕（避免被滚动容器裁切） */
+  input:focus,
+  textarea:focus,
+  select:focus {
+    outline: none;
+  }
+
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+/* macOS 风格细滚动条 */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -15,59 +97,21 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.1);
-  border-radius: 3px;
+  background-color: transparent;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.12);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(0, 0, 0, 0.2);
-}
-
-/* Smooth transitions globally */
-* {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-html, body, #root {
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  background-color: #FAFAFA;
+  background-color: rgba(0, 0, 0, 0.22);
 }
 
 @layer components {
-  .app-sidebar {
-    width: clamp(176px, 20vw, 240px);
-    min-height: 0;
-  }
-
-  .sidebar-brand {
-    padding-inline: clamp(16px, 2vw, 20px);
-    padding-bottom: clamp(16px, 4vh, 32px);
-  }
-
-  .sidebar-nav {
-    min-height: 0;
-    padding-inline: clamp(8px, 1.5vw, 16px);
-  }
-
-  .sidebar-nav > button {
-    padding-inline: clamp(12px, 1.5vw, 16px);
-    white-space: nowrap;
-  }
-
-  .sidebar-nav > button > svg {
-    flex-shrink: 0;
-  }
-
-  .app-content {
-    min-width: 0;
-    min-height: 0;
-    padding-inline: clamp(20px, 3vw, 48px);
-    padding-bottom: clamp(16px, 4vh, 40px);
-  }
-
   /* Breakpoints follow the space left after the sidebar and page gutters. */
   .page-layout {
     container: page / inline-size;
@@ -82,11 +126,11 @@ html, body, #root {
   .page-header {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
     flex-shrink: 0;
     gap: 12px 16px;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
   }
 
   .page-scroll {
@@ -123,11 +167,11 @@ input, textarea, code {
 @keyframes modal-in {
   from {
     opacity: 0;
-    transform: scale(0.99) translateY(4px);
+    transform: scale(0.98);
   }
   to {
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: scale(1);
   }
 }
 
@@ -137,104 +181,44 @@ input, textarea, code {
 }
 
 .animate-modal-in {
-  animation: modal-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: modal-in 0.15s ease-out forwards;
 }
 
 .animate-fade-in {
   animation: fade-in 0.1s ease-out forwards;
 }
 
-/* Toggle Switch styling */
-.toggle-checkbox:checked {
-  right: 0;
-  border-color: #000;
-}
-.toggle-checkbox:checked + .toggle-label {
-  background-color: #000;
+/* Radix Dialog 开合动画（替代 tailwindcss-animate） */
+@keyframes dialog-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-/* Logo-inspired dynamic portal brand text */
-@keyframes portal-gradient-flow {
-  0% {
-    background-position: 0% 50%;
+/* Tailwind v4 的 translate-* 使用独立的 translate 属性，这里只动 scale，不会与居中偏移叠加 */
+@keyframes dialog-content-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
   }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }
 
-.portal-brand-text {
-  background-image: linear-gradient(
-    115deg,
-    #090d16 0%,
-    #0284c7 20%,
-    #38bdf8 38%,
-    #818cf8 58%,
-    #4f46e5 78%,
-    #090d16 100%
-  );
-  background-size: 240% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-  animation: portal-gradient-flow 7s ease-in-out infinite;
-  display: inline-block;
-  transition: filter 0.3s ease;
+.dialog-overlay[data-state="open"] {
+  animation: dialog-overlay-in 0.15s ease-out;
 }
 
-.portal-brand-text:hover {
-  filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.28));
+.dialog-content[data-state="open"] {
+  animation: dialog-content-in 0.15s ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .portal-brand-text {
-    animation: none;
-    background-position: 50% 50%;
-  }
-}
-
-/* Logo dynamic sliding animations along C */
-@keyframes portal-dot-slide {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(270deg);
-  }
-}
-
-@keyframes portal-strip-slide {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(-210deg);
-  }
-}
-
-.portal-logo-dot {
-  transform-box: view-box;
-  transform-origin: 50px 50px;
-  animation: portal-dot-slide 4.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
-  will-change: transform;
-}
-
-.portal-logo-strip {
-  transform-box: view-box;
-  transform-origin: 50px 50px;
-  animation: portal-strip-slide 4.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
-  will-change: transform;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .portal-logo-dot,
-  .portal-logo-strip {
+  .dialog-overlay[data-state="open"],
+  .dialog-content[data-state="open"],
+  .animate-modal-in,
+  .animate-fade-in {
     animation: none;
   }
 }
-
-

@@ -3,10 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import type { AccountUsage } from '../types/account';
-import type { CodexEventContext, CodexLiveUsage, CodexSessionMonitor, CodexLiveTps } from '../types/codexEvents';
+import type { CodexEventContext, CodexLiveUsage, CodexSessionMonitor } from '../types/codexEvents';
 import { CodexRpcError, createCodexRpc, rpcRecord } from '../utils/codexAppServer';
 import { createCodexSessionHistory, createCodexSessionTracker, type CodexSessionReport } from '../utils/codexSessionMonitor';
-import { createCodexTpsMonitor, emptyCodexTps } from '../utils/codexTpsMonitor';
 
 interface QuotaWindow {
   usedPercent: number | null;
@@ -64,7 +63,6 @@ function toUsageWindow(window: QuotaWindow | null) {
 export function useCodexRateLimitListener() {
   const [monitor, setMonitor] = useState<CodexSessionMonitor>(emptyMonitor);
   const [liveUsage, setLiveUsage] = useState<CodexLiveUsage>(() => emptyUsage());
-  const [tps, setTps] = useState<CodexLiveTps>(() => emptyCodexTps());
   const refreshSessionsRef = useRef<(() => Promise<void>) | null>(null);
   const refreshUsageRef = useRef<(() => Promise<void>) | null>(null);
   const refreshSessions = useCallback(() => { void refreshSessionsRef.current?.(); }, []);
@@ -120,7 +118,6 @@ export function useCodexRateLimitListener() {
         sessionHistory.clear();
         cacheFailureReported = false;
         setLiveUsage(emptyUsage(next.accountId));
-        setTps(emptyCodexTps(next.accountId));
         if (reconnectForAccount) {
           // 已启用监听的客户端切换账号后建立一次新连接；没有服务时不因账号变化再次探测。
           subscriptionEnded = false;
@@ -196,7 +193,6 @@ export function useCodexRateLimitListener() {
       let initialized = false;
       let reading: Promise<void> | null = null;
       let tracker: ReturnType<typeof createCodexSessionTracker> | null = null;
-      let tpsMonitor: ReturnType<typeof createCodexTpsMonitor> | null = null;
       let connectionTimer: ReturnType<typeof setTimeout> | undefined;
       let quotaCatchupTimer: ReturnType<typeof setTimeout> | undefined;
       const fail = (kind: 'connectionFailed' | 'initializationFailed') => {
@@ -253,8 +249,6 @@ export function useCodexRateLimitListener() {
           clearTimeout(connectionTimer);
           clearTimeout(quotaCatchupTimer);
           tracker?.stop();
-          tpsMonitor?.stop();
-          if (!disposed) setTps(emptyCodexTps(context?.accountId ?? null));
           refreshSessionsRef.current = null;
           refreshUsageRef.current = null;
           rpc.close();
@@ -283,15 +277,8 @@ export function useCodexRateLimitListener() {
               initializedOnce = true;
               failureReported = false;
               tracker = createCodexSessionTracker({ history: sessionHistory, rpc, isLive: live,
-                onChange: nextSnapshot => {
-                  setMonitor(previous => ({ ...previous, ...nextSnapshot }));
-                  tpsMonitor?.prune();
-                },
+                onChange: nextSnapshot => setMonitor(previous => ({ ...previous, ...nextSnapshot })),
                 onReport: report, onSubscribed: catchUpQuota });
-              tpsMonitor = createCodexTpsMonitor({ accountId: context?.accountId ?? null, isLive: live,
-                observesThread: id => tracker?.observesThread(id) ?? false,
-                isSubscribed: id => tracker?.isSubscribed(id) ?? false,
-                onChange: nextTps => { if (live()) setTps(nextTps); } });
               setMonitor(previous => ({ ...previous, connectionStatus: 'connected' }));
               refreshSessionsRef.current = tracker.refresh;
               refreshUsageRef.current = () => readLimits(true);
@@ -313,7 +300,6 @@ export function useCodexRateLimitListener() {
           else if (message.method === 'account/updated') void readLimits();
           else if (typeof message.method === 'string') {
             tracker?.notify(message.method, params);
-            tpsMonitor?.notify(message.method, params);
             if (message.method === 'error') {
               const error = rpcRecord(params.error);
               const info = error?.codexErrorInfo;
@@ -386,5 +372,5 @@ export function useCodexRateLimitListener() {
     };
   }, []);
 
-  return { monitor, liveUsage, tps, refreshSessions, refreshUsage };
+  return { monitor, liveUsage, refreshSessions, refreshUsage };
 }
