@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../lib/utils';
 import Input from './ui/input';
+import { Check, ChevronDown } from 'lucide-react';
 
 interface ModelSelectProps {
   id: string;
@@ -166,8 +167,8 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
         autoCorrect="off"
         spellCheck={false}
         className={cn(
-          'h-9 pr-9 font-medium text-foreground hover:border-neutral-300 focus-visible:border-neutral-700',
-          open && 'border-neutral-700',
+          'h-9 pr-9 font-medium text-foreground hover:border-foreground/25 focus-visible:border-foreground/60',
+          open && 'border-foreground/60',
         )}
       />
       <button
@@ -185,9 +186,7 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
         }}
         className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
       >
-        <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={cn('transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-180')}>
-          <path d="m6 9 6 6 6-6" />
-        </svg>
+        <ChevronDown aria-hidden="true" size={13} strokeWidth={1.75} className={cn('transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-180')} />
       </button>
       {open && createPortal(
         <div
@@ -196,7 +195,7 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
           onMouseDown={event => event.preventDefault()}
           className="fixed z-[100] flex flex-col overflow-hidden rounded-md border bg-popover shadow-md animate-fade-in motion-reduce:animate-none"
         >
-          <div className="flex shrink-0 items-center justify-between px-3.5 pt-2.5 pb-1.5 text-[10.5px] text-muted-foreground" aria-hidden="true">
+          <div className="flex shrink-0 items-center justify-between px-3.5 pt-2.5 pb-1.5 text-caption text-muted-foreground" aria-hidden="true">
             <span className="font-medium">{query ? '匹配模型' : '选择模型'}</span>
             <span>支持自定义</span>
           </div>
@@ -211,24 +210,24 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
                 onMouseEnter={() => setActiveValue(option.value)}
                 onClick={() => selectModel(option.value)}
                 className={cn(
-                  'flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors',
+                  'flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-body transition-colors',
                   activeValue === option.value ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50',
                   value === option.value && 'font-medium text-foreground',
                   index === 0 && 'mb-1',
                 )}
               >
                 <span className="min-w-0 flex-1 truncate" title={option.label}>{option.label}</span>
-                {option.custom && <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">自定义</span>}
+                {option.custom && <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-caption font-normal text-muted-foreground">自定义</span>}
                 <span className="flex w-3.5 shrink-0 items-center justify-center">
                   {value === option.value && (
-                    <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+                    <Check aria-hidden="true" size={13} />
                   )}
                 </span>
               </div>
             ))}
           </div>
-          <div className="shrink-0 border-t border-border bg-muted/40 px-3.5 py-2 text-[10.5px] text-muted-foreground" aria-hidden="true">
-            ↑ ↓ 选择 <span className="mx-1.5 text-neutral-300">·</span> Enter 确认 <span className="mx-1.5 text-neutral-300">·</span> Esc 收起
+          <div className="shrink-0 border-t border-border bg-muted/40 px-3.5 py-2 text-caption text-muted-foreground" aria-hidden="true">
+            ↑ ↓ 选择 <span className="mx-1.5 text-muted-foreground/50">·</span> Enter 确认 <span className="mx-1.5 text-muted-foreground/50">·</span> Esc 收起
           </div>
         </div>,
         document.body,

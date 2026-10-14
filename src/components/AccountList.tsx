@@ -9,7 +9,11 @@ import QuotaActivationModal from './QuotaActivationModal';
 import ResetInfoModal from './ResetInfoModal';
 import Button from './ui/button';
 import { ActionTooltip } from './ui/tooltip';
+import PageHeader from './ui/page-header';
 import { Account, AccountFormData, AccountUsage, SaveRtAccountParams } from '../types/account';
+import { getDisplayedEmail } from '../utils/accountEmail';
+import { FileInput, LoaderCircle, Plus, User } from 'lucide-react';
+import { errorMessage, toast } from './ui/toast';
 
 const PLAN_FILTER_LABELS: Record<string, string> = {
   team: 'Team',
@@ -22,7 +26,7 @@ const PLAN_FILTER_LABELS: Record<string, string> = {
 };
 
 const filterChipClass = (active: boolean) =>
-  `inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium transition-colors cursor-pointer ${
+  `inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-label font-medium transition-colors cursor-pointer ${
     active
       ? 'border-primary bg-primary text-primary-foreground'
       : 'bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
@@ -41,7 +45,7 @@ const AccountList: React.FC<AccountListProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, setAutoSwitchThreshold, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, setAutoSwitchThreshold, importFromAuthJson, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
   const autoSwitch = useAutoSwitchSettings();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
@@ -50,6 +54,7 @@ const AccountList: React.FC<AccountListProps> = ({
   const [autoSwitchAccountId, setAutoSwitchAccountId] = useState<string | null>(null);
   const [resetAccount, setResetAccount] = useState<Account | null>(null);
   const [planFilter, setPlanFilter] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const activationAccount = accounts.find((account) => account.id === activationAccountId);
   const autoSwitchAccount = accounts.find((account) => account.id === autoSwitchAccountId);
 
@@ -108,6 +113,23 @@ const AccountList: React.FC<AccountListProps> = ({
     return savedAccount;
   };
 
+  const handleImportAuthJson = async () => {
+    setIsImporting(true);
+    try {
+      const account = await importFromAuthJson();
+      if (account) {
+        toast.success(`已导入 ${getDisplayedEmail(account.name, isEmailMaskingEnabled)}`);
+        if (account.canRefreshUsage) void handleRefreshUsage(account.id);
+      } else {
+        toast.info('未找到可导入的登录信息：~/.codex/auth.json 不存在，或其中不是 PAT / Refresh Token 登录。');
+      }
+    } catch (err) {
+      toast.error(errorMessage(err), { title: '导入失败' });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleRefreshUsage = async (accountId: string) => {
     try {
       await onRefreshUsage(accountId);
@@ -137,33 +159,34 @@ const AccountList: React.FC<AccountListProps> = ({
 
   return (
     <div className="page-layout pt-4">
-      <div className="page-header relative z-10">
-        <div>
-          <h2 className="text-[20px] font-semibold leading-7 text-foreground tracking-tight">账号管理</h2>
-          <p className="mt-1 text-[13px] text-muted-foreground">管理并无缝切换本地的 Codex 认证配置。</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ActionTooltip label={autoSwitch.enabled ? '关闭自动切换账号' : '开启自动切换账号'}>
-            <Button type="button" variant="outline" size="sm" role="switch"
-              aria-label="自动切换账号" aria-checked={autoSwitch.enabled === true}
-              disabled={autoSwitch.isLoading || autoSwitch.isSaving || autoSwitch.enabled === null}
-              onClick={() => void autoSwitch.toggle()} className="gap-2">
-              <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${autoSwitch.enabled ? 'bg-emerald-500' : 'bg-neutral-300'}`} />
-              {autoSwitch.isSaving ? '保存中…' : autoSwitch.isLoading ? '读取设置…'
-                : autoSwitch.enabled === null ? '设置不可用' : autoSwitch.enabled ? '自动切换已开启' : '自动切换已关闭'}
-            </Button>
-          </ActionTooltip>
-          <ActionTooltip label="添加账号">
-            <Button onClick={handleAdd} size="sm">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-              添加账号
-            </Button>
-          </ActionTooltip>
-        </div>
-      </div>
+      <PageHeader
+        className="relative z-10"
+        title="账号管理"
+        description="管理并无缝切换本地的 Codex 认证配置。"
+        actions={
+          <>
+            <ActionTooltip label={autoSwitch.enabled ? '关闭自动切换账号' : '开启自动切换账号'}>
+              <Button type="button" variant="outline" size="sm" role="switch"
+                aria-label="自动切换账号" aria-checked={autoSwitch.enabled === true}
+                disabled={autoSwitch.isLoading || autoSwitch.isSaving || autoSwitch.enabled === null}
+                onClick={() => void autoSwitch.toggle()} className="gap-2">
+                <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${autoSwitch.enabled ? 'bg-success' : 'bg-muted-foreground/40'}`} />
+                {autoSwitch.isSaving ? '保存中…' : autoSwitch.isLoading ? '读取设置…'
+                  : autoSwitch.enabled === null ? '设置不可用' : autoSwitch.enabled ? '自动切换已开启' : '自动切换已关闭'}
+              </Button>
+            </ActionTooltip>
+            <ActionTooltip label="添加账号">
+              <Button onClick={handleAdd} size="sm">
+                <Plus size={14} />
+                添加账号
+              </Button>
+            </ActionTooltip>
+          </>
+        }
+      />
 
       {autoSwitch.error && (
-        <div role="alert" className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
+        <div role="alert" className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-label text-destructive">
           <p className="min-w-0 break-words">{autoSwitch.error}</p>
           <Button type="button" variant="ghost" size="sm" disabled={autoSwitch.isLoading || autoSwitch.isSaving}
             onClick={() => void autoSwitch.reload()}>重新读取</Button>
@@ -202,24 +225,32 @@ const AccountList: React.FC<AccountListProps> = ({
       {accounts.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed px-8 py-16 text-center animate-fade-in">
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <User size={22} />
           </div>
-          <h3 className="text-[15px] font-semibold text-foreground">暂无账号配置</h3>
-          <p className="mt-1.5 mb-6 max-w-[300px] text-[13px] leading-relaxed text-muted-foreground">
-            你还没有添加任何账号配置。添加一个账号，立即体验 Codex 强大的代码生成能力。
+          <h3 className="text-title font-semibold text-foreground">暂无账号配置</h3>
+          <p className="mt-1.5 mb-6 max-w-[340px] text-body leading-relaxed text-muted-foreground">
+            添加一个账号开始使用；若本机已用 Codex CLI 登录，可直接导入当前登录。
           </p>
-          <Button onClick={handleAdd} size="sm">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-            添加账号
-          </Button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button onClick={handleAdd} size="sm">
+              <Plus size={14} />
+              添加账号
+            </Button>
+            <ActionTooltip label="读取 ~/.codex/auth.json 中的 PAT 或 Refresh Token">
+              <Button variant="outline" size="sm" disabled={isImporting} onClick={() => void handleImportAuthJson()}>
+                {isImporting ? <LoaderCircle size={14} className="animate-spin" /> : <FileInput size={14} />}
+                {isImporting ? '导入中…' : '导入当前 Codex 登录'}
+              </Button>
+            </ActionTooltip>
+          </div>
         </div>
       ) : filteredAccounts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-xl">
-          <p className="text-[14px] text-muted-foreground mb-2">该筛选下暂无账号</p>
+          <p className="text-subtitle text-muted-foreground mb-2">该筛选下暂无账号</p>
           <Button
             variant="link"
             onClick={() => setPlanFilter(null)}
-            className="text-[13px] font-medium"
+            className="text-body font-medium"
           >
             查看全部账号
           </Button>
@@ -239,7 +270,7 @@ const AccountList: React.FC<AccountListProps> = ({
                     // 切换成功后自动刷新新账号的剩余额度。
                     void handleRefreshUsage(id);
                   } catch (err: any) {
-                    alert(`切换失败: ${err.message || err.toString()}`);
+                    toast.error(errorMessage(err), { title: '切换账号失败' });
                   }
                 }}
                 onEdit={handleEdit}
@@ -278,7 +309,7 @@ const AccountList: React.FC<AccountListProps> = ({
             try {
               await deleteAccount(deleteConfirmId);
             } catch (err: any) {
-              alert(`删除失败: ${err.message || err.toString()}`);
+              toast.error(errorMessage(err), { title: '删除账号失败' });
             }
             setDeleteConfirmId(null);
           }

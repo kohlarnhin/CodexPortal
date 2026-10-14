@@ -1,6 +1,6 @@
 {
   "productName": "Codex Portal",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "identifier": "com.codex.portal",
   "build": {
     "frontendDist": "../dist",

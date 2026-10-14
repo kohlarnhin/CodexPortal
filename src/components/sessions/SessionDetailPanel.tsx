@@ -7,6 +7,7 @@ import SessionEntryView from './SessionEntryView';
 import SearchInput from './SearchInput';
 import ToggleSwitch from '../ToggleSwitch';
 import SessionCopyMenu from './SessionCopyMenu';
+import { ChevronDown, ChevronLeft, ChevronUp, FolderOpen, Info, LoaderCircle } from 'lucide-react';
 
 interface SessionDetailPanelProps {
   session: SessionRecord;
@@ -150,14 +151,14 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
             title="返回会话列表（Esc）"
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
           >
-            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            <ChevronLeft aria-hidden="true" size={16} />
           </button>
-          <h3 id="session-detail-title" data-tauri-drag-region title={session.title} className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-tight text-foreground">
+          <h3 id="session-detail-title" data-tauri-drag-region title={session.title} className="min-w-0 flex-1 truncate text-subtitle font-semibold tracking-tight text-foreground">
             {session.title}
           </h3>
           <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
             <div className="mr-2 flex items-center gap-2" title="开启后显示工具调用、执行结果、指令等全部记录">
-              <span className="text-[11px] text-muted-foreground">全量展示</span>
+              <span className="text-caption text-muted-foreground">全量展示</span>
               <ToggleSwitch
                 checked={showAll}
                 label="全量展示会话记录"
@@ -176,9 +177,9 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               aria-expanded={showInfo}
               aria-controls="session-detail-info"
               title={showInfo ? '收起会话信息' : '查看会话信息'}
-              className={`flex h-7 items-center gap-1.5 rounded px-2 text-[12px] hover:bg-accent hover:text-foreground ${showInfo ? 'text-foreground' : 'text-muted-foreground'}`}
+              className={`flex h-7 items-center gap-1.5 rounded px-2 text-label hover:bg-accent hover:text-foreground ${showInfo ? 'text-foreground' : 'text-muted-foreground'}`}
             >
-              <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg>
+              <Info aria-hidden="true" size={14} />
               信息
             </button>
             <button
@@ -187,7 +188,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               title="在 Finder 中显示"
               className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
             >
-              <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+              <FolderOpen aria-hidden="true" size={15} />
             </button>
             <SessionCopyMenu session={session} />
           </div>
@@ -209,7 +210,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               }}
             />
           </div>
-          <span role="status" className="min-w-16 shrink-0 text-center text-[11px] tabular-nums text-muted-foreground">
+          <span role="status" className="min-w-16 shrink-0 text-center text-caption tabular-nums text-muted-foreground">
             {isLoading ? '读取中…' : isRefreshing ? '更新中…' : loadError ? '读取失败' : isSearching ? '查找中…' : !keyword ? `${visibleMessages.length} 条${showAll ? '记录' : '消息'}` : searchResults.count === 0 ? '无匹配' : `${activeMatchIndex + 1} / ${searchResults.count}`}
           </span>
           <div className="flex shrink-0 items-center">
@@ -220,7 +221,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               title="上一处匹配（Shift+Enter）"
               className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent disabled:opacity-35 disabled:cursor-not-allowed"
             >
-              <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+              <ChevronUp aria-hidden="true" size={13} />
             </button>
             <button
               onClick={() => moveMatch(1)}
@@ -229,10 +230,10 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               title="下一处匹配（Enter）"
               className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent disabled:opacity-35 disabled:cursor-not-allowed"
             >
-              <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              <ChevronDown aria-hidden="true" size={13} />
             </button>
           </div>
-          <span className="ml-auto hidden min-w-0 truncate text-[11px] text-muted-foreground/70 @min-[800px]/session-detail:block">
+          <span className="ml-auto hidden min-w-0 truncate text-caption text-muted-foreground/70 @min-[800px]/session-detail:block">
             {[session.model, session.totalTokens > 0 ? `${formatTokens(session.totalTokens)} tokens` : null].filter(Boolean).join(' · ')}
           </span>
         </div>
@@ -240,7 +241,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
 
       <div ref={contentRef} tabIndex={0} aria-label={showAll ? '完整会话记录' : '对话记录'} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 outline-none @min-[640px]/session-detail:px-8">
         <section id="session-detail-info" hidden={!showInfo} aria-label="会话信息" className="border-b border-border py-4">
-          <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-4 gap-y-2 text-[11px] leading-relaxed">
+          <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-4 gap-y-2 text-caption leading-relaxed">
             <dt className="text-muted-foreground/70">标题</dt>
             <dd className="min-w-0 break-words text-muted-foreground">{session.title}</dd>
             <dt className="text-muted-foreground/70">会话 ID</dt>
@@ -277,20 +278,20 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
         </section>
 
         {loadError && loadedSessionRef.current === session.id && (
-          <p role="status" className="py-3 text-[12px] text-destructive">更新失败，暂时显示上次读取的内容：{loadError}</p>
+          <p role="status" className="py-3 text-label text-destructive">更新失败，暂时显示上次读取的内容：{loadError}</p>
         )}
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-12 text-[13px] text-muted-foreground">
-            <svg className="animate-spin mr-2" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          <div className="flex items-center justify-center py-12 text-body text-muted-foreground">
+            <LoaderCircle className="animate-spin mr-2" size={14} strokeWidth={2.5} />
             正在读取会话内容…
           </div>
         ) : loadError && loadedSessionRef.current !== session.id ? (
           <div className="py-12 text-center">
-            <p className="text-[13px] text-destructive">{loadError}</p>
+            <p className="text-body text-destructive">{loadError}</p>
           </div>
         ) : visibleMessages.length === 0 ? (
-          <div className="py-12 text-center text-[13px] text-muted-foreground/70">
+          <div className="py-12 text-center text-body text-muted-foreground/70">
             {showAll ? '该会话暂无日志记录' : messages.length > 0 ? '暂无对话消息，开启「全量展示」可查看其他记录' : '该会话暂无对话消息'}
           </div>
         ) : (

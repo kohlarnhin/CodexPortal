@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Account, ResetCredit, ResetCreditsInfo } from '../types/account';
 import Button from './ui/button';
 import { Dialog, DialogContent } from './ui/dialog';
+import { Check, CircleAlert, LoaderCircle, RotateCcw, X } from 'lucide-react';
 
 interface ResetInfoModalProps {
   account: Account;
@@ -33,7 +34,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  available: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+  available: 'bg-success/10 text-success border-success/25',
   redeemed: 'bg-muted text-muted-foreground border-border',
   expired: 'bg-destructive/5 text-destructive border-destructive/20',
 };
@@ -141,11 +142,11 @@ export default function ResetInfoModal({
         <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-9 h-9 shrink-0 rounded-md border bg-muted text-foreground flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              <RotateCcw size={17} strokeWidth={2.5} />
             </div>
             <div className="min-w-0">
-              <h3 id="reset-modal-title" className="font-semibold text-[15px] text-foreground tracking-tight">重置卡</h3>
-              <p className="truncate text-[12px] text-muted-foreground mt-0.5">{account.name}</p>
+              <h3 id="reset-modal-title" className="font-semibold text-title text-foreground tracking-tight">重置卡</h3>
+              <p className="truncate text-label text-muted-foreground mt-0.5">{account.name}</p>
             </div>
           </div>
 
@@ -155,16 +156,16 @@ export default function ResetInfoModal({
             aria-label="关闭"
             className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors shrink-0"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            <X size={17} strokeWidth={2.5} />
           </button>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-5">
           {needsAt ? (
             <div className="flex flex-col gap-4">
-              <div className={`rounded-lg border px-4 py-3 text-[12px] leading-relaxed ${
+              <div className={`rounded-lg border px-4 py-3 text-label leading-relaxed ${
                 atReason === 'expired'
-                  ? 'border-[#FFE0B0] bg-[#FFF8F0] text-[#B45309]'
+                  ? 'border-warning/25 bg-warning/10 text-warning'
                   : 'border-border bg-muted/50 text-muted-foreground'
               }`}>
                 {atReason === 'expired'
@@ -172,30 +173,30 @@ export default function ResetInfoModal({
                   : 'Team 账号的重置卡需要通过 Access Token（at）获取，Personal Access Token 无法访问。请粘贴该账号的 Access Token 以获取重置卡信息。'}
               </div>
               <div className="flex flex-col gap-2">
-                <label htmlFor="atInput" className="text-[12px] font-medium text-foreground">Access Token</label>
+                <label htmlFor="atInput" className="text-label font-medium text-foreground">Access Token</label>
                 <input
                   type="text"
                   id="atInput"
                   value={atInput}
                   onChange={(e) => { setAtInput(e.target.value); setError(null); }}
                   placeholder="粘贴 Access Token..."
-                  className="w-full px-3 py-2 bg-background border border-input rounded-md shadow-xs focus:border-neutral-700 outline-none transition-colors text-foreground placeholder:text-muted-foreground text-[13px] font-mono"
+                  className="w-full px-3 py-2 bg-background border border-input rounded-md shadow-xs focus:border-foreground/60 outline-none transition-colors text-foreground placeholder:text-muted-foreground text-body font-mono"
                 />
               </div>
               {error && (
-                <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3 py-2 text-[12px] text-destructive">
+                <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3 py-2 text-label text-destructive">
                   <span>{error}</span>
                 </div>
               )}
             </div>
           ) : isLoading ? (
-            <div className="flex items-center gap-2.5 py-8 justify-center text-[13px] text-muted-foreground">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <div className="flex items-center gap-2.5 py-8 justify-center text-body text-muted-foreground">
+              <LoaderCircle size={14} strokeWidth={2.5} className="animate-spin" />
               获取重置卡中...
             </div>
           ) : error ? (
-            <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-3 text-[12px] text-destructive leading-relaxed">
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+            <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-3 text-label text-destructive leading-relaxed">
+              <CircleAlert size={13} strokeWidth={2.5} className="shrink-0 mt-0.5" />
               <div>
                 <p>{error}</p>
                 <Button
@@ -211,21 +212,21 @@ export default function ResetInfoModal({
           ) : info ? (
             <div className="flex flex-col gap-4">
               {consumeSuccess && (
-                <div className="flex items-center gap-2 rounded-md bg-emerald-50 border border-emerald-200 px-3.5 py-2.5 text-[12px] text-emerald-600">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M20 6 9 17l-5-5"/></svg>
+                <div className="flex items-center gap-2 rounded-md bg-success/10 border border-success/25 px-3.5 py-2.5 text-label text-success">
+                  <Check size={13} strokeWidth={2.5} className="shrink-0" />
                   重置成功！额度窗口已重置。
                 </div>
               )}
               {consumeError && (
-                <div className="flex items-start gap-2 rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-2.5 text-[12px] text-destructive break-all">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                <div className="flex items-start gap-2 rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-2.5 text-label text-destructive break-all">
+                  <CircleAlert size={13} strokeWidth={2.5} className="shrink-0 mt-0.5" />
                   <span>{consumeError}</span>
                 </div>
               )}
 
               <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-4 py-3">
-                <span className="text-[12px] text-muted-foreground">可用的重置次数</span>
-                <span className="text-[22px] font-bold font-mono text-foreground leading-none">{info.availableCount}</span>
+                <span className="text-label text-muted-foreground">可用的重置次数</span>
+                <span className="text-stat font-bold font-mono text-foreground leading-none">{info.availableCount}</span>
               </div>
 
               {info.credits.length > 0 ? (
@@ -236,11 +237,11 @@ export default function ResetInfoModal({
                     return (
                       <div key={index} className="rounded-lg border border-border px-3.5 py-3">
                         <div className="flex items-center justify-between gap-2 mb-1.5">
-                          <span className="text-[13px] font-medium text-foreground">
+                          <span className="text-body font-medium text-foreground">
                             {credit.resetType || '重置'}
                           </span>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${STATUS_COLORS[status] || STATUS_COLORS.redeemed}`}>
+                            <span className={`px-2 py-0.5 rounded-full border text-caption font-medium ${STATUS_COLORS[status] || STATUS_COLORS.redeemed}`}>
                               {STATUS_LABELS[status] || credit.status || '未知'}
                             </span>
                             {isAvailable && (
@@ -252,14 +253,14 @@ export default function ResetInfoModal({
                                   setConsumeError(null);
                                 }}
                                 disabled={consumingId !== null || confirmCredit !== null}
-                                className="h-6 px-2.5 text-[11px]"
+                                className="h-6 px-2.5 text-caption"
                               >
                                 使用
                               </Button>
                             )}
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-caption text-muted-foreground">
                           <span>到期：{formatTimestamp(credit.expiresAt)}</span>
                           <span>发放：{formatTimestamp(credit.grantedAt)}</span>
                           <span>兑换：{formatTimestamp(credit.redeemedAt)}</span>
@@ -267,8 +268,8 @@ export default function ResetInfoModal({
                         </div>
 
                         {isAvailable && confirmCredit?.id === credit.id && (
-                          <div className="mt-2 rounded-md bg-[#FFF8F0] border border-[#FFE0B0] px-3 py-2.5">
-                            <p className="text-[11px] text-[#B45309] mb-2">
+                          <div className="mt-2 rounded-md bg-warning/10 border border-warning/25 px-3 py-2.5">
+                            <p className="text-caption text-warning mb-2">
                               使用后立即重置当前额度窗口，确认使用这张重置卡？
                             </p>
                             <div className="flex items-center gap-2">
@@ -281,7 +282,7 @@ export default function ResetInfoModal({
                                 className="gap-1.5"
                               >
                                 {consumingId === credit.id && (
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                  <LoaderCircle size={11} strokeWidth={2.5} className="animate-spin" />
                                 )}
                                 <span>{consumingId === credit.id ? '使用中...' : '确认使用'}</span>
                               </Button>
@@ -302,12 +303,12 @@ export default function ResetInfoModal({
                   })}
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-[12px] text-muted-foreground/70">
+                <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-label text-muted-foreground/70">
                   暂无重置卡记录
                 </div>
               )}
 
-              <div className="text-[11px] text-muted-foreground/70">
+              <div className="text-caption text-muted-foreground/70">
                 同步于 {info.syncedAt ? new Date(info.syncedAt).toLocaleString() : '—'}
               </div>
             </div>

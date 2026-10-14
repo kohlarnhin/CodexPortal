@@ -24,12 +24,24 @@ export interface CodexConfig {
   [key: string]: any;
 }
 
+/** TOML 解析失败；line 为出错行号（1 起），供编辑器标记。 */
+export class ConfigParseError extends Error {
+  line: number | null;
+
+  constructor(message: string, line: number | null) {
+    super(message);
+    this.name = 'ConfigParseError';
+    this.line = line;
+  }
+}
+
 export function parseConfig(content: string): CodexConfig {
   try {
     return parse(content) as CodexConfig;
   } catch (err) {
-    const position = err instanceof TomlError ? `（第 ${err.line} 行，第 ${err.column} 列）` : '';
-    throw new Error(`TOML 格式无效${position}，请在高级配置中修正后保存。`);
+    const isToml = err instanceof TomlError;
+    const position = isToml ? `（第 ${err.line} 行，第 ${err.column} 列）` : '';
+    throw new ConfigParseError(`TOML 格式无效${position}，请在高级配置中修正后保存。`, isToml ? err.line : null);
   }
 }
 

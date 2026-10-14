@@ -6,6 +6,8 @@ import { getDisplayedEmail } from '../utils/accountEmail';
 import ToggleSwitch from './ToggleSwitch';
 import Button from './ui/button';
 import { Dialog, DialogContent } from './ui/dialog';
+import { Check, CircleAlert, Info, LoaderCircle, MessageCircle, Settings, X, Zap } from 'lucide-react';
+import { errorMessage, toast } from './ui/toast';
 
 const ACTIVATION_MODEL = 'gpt-5.6-luna';
 
@@ -62,7 +64,7 @@ export default function QuotaActivationModal({
       await invoke('set_auto_activate_window', { id: account.id, enabled });
       setAutoActivateWindow(enabled);
     } catch (saveError) {
-      window.alert(`自动激活设置保存失败，请手动处理：${String(saveError)}`);
+      toast.error(errorMessage(saveError), { title: '自动激活设置保存失败，请手动处理' });
     } finally {
       setIsSaving(false);
     }
@@ -99,19 +101,19 @@ export default function QuotaActivationModal({
         showCloseButton={false}
       >
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-4.5 bg-white">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-4.5 bg-card">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted text-foreground">
-              <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+              <Zap size={17} strokeWidth={2.5} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 id="quota-activation-title" className="text-[15px] font-semibold tracking-tight text-foreground">额度窗口激活</h3>
-                <span className="inline-block px-2 py-0.5 rounded-md bg-muted text-[11px] font-mono text-muted-foreground truncate max-w-[200px]">
+                <h3 id="quota-activation-title" className="text-title font-semibold tracking-tight text-foreground">额度窗口激活</h3>
+                <span className="inline-block px-2 py-0.5 rounded-md bg-muted text-caption font-mono text-muted-foreground truncate max-w-[200px]">
                   {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
                 </span>
               </div>
-              <p className="mt-0.5 text-[12px] text-muted-foreground">发送测试消息以刷新并激活该账号的额度窗口</p>
+              <p className="mt-0.5 text-label text-muted-foreground">发送测试消息以刷新并激活该账号的额度窗口</p>
             </div>
           </div>
           <button
@@ -121,7 +123,7 @@ export default function QuotaActivationModal({
             aria-label="关闭额度窗口激活"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+            <X size={18} />
           </button>
         </div>
 
@@ -130,8 +132,8 @@ export default function QuotaActivationModal({
           {/* 自动激活开关卡片 */}
           <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/40 p-4 transition-colors">
             <div className="min-w-0">
-              <div className="text-[13px] font-semibold text-foreground">自动刷新前激活额度窗口</div>
-              <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+              <div className="text-body font-semibold text-foreground">自动刷新前激活额度窗口</div>
+              <p className="mt-1 text-label leading-relaxed text-muted-foreground">
                 仅作用于当前账号。开启后，在自动刷新前主动发送一条消息唤醒窗口并获取额度（会消耗额度）。
               </p>
             </div>
@@ -148,29 +150,29 @@ export default function QuotaActivationModal({
           {/* 参数概览面板 */}
           <div className="rounded-lg border bg-muted/40 p-3.5 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12px] font-medium text-muted-foreground flex items-center gap-1.5">
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+              <span className="text-label font-medium text-muted-foreground flex items-center gap-1.5">
+                <Settings size={13} />
                 激活配置
               </span>
               <div className="flex items-center gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-md bg-white border border-border px-2 py-0.5 text-[11px] font-mono font-medium text-foreground shadow-xs">
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-2 py-0.5 text-caption font-mono font-medium text-foreground shadow-xs">
                   <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
                   {result?.model || ACTIVATION_MODEL}
                 </span>
-                <span className="inline-flex items-center rounded-md bg-white border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground shadow-xs">
+                <span className="inline-flex items-center rounded-md bg-card border border-border px-1.5 py-0.5 text-caption text-muted-foreground shadow-xs">
                   思考: low
                 </span>
               </div>
             </div>
 
             <div className="rounded-lg bg-card border px-3.5 py-2.5">
-              <div className="flex items-center justify-between text-[11px] text-muted-foreground/70 mb-1">
+              <div className="flex items-center justify-between text-caption text-muted-foreground/70 mb-1">
                 <span className="flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z" /></svg>
+                  <MessageCircle size={11} />
                   发送 Prompt
                 </span>
               </div>
-              <p className="font-mono text-[12.5px] text-foreground select-text">
+              <p className="font-mono text-body text-foreground select-text">
                 Introduce yourself.
               </p>
             </div>
@@ -178,21 +180,21 @@ export default function QuotaActivationModal({
 
           {/* 响应结果区域 */}
           {error ? (
-            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3.5 text-[12px] text-destructive flex items-start gap-2.5 animate-fade-in">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-destructive"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3.5 text-label text-destructive flex items-start gap-2.5 animate-fade-in">
+              <CircleAlert size={16} className="shrink-0 mt-0.5 text-destructive" />
               <div className="min-w-0 flex-1 leading-relaxed break-words">{error}</div>
             </div>
           ) : isSending ? (
             <div className="rounded-lg border bg-card p-4 animate-fade-in">
               <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                <div className="flex items-center gap-2 text-label font-medium text-foreground">
                   <span className="relative flex h-2 w-2">
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
                   </span>
                   <span>正在接收实时响应…</span>
                 </div>
               </div>
-              <div className="font-mono text-[12.5px] leading-relaxed text-foreground whitespace-pre-wrap break-words max-h-[140px] overflow-y-auto">
+              <div className="font-mono text-body leading-relaxed text-foreground whitespace-pre-wrap break-words max-h-[140px] overflow-y-auto">
                 {output || <span className="text-muted-foreground/70">等待模型响应中…</span>}
                 <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-foreground align-middle animate-pulse" />
               </div>
@@ -200,8 +202,8 @@ export default function QuotaActivationModal({
           ) : result ? (
             <div className="rounded-lg border bg-card p-4 animate-fade-in">
               <div className="flex items-center justify-between pb-2 mb-2 border-b border-border">
-                <div className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-600">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                <div className="flex items-center gap-1.5 text-label font-medium text-success">
+                  <Check size={13} strokeWidth={2.5} />
                   <span>消息已成功发送 · 额度已更新</span>
                 </div>
                 {output && (
@@ -212,27 +214,27 @@ export default function QuotaActivationModal({
                       setCopied(true);
                       setTimeout(() => setCopied(false), 1500);
                     }}
-                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                    className="text-caption text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {copied ? '✓ 已复制' : '复制回复'}
                   </button>
                 )}
               </div>
-              <div className="font-mono text-[12.5px] leading-relaxed text-foreground whitespace-pre-wrap break-words max-h-[140px] overflow-y-auto select-text pr-1">
+              <div className="font-mono text-body leading-relaxed text-foreground whitespace-pre-wrap break-words max-h-[140px] overflow-y-auto select-text pr-1">
                 {output}
               </div>
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-border bg-muted/40 px-4 py-4 text-center">
-              <p className="text-[12.5px] text-muted-foreground">
+              <p className="text-body text-muted-foreground">
                 点击下方「立即激活」，将向该账号发送一条消息唤醒额度窗口并同步状态
               </p>
             </div>
           )}
 
           {/* 底部轻量提示条 */}
-          <div className="flex items-center gap-2 rounded-lg bg-muted/50 border border-border px-3 py-2 text-[11px] text-muted-foreground">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-muted-foreground/70"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="16" y2="12" /><line x1="12" x2="12.01" y1="8" y2="8" /></svg>
+          <div className="flex items-center gap-2 rounded-lg bg-muted/50 border border-border px-3 py-2 text-caption text-muted-foreground">
+            <Info size={12} className="shrink-0 text-muted-foreground/70" />
             <span>若激活失败将自动延后 5 分钟重试，并在重置后 1 分钟自动刷新</span>
           </div>
         </div>
@@ -258,7 +260,7 @@ export default function QuotaActivationModal({
           >
             {isSending ? (
               <>
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                <LoaderCircle size={13} strokeWidth={2.5} className="animate-spin" />
                 <span>激活中…</span>
               </>
             ) : (

@@ -1,22 +1,24 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Account, AccountUsageWindow } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import PlanBadge from './PlanBadge';
 import Button from './ui/button';
 import { ActionTooltip } from './ui/tooltip';
-import ToggleSwitch from './ToggleSwitch';
 import {
   formatUsageResetAt,
   formatUsageSyncedAt,
   formatUsageWindowLabel,
   getRemainingPercent,
+  getUsageTone,
+  USAGE_TONE_FILL,
 } from '../utils/accountUsage';
+import { ArrowLeftRight, ChartLine, CircleCheck, FileText, LoaderCircle, PenLine, RefreshCw, Trash2, Zap } from 'lucide-react';
 
 interface AccountCardProps {
   account: Account;
   isActive: boolean;
   isEmailMaskingEnabled: boolean;
-  onSetActive: (id: string) => void;
+  onSetActive: (id: string) => void | Promise<void>;
   onEdit: (account: Account) => void;
   onDelete: (id: string) => void;
   onRefreshUsage: (id: string) => void;
@@ -34,19 +36,15 @@ const CompactUsageMeter = ({
   kind: 'primary' | 'secondary';
 }) => {
   const remainingPercent = getRemainingPercent(window);
-  const progressColor = remainingPercent === null ? 'bg-neutral-200' : remainingPercent <= 20
-    ? 'bg-red-500'
-    : remainingPercent <= 50
-      ? 'bg-amber-500'
-      : 'bg-emerald-500';
+  const progressColor = USAGE_TONE_FILL[getUsageTone(remainingPercent)];
 
   return (
     <div className="min-w-0 rounded-lg bg-muted/60 px-3 py-2.5">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="truncate text-[11.5px] text-muted-foreground">
+        <span className="truncate text-label text-muted-foreground">
           {formatUsageWindowLabel(window, kind)}
         </span>
-        <span className="shrink-0 text-[12px] font-medium text-foreground tabular-nums">
+        <span className="shrink-0 text-label font-medium text-foreground tabular-nums">
           {remainingPercent === null ? '额度未知' : `剩余 ${Math.round(remainingPercent)}%`}
         </span>
       </div>
@@ -56,7 +54,7 @@ const CompactUsageMeter = ({
           style={{ width: `${remainingPercent ?? 0}%` }}
         />
       </div>
-      <p className="mt-1.5 truncate text-[10px] text-muted-foreground">
+      <p className="mt-1.5 truncate text-caption text-muted-foreground">
         {formatUsageResetAt(window.resetsAt)}
       </p>
     </div>
@@ -76,6 +74,16 @@ const AccountCard: React.FC<AccountCardProps> = ({
   onConfigureAutoSwitch,
   isUsageRefreshing,
 }) => {
+  const [isSwitching, setIsSwitching] = useState(false);
+  const handleSetActive = async () => {
+    setIsSwitching(true);
+    try {
+      await onSetActive(account.id);
+    } finally {
+      setIsSwitching(false);
+    }
+  };
+
   const usageWindows: Array<{
     window: AccountUsageWindow;
     kind: 'primary' | 'secondary';
@@ -95,14 +103,14 @@ const AccountCard: React.FC<AccountCardProps> = ({
         <div className="flex flex-col items-start justify-between gap-3 mb-4 @min-[560px]/card:flex-row">
           <div className="w-full min-w-0 @min-[560px]/card:flex-1 @min-[560px]/card:w-auto">
             <div className="flex items-center gap-2 min-w-0">
-              <h3 className="min-w-0 truncate text-[15px] font-semibold text-foreground leading-tight select-text">
+              <h3 className="min-w-0 truncate text-title font-semibold text-foreground leading-tight select-text">
                 {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
               </h3>
               <PlanBadge planType={account.chatgptPlanType} />
               <ActionTooltip label="查看重置卡详情">
                 <button
                   onClick={() => onShowReset(account)}
-                  className="shrink-0 px-2 py-0.5 bg-background text-muted-foreground border text-[11px] font-medium rounded-md hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                  className="shrink-0 px-2 py-0.5 bg-background text-muted-foreground border text-caption font-medium rounded-md hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
                 >
                   重置{account.resetCredits ? ` ×${account.resetCredits.availableCount}` : ''}
                 </button>
@@ -120,7 +128,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
                   disabled={!account.canRefreshUsage}
                   aria-label="额度窗口激活"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                  <Zap size={14} />
                 </Button>
               </ActionTooltip>
               <ActionTooltip label={account.canRefreshUsage ? (isUsageRefreshing ? '正在刷新额度…' : '刷新额度') : '该账号暂无可用认证'}>
@@ -131,21 +139,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
                   disabled={!account.canRefreshUsage || isUsageRefreshing}
                   aria-label="刷新额度"
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={isUsageRefreshing ? 'animate-spin' : ''}
-                  >
-                    <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
-                    <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
-                  </svg>
+                  <RefreshCw size={14} className={isUsageRefreshing ? 'animate-spin' : ''} />
                 </Button>
               </ActionTooltip>
               <ActionTooltip label="编辑账号配置">
@@ -155,7 +149,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
                   onClick={() => onEdit(account)} 
                   aria-label="编辑账号"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  <PenLine size={14} />
                 </Button>
               </ActionTooltip>
               <ActionTooltip label="删除账号">
@@ -166,21 +160,30 @@ const AccountCard: React.FC<AccountCardProps> = ({
                   aria-label="删除账号"
                   className="hover:bg-destructive/10 hover:text-destructive"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                  <Trash2 size={14} />
                 </Button>
               </ActionTooltip>
             </div>
             <div className="w-px h-4 bg-border"></div>
-            <div className="flex items-center">
-              <ToggleSwitch
-                label="切换当前账号"
-                checked={isActive}
-                disabled={!account.canActivate}
-                onToggle={() => {
-                  if (!isActive) onSetActive(account.id);
-                }}
-              />
-            </div>
+            {isActive ? (
+              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-success/25 bg-success/10 px-2.5 text-label font-medium text-success">
+                <CircleCheck size={13} />
+                当前使用
+              </span>
+            ) : (
+              <ActionTooltip label={account.canActivate ? '写入 Codex 认证并设为当前账号' : '该账号暂无可用认证，无法切换'}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-label"
+                  disabled={!account.canActivate || isSwitching}
+                  onClick={() => void handleSetActive()}
+                >
+                  {isSwitching ? <LoaderCircle size={13} className="animate-spin" /> : <ArrowLeftRight size={13} />}
+                  {isSwitching ? '切换中…' : '切换到此'}
+                </Button>
+              </ActionTooltip>
+            )}
           </div>
         </div>
 
@@ -194,13 +197,13 @@ const AccountCard: React.FC<AccountCardProps> = ({
           ) : (
             <div className="flex min-h-[62px] items-center gap-3 rounded-lg bg-muted/60 px-3.5 py-3">
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 4-7"/></svg>
+                <ChartLine size={13} />
               </div>
               <div className="min-w-0">
-                <p className="text-[12px] font-medium text-foreground">
+                <p className="text-label font-medium text-foreground">
                   {account.canRefreshUsage ? '尚未同步额度' : '暂无可用认证，无法同步额度'}
                 </p>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                <p className="mt-0.5 truncate text-caption text-muted-foreground">
                   {account.canRefreshUsage
                     ? '点击刷新按钮获取最新额度'
                     : '请为该账号配置 PAT 或完成 OAuth 登录'}
@@ -213,25 +216,25 @@ const AccountCard: React.FC<AccountCardProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-y-2 pt-4 border-t mt-auto">
           <div className="flex min-w-0 items-center gap-2 overflow-hidden mr-4">
             <ActionTooltip label="设置剩余额度达到阈值时自动切换账号">
-              <Button type="button" variant="outline" size="sm" className="h-6 shrink-0 px-2 text-[11px] font-normal"
+              <Button type="button" variant="outline" size="sm" className="h-6 shrink-0 px-2 text-caption font-normal"
                 onClick={() => onConfigureAutoSwitch(account)}>
-                <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" /></svg>
+                <ArrowLeftRight aria-hidden="true" size={12} strokeWidth={1.8} />
                 自动切换 ≤ {account.autoSwitchThreshold}%
               </Button>
             </ActionTooltip>
             {account.notes && (
               <>
                 <div className="w-5 h-5 shrink-0 rounded-md bg-muted flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground/70"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                  <FileText size={10} strokeWidth={2.5} className="text-muted-foreground/70" />
                 </div>
-                <p className="text-[12px] text-muted-foreground truncate">
+                <p className="text-label text-muted-foreground truncate">
                   {account.notes}
                 </p>
               </>
             )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            <span className="text-[11px] text-muted-foreground tabular-nums">
+            <span className="text-caption text-muted-foreground tabular-nums">
               {account.usage
                 ? formatUsageSyncedAt(account.usage.syncedAt)
                 : `账号更新于 ${new Date(account.updatedAt).toLocaleDateString()}`}

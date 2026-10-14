@@ -8,6 +8,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from './ui/dialog';
+import { ChevronRight } from 'lucide-react';
 
 export interface DiffItem {
   key: string;
@@ -35,14 +36,14 @@ export default function DiffModal({ isOpen, onClose, onConfirm, diffs }: DiffMod
 
         <div className="max-h-[340px] overflow-y-auto space-y-2.5 pr-1 py-1">
           {diffs.map((diff, i) => (
-            <div key={i} className="flex flex-col bg-muted/40 border rounded-lg p-3 text-[13px]">
-              <div className="font-mono font-medium text-foreground text-[12px] mb-2">{diff.key}</div>
-              <div className="flex items-center gap-2.5 font-mono text-[11px] flex-wrap">
+            <div key={i} className="flex flex-col bg-muted/40 border rounded-lg p-3 text-body">
+              <div className="font-mono font-medium text-foreground text-label mb-2">{diff.key}</div>
+              <div className="flex items-center gap-2.5 font-mono text-caption flex-wrap">
                 <div className="bg-destructive/5 text-destructive px-2 py-0.5 rounded-md truncate max-w-[200px]">
                   {typeof diff.oldVal === 'object' ? JSON.stringify(diff.oldVal) : String(diff.oldVal ?? '未设置')}
                 </div>
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="m9 18 6-6-6-6"/></svg>
-                <div className="bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-md truncate max-w-[200px]">
+                <ChevronRight size={14} className="shrink-0" />
+                <div className="bg-success/10 text-success px-2 py-0.5 rounded-md truncate max-w-[200px]">
                   {typeof diff.newVal === 'object' ? JSON.stringify(diff.newVal) : String(diff.newVal ?? '已删除')}
                 </div>
               </div>

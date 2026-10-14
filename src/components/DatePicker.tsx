@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
+import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export interface DateRangePickerProps {
   startDate: string;
@@ -21,6 +22,14 @@ function parseValue(value: string): Date {
 }
 
 /** 统一单边框日期范围选择器：拒绝嵌套边框，单一体化卡片 */
+/** 日期文本占位：按 "0000-00-00" 预留宽度，切换「全部」等较短文案时容器不缩放，避免周围控件抖动。 */
+const DateSlot = ({ children }: { children: React.ReactNode }) => (
+  <>
+    <span aria-hidden="true" className="invisible col-start-1 row-start-1">0000-00-00</span>
+    <span className="col-start-1 row-start-1">{children}</span>
+  </>
+);
+
 export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   startDate,
   endDate,
@@ -88,55 +97,39 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       <div
         className={cn(
           "inline-flex h-8 items-center rounded-md border border-input bg-background px-2.5 shadow-xs transition-[color,box-shadow]",
-          activePicker && "border-neutral-700"
+          activePicker && "border-foreground/60"
         )}
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-muted-foreground mr-1.5 shrink-0"
-        >
-          <rect x="3" y="4" width="18" height="18" rx="2" />
-          <line x1="16" y1="2" x2="16" y2="6" />
-          <line x1="8" y1="2" x2="8" y2="6" />
-          <line x1="3" y1="10" x2="21" y2="10" />
-        </svg>
+        <Calendar size={13} className="text-muted-foreground mr-1.5 shrink-0" />
 
         <button
           type="button"
           onClick={() => openPicker('start')}
           className={cn(
-            "text-[12.5px] tabular-nums rounded-sm px-1.5 py-0.5 transition-colors cursor-pointer select-none",
+            "inline-grid text-body tabular-nums text-center rounded-sm px-1.5 py-0.5 transition-colors cursor-pointer select-none",
             activePicker === 'start'
               ? "bg-accent text-foreground font-medium"
               : "text-foreground hover:bg-accent"
           )}
           title="选择起始日期"
         >
-          {allDates ? '不限起始' : startDate}
+          <DateSlot>{allDates ? '不限起始' : startDate}</DateSlot>
         </button>
 
-        <span className="text-neutral-300 text-[11px] select-none font-medium px-1">—</span>
+        <span className="text-muted-foreground/50 text-caption select-none font-medium px-1">—</span>
 
         <button
           type="button"
           onClick={() => openPicker('end')}
           className={cn(
-            "text-[12.5px] tabular-nums rounded-sm px-1.5 py-0.5 transition-colors cursor-pointer select-none",
+            "inline-grid text-body tabular-nums text-center rounded-sm px-1.5 py-0.5 transition-colors cursor-pointer select-none",
             activePicker === 'end'
               ? "bg-accent text-foreground font-medium"
               : "text-foreground hover:bg-accent"
           )}
           title="选择结束日期"
         >
-          {allDates ? '不限结束' : endDate}
+          <DateSlot>{allDates ? '不限结束' : endDate}</DateSlot>
         </button>
       </div>
 
@@ -155,9 +148,9 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                 onClick={goPrevMonth}
                 className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                <ChevronLeft size={14} strokeWidth={2.5} />
               </button>
-              <span className="text-[13px] font-semibold text-foreground">
+              <span className="text-body font-semibold text-foreground">
                 {viewYear}年{viewMonth + 1}月
               </span>
               <button
@@ -165,13 +158,13 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                 onClick={goNextMonth}
                 className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                <ChevronRight size={14} strokeWidth={2.5} />
               </button>
             </div>
 
             <div className="grid grid-cols-7 gap-0.5 mb-1">
               {WEEKDAYS.map(day => (
-                <span key={day} className="text-center text-[11px] text-muted-foreground py-0.5">
+                <span key={day} className="text-center text-caption text-muted-foreground py-0.5">
                   {day}
                 </span>
               ))}
@@ -202,7 +195,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                       setActivePicker(null);
                     }}
                     className={cn(
-                      "h-7 text-[11.5px] rounded-md transition-colors cursor-pointer select-none",
+                      "h-7 text-label rounded-md transition-colors cursor-pointer select-none",
                       isSelected
                         ? "bg-primary text-primary-foreground font-medium"
                         : disabled
@@ -289,9 +282,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
       <button
         type="button"
         onClick={open}
-        className="flex h-8 items-center gap-1.5 px-2.5 text-[12.5px] tabular-nums bg-background border border-input rounded-md hover:bg-accent transition-colors shadow-xs cursor-pointer"
+        className="flex h-8 items-center gap-1.5 px-2.5 text-body tabular-nums bg-background border border-input rounded-md hover:bg-accent transition-colors shadow-xs cursor-pointer"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <Calendar size={13} className="text-muted-foreground" />
         {value}
       </button>
 
@@ -305,9 +298,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                 onClick={goPrevMonth}
                 className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                <ChevronLeft size={14} strokeWidth={2.5} />
               </button>
-              <span className="text-[13px] font-semibold text-foreground">
+              <span className="text-body font-semibold text-foreground">
                 {viewYear}年{viewMonth + 1}月
               </span>
               <button
@@ -315,13 +308,13 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                 onClick={goNextMonth}
                 className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                <ChevronRight size={14} strokeWidth={2.5} />
               </button>
             </div>
 
             <div className="grid grid-cols-7 gap-0.5 mb-1">
               {WEEKDAYS.map(day => (
-                <span key={day} className="text-center text-[11px] text-muted-foreground py-0.5">
+                <span key={day} className="text-center text-caption text-muted-foreground py-0.5">
                   {day}
                 </span>
               ))}
@@ -341,7 +334,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                       setIsOpen(false);
                     }}
                     className={cn(
-                      "h-7 text-[11.5px] rounded-md transition-colors cursor-pointer select-none",
+                      "h-7 text-label rounded-md transition-colors cursor-pointer select-none",
                       dateStr === value
                         ? 'bg-primary text-primary-foreground font-medium'
                         : isDisabled(dateStr)

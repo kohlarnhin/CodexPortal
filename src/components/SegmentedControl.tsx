@@ -96,7 +96,7 @@ export default function SegmentedControl<T extends string>({
             disabled={disabled}
             className={cn(
               'relative z-10 rounded-md font-medium transition-colors cursor-pointer select-none whitespace-nowrap',
-              size === 'sm' ? 'h-6 px-2.5 text-[12px]' : 'h-7 px-3 text-[12.5px]',
+              size === 'sm' ? 'h-6 px-2.5 text-label' : 'h-7 px-3 text-body',
               isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
               disabled && 'opacity-50 cursor-not-allowed'
             )}

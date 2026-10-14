@@ -50,12 +50,12 @@ export default function AccountAutoSwitchModal({
         </DialogHeader>
         <form onSubmit={(event) => { event.preventDefault(); void save(); }} className="space-y-4">
           {autoSwitchEnabled === false && (
-            <p className="rounded-lg bg-muted px-3 py-2 text-[12px] leading-relaxed text-muted-foreground">
+            <p className="rounded-lg bg-muted px-3 py-2 text-label leading-relaxed text-muted-foreground">
               自动切换总开关已关闭，阈值将在开启后生效。
             </p>
           )}
           <div className="rounded-lg border bg-muted/40 p-4">
-            <label htmlFor="auto-switch-threshold" className="block text-[12px] font-medium text-foreground">
+            <label htmlFor="auto-switch-threshold" className="block text-label font-medium text-foreground">
               剩余额度阈值
             </label>
             <div className="relative mt-2">
@@ -63,17 +63,17 @@ export default function AccountAutoSwitchModal({
                 step="any" value={value} disabled={isSaving} aria-describedby="auto-switch-help"
                 aria-invalid={!valid} className="pr-9 font-mono"
                 onChange={(event) => { setValue(event.target.value); setError(null); }} />
-              <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-muted-foreground">%</span>
+              <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-body text-muted-foreground">%</span>
             </div>
-            <p id="auto-switch-help" className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            <p id="auto-switch-help" className="mt-2 text-caption leading-relaxed text-muted-foreground">
               默认 0%，额度用尽时切换。设置为 5% 时，该账号短周期或长周期剩余 ≤ 5% 即自动切换。
             </p>
           </div>
-          <p className="text-[12px] leading-relaxed text-muted-foreground">
+          <p className="text-label leading-relaxed text-muted-foreground">
             从额度充足的其他账号中，优先切换至短周期下一次重置时间最近的账号。
           </p>
-          {!valid && <p role="alert" className="text-[12px] text-destructive">请输入 0 到 100 之间的额度百分比。</p>}
-          {error && <p role="alert" className="text-[12px] text-destructive">{error}</p>}
+          {!valid && <p role="alert" className="text-label text-destructive">请输入 0 到 100 之间的额度百分比。</p>}
+          {error && <p role="alert" className="text-label text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" disabled={isSaving} onClick={onClose}>取消</Button>
             <Button type="submit" disabled={isSaving || !valid}>{isSaving ? '保存中…' : '保存'}</Button>

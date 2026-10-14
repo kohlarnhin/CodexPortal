@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AccountUsage } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import { toast } from '../components/ui/toast';
 
 /**
  * 账号额度刷新调度。
@@ -43,10 +44,10 @@ export function useAccountUsageScheduler(isEmailMaskingEnabled: boolean) {
 
     void Promise.allSettled([
       listen<string>('account-switch-warning', (event) => {
-        if (!disposed) window.alert(event.payload);
+        if (!disposed) toast.warning(event.payload, { title: '账号切换提醒' });
       }),
       listen<{ accountName: string; message: string }>('account-request-failed', (event) => {
-        if (!disposed) window.alert(`${getDisplayedEmail(event.payload.accountName, emailMasking.current)}\n${event.payload.message}`);
+        if (!disposed) toast.error(event.payload.message, { title: getDisplayedEmail(event.payload.accountName, emailMasking.current) });
       }),
       listen('usage-updated', handleUsageUpdated),
       listen('accounts-updated', handleUsageUpdated),

@@ -17,10 +17,10 @@ export function PageHeader({ title, description, badge, actions, className }: Pa
     <div className={cn('page-header', className)}>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-[20px] font-semibold leading-7 tracking-tight text-foreground">{title}</h2>
+          <h2 className="text-heading font-semibold leading-7 tracking-tight text-foreground">{title}</h2>
           {badge}
         </div>
-        {description && <p className="mt-1 text-[13px] text-muted-foreground">{description}</p>}
+        {description && <p className="mt-1 text-body text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </div>

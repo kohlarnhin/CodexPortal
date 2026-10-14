@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionRecord } from '../../types/session';
 import { copyText } from '../../utils/clipboard';
+import { Check, ChevronDown, Copy } from 'lucide-react';
 
 export default function SessionCopyMenu({ session }: { session: SessionRecord }) {
   const [open, setOpen] = useState(false);
@@ -121,13 +122,11 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
             close();
           }
         }}
-        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-black/30"
+        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-caption text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
       >
-        <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          {copied ? <path d="M20 6 9 17l-5-5" /> : <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>}
-        </svg>
+        {copied ? <Check aria-hidden="true" size={13} /> : <Copy aria-hidden="true" size={13} />}
         <span role="status">{copied ? '已复制' : '复制'}</span>
-        <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg>
+        <ChevronDown aria-hidden="true" size={10} />
       </button>
       {open && createPortal(
         <div
@@ -164,12 +163,12 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
               disabled={copying || !option.value.trim()}
               title={option.value || '此会话未记录该路径'}
               onClick={() => void copy(option.value)}
-              className="flex w-full rounded-md px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex w-full rounded-md px-3 py-2 text-left text-label text-muted-foreground hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
             >
               {option.label}
             </button>
           ))}
-          {error && <p role="alert" className="px-3 py-2 text-[11px] text-destructive">{error}</p>}
+          {error && <p role="alert" className="px-3 py-2 text-caption text-destructive">{error}</p>}
         </div>,
         document.body,
       )}

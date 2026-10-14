@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import Button from './ui/button';
 import PageHeader from './ui/page-header';
+import { RefreshCw } from 'lucide-react';
 
 interface CodexVersions {
   cli: string | null;
@@ -40,7 +41,7 @@ export default function CodexInfo() {
         description="分别检测 CLI 与桌面端内置 Codex 版本，未检测到时显示未安装。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void fetchInfo()} disabled={isLoading}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isLoading ? 'animate-spin' : ''}><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+            <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
             {isLoading ? '检测中...' : '重新检测'}
           </Button>
         }
@@ -54,17 +55,17 @@ export default function CodexInfo() {
               <div key={key} className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-5 shadow-xs">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="text-[14px] font-medium text-foreground">{label}</h3>
-                    <p className="mt-1 text-[12.5px] text-muted-foreground">{description}</p>
+                    <h3 className="text-subtitle font-medium text-foreground">{label}</h3>
+                    <p className="mt-1 text-body text-muted-foreground">{description}</p>
                   </div>
                   {!isLoading && (
-                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium ${version ? 'text-foreground' : 'text-muted-foreground'}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${version ? 'bg-emerald-500' : 'bg-neutral-300'}`} />
+                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-caption font-medium ${version ? 'text-foreground' : 'text-muted-foreground'}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${version ? 'bg-success' : 'bg-muted-foreground/40'}`} />
                       {version ? '已安装' : '未安装'}
                     </span>
                   )}
                 </div>
-                <div role="status" aria-live="polite" aria-busy={isLoading} className="mt-auto rounded-md border bg-muted/50 px-3 py-2.5 font-mono text-[12.5px] text-foreground break-all">
+                <div role="status" aria-live="polite" aria-busy={isLoading} className="mt-auto rounded-md border bg-muted/50 px-3 py-2.5 font-mono text-body text-foreground break-all">
                   {isLoading ? (
                     <span className="text-muted-foreground">正在查询...</span>
                   ) : version ? (

@@ -7,14 +7,20 @@ import CodexSessionsPanel from './CodexSessionsPanel';
 import type { CodexLiveUsage, CodexSessionMonitor } from '../types/codexEvents';
 import Button from './ui/button';
 import { ActionTooltip } from './ui/tooltip';
+import PageHeader from './ui/page-header';
 import { AccountUsageWindow } from '../types/account';
 import {
   formatUsageResetAt,
   formatUsageSyncedAt,
   formatUsageWindowLabel,
   getRemainingPercent,
+  getUsageTone,
+  resolveCurrentUsage,
+  USAGE_TONE_FILL,
+  type UsageTone,
 } from '../utils/accountUsage';
 import { cn } from '../lib/utils';
+import { ArrowLeftRight, ArrowRight, Calendar, ChartLine, Check, CircleAlert, Clock, Copy, RefreshCw, User } from 'lucide-react';
 
 interface ActiveAccountProps {
   isEmailMaskingEnabled: boolean;
@@ -44,6 +50,20 @@ function getRelativeResetTime(resetsAt: number | null): string | null {
   return `约 ${Math.max(1, mins)} 分钟后`;
 }
 
+const USAGE_TONE_LABEL: Record<UsageTone, string> = {
+  unknown: '额度未知',
+  danger: '余量紧张',
+  warning: '余量正常',
+  success: '余量充裕',
+};
+
+const USAGE_TONE_BADGE: Record<UsageTone, string> = {
+  unknown: 'bg-muted/40 text-muted-foreground border-border',
+  danger: 'bg-destructive/10 text-destructive border-destructive/20',
+  warning: 'bg-warning/10 text-warning border-warning/20',
+  success: 'bg-success/10 text-success border-success/20',
+};
+
 const UsageCard = ({
   window,
   kind,
@@ -55,44 +75,9 @@ const UsageCard = ({
   const label = formatUsageWindowLabel(window, kind);
   const relativeTime = getRelativeResetTime(window.resetsAt);
 
+  const tone = getUsageTone(remainingPercent);
   const isExhausted = remainingPercent !== null && remainingPercent <= 0;
-  const isLow = remainingPercent !== null && remainingPercent > 0 && remainingPercent <= 20;
-  const isMedium = remainingPercent !== null && remainingPercent > 20 && remainingPercent <= 50;
-
-  const statusLabel = remainingPercent === null
-    ? '额度未知'
-    : isExhausted
-    ? '额度耗尽'
-    : isLow
-      ? '余量紧张'
-      : isMedium
-        ? '余量正常'
-        : '余量充裕';
-
-  const statusBadgeClass = remainingPercent === null
-    ? 'bg-muted/40 text-muted-foreground border-border'
-    : isExhausted || isLow
-    ? 'bg-red-50 text-red-700 border-red-200/60'
-    : isMedium
-      ? 'bg-amber-50 text-amber-700 border-amber-200/60'
-      : 'bg-emerald-50 text-emerald-700 border-emerald-200/60';
-
-  const dotColorClass = remainingPercent === null
-    ? 'bg-neutral-400'
-    : isExhausted || isLow
-    ? 'bg-red-500'
-    : isMedium
-      ? 'bg-amber-500'
-      : 'bg-emerald-500';
-
-  const progressColor =
-    remainingPercent === null
-      ? 'bg-neutral-200'
-      : isExhausted || isLow
-        ? 'bg-red-500'
-        : isMedium
-          ? 'bg-amber-500'
-          : 'bg-emerald-500';
+  const statusLabel = isExhausted ? '额度耗尽' : USAGE_TONE_LABEL[tone];
 
   const usedPercent =
     remainingPercent !== null ? Math.max(0, 100 - Math.round(remainingPercent)) : null;
@@ -105,49 +90,23 @@ const UsageCard = ({
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">
               {kind === 'primary' ? (
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
+                <Clock size={15} />
               ) : (
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
-                  <line x1="16" x2="16" y1="2" y2="6" />
-                  <line x1="8" x2="8" y1="2" y2="6" />
-                  <line x1="3" x2="21" y1="10" y2="10" />
-                </svg>
+                <Calendar size={15} />
               )}
             </div>
-            <h4 className="text-[13px] font-medium text-foreground">
+            <h4 className="text-body font-medium text-foreground">
               {label}
             </h4>
           </div>
 
           <span
             className={cn(
-              'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border',
-              statusBadgeClass
+              'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-caption font-medium border',
+              USAGE_TONE_BADGE[tone]
             )}
           >
-            <span className={cn('h-1.5 w-1.5 rounded-full', dotColorClass)} />
+            <span className={cn('h-1.5 w-1.5 rounded-full', USAGE_TONE_FILL[tone])} />
             {statusLabel}
           </span>
         </div>
@@ -161,11 +120,11 @@ const UsageCard = ({
             {remainingPercent !== null && (
               <span className="text-[18px] font-medium text-muted-foreground">%</span>
             )}
-            <span className="ml-1 text-[12.5px] text-muted-foreground">剩余</span>
+            <span className="ml-1 text-body text-muted-foreground">剩余</span>
           </div>
 
           {usedPercent !== null && (
-            <span className="text-[12px] text-muted-foreground tabular-nums">
+            <span className="text-label text-muted-foreground tabular-nums">
               已消耗 {usedPercent}%
             </span>
           )}
@@ -185,10 +144,7 @@ const UsageCard = ({
             className="h-2 w-full overflow-hidden rounded-full bg-primary/10"
           >
             <div
-              className={cn(
-                'h-full rounded-full transition-all duration-500',
-                progressColor
-              )}
+              className={cn('h-full rounded-full transition-all duration-500', USAGE_TONE_FILL[tone])}
               style={{ width: `${Math.max(0, Math.min(100, remainingPercent ?? 0))}%` }}
             />
           </div>
@@ -196,22 +152,9 @@ const UsageCard = ({
       </div>
 
       {/* 卡片底栏信息 */}
-      <div className="flex items-center justify-between text-[11.5px] text-muted-foreground pt-3.5 border-t">
+      <div className="flex items-center justify-between text-label text-muted-foreground pt-3.5 border-t">
         <span className="flex items-center gap-1.5">
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="text-muted-foreground shrink-0"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <polyline points="12 6 12 12 16 14" />
-          </svg>
+          <Clock size={13} className="text-muted-foreground shrink-0" />
           <span>
             {formatUsageResetAt(window.resetsAt)}
             {relativeTime && (
@@ -220,7 +163,7 @@ const UsageCard = ({
           </span>
         </span>
         {window.windowMinutes && (
-          <span className="text-muted-foreground text-[10.5px] font-mono shrink-0">
+          <span className="text-muted-foreground text-caption font-mono shrink-0">
             {window.windowMinutes >= 1440
               ? `${Math.round(window.windowMinutes / 1440)} 天周期`
               : `${Math.round(window.windowMinutes / 60)} 小时周期`}
@@ -282,41 +225,15 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
       <div className="page-layout pt-4">
         <div className="flex min-h-[420px] flex-col items-center justify-center rounded-xl border border-dashed p-8 text-center">
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
+            <CircleAlert />
           </div>
-          <h2 className="mb-1.5 text-[16px] font-semibold text-foreground">未设置活跃账号</h2>
-          <p className="mb-6 max-w-sm text-[13px] text-muted-foreground leading-relaxed">
+          <h2 className="mb-1.5 text-title font-semibold text-foreground">未设置活跃账号</h2>
+          <p className="mb-6 max-w-sm text-body text-muted-foreground leading-relaxed">
             当前没有正在使用的 Codex 账号配置。请前往“账号管理”页面选择或添加一个账号。
           </p>
           <Button onClick={onNavigateToAccounts} size="sm" className="gap-2">
             <span>前往账号管理</span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M5 12h14" />
-              <path d="m12 5 7 7-7 7" />
-            </svg>
+            <ArrowRight size={14} />
           </Button>
         </div>
       </div>
@@ -327,13 +244,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
     window: AccountUsageWindow;
     kind: 'primary' | 'secondary';
   }> = [];
-  const pushedUsage = liveUsage.accountId === activeAccount.id ? liveUsage.usage : null;
-  const pushedAt = pushedUsage ? Date.parse(pushedUsage.syncedAt) : NaN;
-  const cachedAt = activeAccount.usage ? Date.parse(activeAccount.usage.syncedAt) : NaN;
-  const displayingLive = pushedUsage !== null && Number.isFinite(pushedAt)
-    && (!Number.isFinite(cachedAt) || pushedAt >= cachedAt);
-  // 同步后的缓存可比上一条推送更新；无订阅时仍显示正常同步的账号额度。
-  const currentUsage = displayingLive ? pushedUsage : activeAccount.usage;
+  const { usage: currentUsage, isLive: displayingLive } = resolveCurrentUsage(activeAccount, liveUsage);
   if (currentUsage?.primary) {
     usageWindows.push({ window: currentUsage.primary, kind: 'primary' });
   }
@@ -373,23 +284,16 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
 
   return (
     <div className="page-layout pt-4 pb-2">
-      {/* 标题栏 */}
-      <div className="page-header">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-[20px] font-semibold tracking-tight text-foreground">当前账号</h2>
-            {currentUsage && (
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium bg-background text-muted-foreground border">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                {displayingLive ? liveUsage.source === 'push' ? '实时推送' : liveUsage.source === 'manualRead' ? '手动读取' : '初始额度' : '已同步额度'} · {formatUsageSyncedAt(currentUsage.syncedAt)}
-              </span>
-            )}
-          </div>
-          <p className="text-[13px] text-muted-foreground mt-1">
-            会话同步更新当前账号额度，启用实时监听后也会接收额度推送。
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="当前账号"
+        badge={currentUsage && (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-caption font-medium bg-background text-muted-foreground border">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" />
+            {displayingLive ? liveUsage.source === 'push' ? '实时推送' : liveUsage.source === 'manualRead' ? '手动读取' : '初始额度' : '已同步额度'} · {formatUsageSyncedAt(currentUsage.syncedAt)}
+          </span>
+        )}
+        description="会话同步更新当前账号额度，启用实时监听后也会接收额度推送。"
+      />
 
       <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
         {/* 账号身份卡片 */}
@@ -402,24 +306,12 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               {/* 头像：账号首字母 + 当前生效状态点 */}
               <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border bg-muted text-foreground select-none">
                 {avatarLetter ? (
-                  <span className="text-[16px] font-semibold">{avatarLetter}</span>
+                  <span className="text-title font-semibold">{avatarLetter}</span>
                 ) : (
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-                    <circle cx="12" cy="7" r="4" />
-                  </svg>
+                  <User size={18} />
                 )}
                 <span
-                  className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-background"
+                  className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-success ring-2 ring-background"
                   title="当前生效账号"
                 />
               </div>
@@ -428,7 +320,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
               <div className="min-w-0 flex-1">
                 {/* 第一行：邮箱主体 + 复制按钮 + 计划徽标 + 当前生效徽标 */}
                 <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <h3 className="break-all text-[16px] font-semibold tracking-tight text-foreground leading-6 select-text">
+                  <h3 className="break-all text-title font-semibold tracking-tight text-foreground leading-6 select-text">
                     {getDisplayedEmail(activeAccount.name, isEmailMaskingEnabled)}
                   </h3>
                   <ActionTooltip label={copied ? '已复制' : '复制账号'}>
@@ -439,45 +331,23 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                       aria-label="复制账号"
                     >
                       {copied ? (
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          className="text-emerald-600"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
+                        <Check size={14} strokeWidth={2.5} className="text-success" />
                       ) : (
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                        </svg>
+                        <Copy size={14} />
                       )}
                     </button>
                   </ActionTooltip>
 
                   <PlanBadge planType={activeAccount.chatgptPlanType} />
 
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-caption font-medium bg-success/10 text-success border border-success/25">
+                    <span className="h-1.5 w-1.5 rounded-full bg-success" />
                     当前生效
                   </span>
                 </div>
 
                 {/* 第二行：备注与辅助属性标签 */}
-                <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-label text-muted-foreground">
                   {activeAccount.notes ? (
                     <span
                       className="text-foreground/80 line-clamp-1"
@@ -490,16 +360,16 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                   )}
 
                   {(activeAccount.autoActivateWindow || activeAccount.resetCredits) && (
-                    <span className="text-neutral-300">·</span>
+                    <span className="text-muted-foreground/50">·</span>
                   )}
 
                   {activeAccount.autoActivateWindow && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-muted text-muted-foreground">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-caption font-medium bg-muted text-muted-foreground">
                       自动唤醒已开
                     </span>
                   )}
                   {activeAccount.resetCredits && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-caption font-medium bg-warning/10 text-warning">
                       重置卡 ×{activeAccount.resetCredits.availableCount}
                     </span>
                   )}
@@ -519,22 +389,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                     aria-label="刷新额度"
                     className="text-foreground"
                   >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className={usageRefreshing ? 'animate-spin' : ''}
-                    >
-                      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                      <path d="M3 3v5h5" />
-                      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                      <path d="M16 21h5v-5" />
-                    </svg>
+                    <RefreshCw size={14} className={usageRefreshing ? 'animate-spin' : ''} />
                   </Button>
                 </ActionTooltip>
 
@@ -546,21 +401,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                     aria-label="切换账号"
                     className="text-foreground"
                   >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="m16 3 4 4-4 4" />
-                      <path d="M20 7H4" />
-                      <path d="m8 21-4-4 4-4" />
-                      <path d="M4 17h16" />
-                    </svg>
+                    <ArrowLeftRight size={14} />
                   </Button>
                 </ActionTooltip>
               </div>
@@ -572,23 +413,9 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
         {displayedUsageError && (
           <div
             role="alert"
-            className="flex items-start gap-2.5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-[12px] text-destructive"
+            className="flex items-start gap-2.5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-label text-destructive"
           >
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="mt-0.5 shrink-0"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
+            <CircleAlert size={15} className="mt-0.5 shrink-0" />
             <span className="flex-1 break-all">{displayedUsageError}</span>
           </div>
         )}
@@ -606,24 +433,11 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
           </div>
         ) : (
           <div className="flex min-h-[200px] flex-col items-center justify-center rounded-xl border border-dashed px-6 py-8 text-center">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="mb-3 text-muted-foreground"
-            >
-              <path d="M3 3v18h18" />
-              <path d="m7 16 4-5 4 3 4-7" />
-            </svg>
-            <p className="text-[13.5px] font-medium text-foreground">
+            <ChartLine strokeWidth={1.5} className="mb-3 text-muted-foreground" />
+            <p className="text-subtitle font-medium text-foreground">
               {usageRefreshing ? '正在更新额度…' : currentUsage ? '暂未同步到额度明细' : '等待当前账号额度'}
             </p>
-            <p className="mt-1.5 max-w-sm text-[12px] leading-relaxed text-muted-foreground">
+            <p className="mt-1.5 max-w-sm text-label leading-relaxed text-muted-foreground">
               使用本地会话后，同步会话即可更新这里的额度；实时监听可用时也会接收额度推送。
             </p>
           </div>

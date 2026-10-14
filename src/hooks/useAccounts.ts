@@ -137,6 +137,13 @@ export function useAccounts() {
     }
   };
 
+  /** 从 ~/.codex/auth.json 导入（仅账号库为空时生效）；无可导入内容时返回 null。 */
+  const importFromAuthJson = async (): Promise<Account | null> => {
+    const account = await invoke<Account | null>('import_account_from_auth_json');
+    await loadAccounts(false);
+    return account;
+  };
+
   const setAutoSwitchThreshold = async (id: string, threshold: number) => {
     await invoke('set_auto_switch_threshold', { id, threshold });
     await loadAccounts(false);
@@ -152,6 +159,7 @@ export function useAccounts() {
     deleteAccount,
     setActiveAccount,
     setAutoSwitchThreshold,
+    importFromAuthJson,
     validatePersonalToken,
     exchangeRefreshToken,
     saveRtAccount,

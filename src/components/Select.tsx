@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { cn } from '../lib/utils';
+import { Check, ChevronDown } from 'lucide-react';
 
 export interface Option {
   value: string;
@@ -38,27 +39,14 @@ export default function Select({ value, onChange, options, className, disabled, 
           if (!disabled) setIsOpen(!isOpen);
         }}
         className={cn(
-          "w-full h-9 px-3 pr-8 bg-background border border-input rounded-md text-[13px] cursor-pointer flex items-center justify-between transition-[color,box-shadow] shadow-xs select-none",
-          isOpen && "border-neutral-700",
+          "w-full h-9 px-3 pr-8 bg-background border border-input rounded-md text-body cursor-pointer flex items-center justify-between transition-[color,box-shadow] shadow-xs select-none",
+          isOpen && "border-foreground/60",
           disabled && "opacity-50 pointer-events-none cursor-not-allowed"
         )}
       >
         <span className="truncate text-foreground leading-normal">{selectedOption?.label || value}</span>
         <div className="absolute inset-y-0 right-0 flex items-center px-2 text-muted-foreground pointer-events-none">
-          <svg 
-            xmlns="http://www.w3.org/2000/svg" 
-            width="13" 
-            height="13" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="2" 
-            strokeLinecap="round" 
-            strokeLinejoin="round" 
-            className={cn("transition-transform duration-200", isOpen && "rotate-180")}
-          >
-            <path d="m6 9 6 6 6-6"/>
-          </svg>
+          <ChevronDown size={13} className={cn("transition-transform duration-200", isOpen && "rotate-180")} />
         </div>
       </div>
 
@@ -77,14 +65,14 @@ export default function Select({ value, onChange, options, className, disabled, 
                 setIsOpen(false);
               }}
               className={cn(
-                "px-2 py-1.5 rounded-sm text-[12.5px] cursor-pointer flex items-center justify-between gap-2 select-none text-foreground hover:bg-accent hover:text-accent-foreground",
+                "px-2 py-1.5 rounded-sm text-body cursor-pointer flex items-center justify-between gap-2 select-none text-foreground hover:bg-accent hover:text-accent-foreground",
                 value === option.value && "font-medium"
               )}
             >
               <span className="truncate">{option.label}</span>
               <div className="w-3.5 flex justify-center shrink-0">
                 {value === option.value && (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <Check size={14} />
                 )}
               </div>
             </div>

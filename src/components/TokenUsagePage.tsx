@@ -8,6 +8,9 @@ import { DateRangePicker } from './DatePicker';
 import SegmentedControl from './SegmentedControl';
 import { cn } from '../lib/utils';
 import PageHeader from './ui/page-header';
+import { buildSeriesTrend, buildTrendBuckets, GRANULARITY_LABEL, SeriesTrendChart, TotalTrendChart } from './TokenTrendCharts';
+import { ActionTooltip } from './ui/tooltip';
+import { ArrowDownLeft, ArrowUpRight, Bot, ChartColumnStacked, CircleDollarSign, Folder, List, Sigma } from 'lucide-react';
 
 function toDateStr(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -23,6 +26,8 @@ function daysAgoStr(days: number): string {
   date.setDate(date.getDate() - days);
   return toDateStr(date);
 }
+
+type InsightView = 'trend' | 'projects' | 'models';
 
 interface StatCardDetail {
   label: string;
@@ -41,22 +46,22 @@ interface StatCardProps {
 const StatCard: React.FC<StatCardProps> = ({ label, value, details, subtext, icon }) => (
   <div className="flex flex-col justify-between rounded-xl border bg-card p-4 shadow-xs">
     <div className="flex items-center justify-between gap-1.5 mb-1.5">
-      <span className="text-[12.5px] text-muted-foreground truncate">{label}</span>
+      <span className="text-body text-muted-foreground truncate">{label}</span>
       {icon && <div className="text-muted-foreground shrink-0">{icon}</div>}
     </div>
     <div>
-      <div className="text-[22px] font-semibold tracking-tight text-foreground tabular-nums leading-tight">
+      <div className="text-stat font-semibold tracking-tight text-foreground tabular-nums leading-tight">
         {value}
       </div>
       {details && details.length > 0 ? (
-        <div className="mt-3 pt-2.5 border-t flex flex-col gap-1 text-[11.5px]">
+        <div className="mt-3 pt-2.5 border-t flex flex-col gap-1 text-label">
           {details.map((d, i) => (
             <div key={i} className="flex items-center justify-between gap-2" title={`${d.label}: ${d.value}`}>
               <span className="text-muted-foreground shrink-0 select-none">{d.label}</span>
               <span
                 className={cn(
                   'tabular-nums truncate text-right',
-                  d.highlight ? 'text-emerald-600 font-medium' : 'text-foreground'
+                  d.highlight ? 'text-success font-medium' : 'text-foreground'
                 )}
               >
                 {d.value}
@@ -65,7 +70,7 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, details, subtext, ico
           ))}
         </div>
       ) : (
-        <div className="mt-1.5 text-[11px] text-muted-foreground min-h-[16px]">
+        <div className="mt-1.5 text-caption text-muted-foreground min-h-[16px]">
           {subtext || '\u00A0'}
         </div>
       )}
@@ -100,51 +105,27 @@ const DistributionItem: React.FC<DistributionItemProps> = ({
       {/* 头部行：序号 + 图标 + 项目/模型全名（独占空间，不被挤压截断） + Token用量 */}
       <div className="flex items-center justify-between gap-2.5 min-w-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[11px] font-medium tabular-nums text-muted-foreground bg-muted">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-caption font-medium tabular-nums text-muted-foreground bg-muted">
             {rank}
           </span>
           <div className="shrink-0 text-muted-foreground">
             {iconType === 'project' ? (
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-              </svg>
+              <Folder size={14} />
             ) : (
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M12 2a4 4 0 0 0-4 4v1H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4Z" />
-                <path d="M9 13v2" />
-                <path d="M15 13v2" />
-              </svg>
+              <Bot size={14} />
             )}
           </div>
           <span
             className={cn(
-              'truncate text-[13px] font-medium text-foreground select-text leading-tight',
-              iconType === 'model' && 'font-mono text-[12.5px]'
+              'truncate text-body font-medium text-foreground select-text leading-tight',
+              iconType === 'model' && 'font-mono text-body'
             )}
             title={label}
           >
             {label}
           </span>
         </div>
-        <span className="text-[13px] font-medium text-foreground tabular-nums shrink-0">
+        <span className="text-body font-medium text-foreground tabular-nums shrink-0">
           {formatTokens(value)}
         </span>
       </div>
@@ -157,9 +138,9 @@ const DistributionItem: React.FC<DistributionItemProps> = ({
             style={{ width: `${relativePercent}%` }}
           />
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 text-[11px] tabular-nums text-muted-foreground">
+        <div className="flex items-center gap-1.5 shrink-0 text-caption tabular-nums text-muted-foreground">
           {sublabel && <span>{sublabel}</span>}
-          {sublabel && <span className="text-neutral-300">·</span>}
+          {sublabel && <span className="text-muted-foreground/50">·</span>}
           <span className="font-medium text-foreground">{sharePercent}%</span>
         </div>
       </div>
@@ -174,6 +155,8 @@ const TokenUsagePage: React.FC = () => {
   const [days, setDays] = useState<DailyTokenUsage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [insightView, setInsightView] = useState<InsightView>('trend');
+  const [distributionMode, setDistributionMode] = useState<'chart' | 'list'>('chart');
 
   const queryStartDate = allDates ? null : startDate;
   const queryEndDate = allDates ? null : endDate;
@@ -278,6 +261,28 @@ const TokenUsagePage: React.FC = () => {
     return Array.from(map.values()).sort((a, b) => b.totalTokens - a.totalTokens);
   }, [days]);
 
+  const trend = useMemo(
+    () => buildTrendBuckets(days, queryStartDate, queryEndDate ?? todayStr()),
+    [days, queryStartDate, queryEndDate],
+  );
+  const trendPeak = trend.buckets.reduce<(typeof trend.buckets)[number] | null>(
+    (peak, bucket) => (bucket.totalTokens > (peak?.totalTokens ?? 0) ? bucket : peak),
+    null,
+  );
+  // 单日范围没有趋势可看：隐藏趋势页签，回落到项目分布。
+  const hasTrend = trend.buckets.length >= 2;
+  const activeInsightView: InsightView = insightView === 'trend' && !hasTrend ? 'projects' : insightView;
+  // 项目 / 模型默认用堆叠趋势图展示，单日范围只能看排行列表。
+  const showDistributionChart = hasTrend && distributionMode === 'chart';
+  const projectTrend = useMemo(
+    () => buildSeriesTrend(days, trend.buckets, trend.granularity, 'project'),
+    [days, trend],
+  );
+  const modelTrend = useMemo(
+    () => buildSeriesTrend(days, trend.buckets, trend.granularity, 'model'),
+    [days, trend],
+  );
+
   const maxProjectTokens = mergedProjects[0]?.totalTokens ?? 0;
   const maxModelTokens = mergedModels[0]?.totalTokens ?? 0;
 
@@ -346,7 +351,7 @@ const TokenUsagePage: React.FC = () => {
       />
 
       {error && (
-        <div className="mb-3 shrink-0 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 text-[12px] text-destructive">
+        <div className="mb-3 shrink-0 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 text-label text-destructive">
           {error}
         </div>
       )}
@@ -361,7 +366,7 @@ const TokenUsagePage: React.FC = () => {
           </div>
         ) : days.length === 0 ? (
           <div className="flex-1 min-h-[260px] rounded-xl border border-dashed flex items-center justify-center">
-            <p className="text-[13px] text-muted-foreground">该时间段暂无 token 用量数据（同步完成后可见）</p>
+            <p className="text-body text-muted-foreground">该时间段暂无 token 用量数据（同步完成后可见）</p>
           </div>
         ) : (
           <>
@@ -375,9 +380,7 @@ const TokenUsagePage: React.FC = () => {
                   { label: '输出总计', value: formatTokens(totals.outputTokens) },
                 ]}
                 icon={
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                  </svg>
+                  <Sigma size={15} />
                 }
               />
               <StatCard
@@ -392,9 +395,7 @@ const TokenUsagePage: React.FC = () => {
                   },
                 ]}
                 icon={
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="m15 15 6-6m0 0-6-6m6 6H9a6 6 0 0 0 0 12h3" />
-                  </svg>
+                  <ArrowDownLeft size={15} />
                 }
               />
               <StatCard
@@ -408,9 +409,7 @@ const TokenUsagePage: React.FC = () => {
                   },
                 ]}
                 icon={
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="m9 9-6 6m0 0 6 6m-6-6h12a6 6 0 0 0 0-12h-3" />
-                  </svg>
+                  <ArrowUpRight size={15} />
                 }
               />
               <StatCard
@@ -421,83 +420,110 @@ const TokenUsagePage: React.FC = () => {
                   { label: '涉及模型', value: `${mergedModels.length} 个模型` },
                 ]}
                 icon={
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
-                    <path d="M12 6v2m0 8v2" />
-                  </svg>
+                  <CircleDollarSign size={15} />
                 }
               />
             </div>
 
-            {/* 双栏分布看板：自适应填满剩余空间，仅各卡片内部超出时滚动 */}
-            <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 gap-3.5 flex-1 min-h-0 pb-0.5">
-              {/* 按项目分布 */}
-              <div className="flex flex-col rounded-xl border bg-card p-4 shadow-xs min-h-0">
-                <div className="flex items-center justify-between pb-3 mb-2 border-b shrink-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-[14px] font-semibold text-foreground">按项目分布</h3>
-                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                      {mergedProjects.length}
-                    </span>
-                  </div>
-                  <span className="text-[11.5px] text-muted-foreground">消耗占比</span>
+            {/* 趋势 / 项目 / 模型 三个视图切换展示，占满剩余空间，仅视图内部超出时滚动 */}
+            <section className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card p-4 shadow-xs mb-0.5">
+              <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b pb-3">
+                <SegmentedControl<InsightView>
+                  size="sm"
+                  value={activeInsightView}
+                  onChange={setInsightView}
+                  options={[
+                    ...(hasTrend ? [{ id: 'trend' as const, label: '用量趋势' }] : []),
+                    { id: 'projects', label: `按项目 · ${mergedProjects.length}` },
+                    { id: 'models', label: `按模型 · ${mergedModels.length}` },
+                  ]}
+                />
+                <div className="flex items-center gap-2.5">
+                  <span className="text-label text-muted-foreground tabular-nums">
+                    {activeInsightView === 'trend'
+                      ? trendPeak
+                        ? `${GRANULARITY_LABEL[trend.granularity]} · 峰值 ${trendPeak.label} ${formatTokens(trendPeak.totalTokens)}`
+                        : GRANULARITY_LABEL[trend.granularity]
+                      : showDistributionChart
+                        ? `${GRANULARITY_LABEL[trend.granularity]} · 前 5 名单独着色`
+                        : '按消耗占比排序'}
+                  </span>
+                  {activeInsightView !== 'trend' && hasTrend && (
+                    <div className="flex items-center rounded-md border p-0.5" role="group" aria-label="展示方式">
+                      {([
+                        { id: 'chart', label: '图表', icon: ChartColumnStacked },
+                        { id: 'list', label: '排行列表', icon: List },
+                      ] as const).map(option => (
+                        <ActionTooltip key={option.id} label={option.label}>
+                          <button
+                            type="button"
+                            aria-label={option.label}
+                            aria-pressed={distributionMode === option.id}
+                            onClick={() => setDistributionMode(option.id)}
+                            className={cn(
+                              'flex h-6 w-6 cursor-pointer items-center justify-center rounded-[5px] transition-colors',
+                              distributionMode === option.id
+                                ? 'bg-muted text-foreground'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            <option.icon size={13} />
+                          </button>
+                        </ActionTooltip>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {mergedProjects.length === 0 ? (
-                  <div className="flex-1 min-h-[140px] flex items-center justify-center">
-                    <p className="text-[12px] text-muted-foreground">暂无项目数据</p>
-                  </div>
-                ) : (
-                  <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">
-                    {mergedProjects.map((project, idx) => (
-                      <DistributionItem
-                        key={project.projectPath}
-                        rank={idx + 1}
-                        label={project.name}
-                        sublabel={`${project.sessionCount} 会话`}
-                        value={project.totalTokens}
-                        max={maxProjectTokens}
-                        total={totals.totalTokens}
-                        iconType="project"
-                      />
-                    ))}
-                  </div>
-                )}
               </div>
 
-              {/* 按模型分布 */}
-              <div className="flex flex-col rounded-xl border bg-card p-4 shadow-xs min-h-0">
-                <div className="flex items-center justify-between pb-3 mb-2 border-b shrink-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-[14px] font-semibold text-foreground">按模型分布</h3>
-                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                      {mergedModels.length}
-                    </span>
-                  </div>
-                  <span className="text-[11.5px] text-muted-foreground">消耗占比</span>
+              {activeInsightView === 'trend' ? (
+                <TotalTrendChart buckets={trend.buckets} granularity={trend.granularity} />
+              ) : (activeInsightView === 'projects' ? mergedProjects.length : mergedModels.length) === 0 ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <p className="text-label text-muted-foreground">
+                    {activeInsightView === 'projects' ? '暂无项目数据' : '暂无模型数据'}
+                  </p>
                 </div>
-                {mergedModels.length === 0 ? (
-                  <div className="flex-1 min-h-[140px] flex items-center justify-center">
-                    <p className="text-[12px] text-muted-foreground">暂无模型数据</p>
-                  </div>
-                ) : (
-                  <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">
-                    {mergedModels.map((model, idx) => (
-                      <DistributionItem
-                        key={model.model}
-                        rank={idx + 1}
-                        label={model.model}
-                        sublabel={`${model.sessionCount} 会话`}
-                        value={model.totalTokens}
-                        max={maxModelTokens}
-                        total={totals.totalTokens}
-                        iconType="model"
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+              ) : showDistributionChart ? (
+                <SeriesTrendChart
+                  key={activeInsightView}
+                  buckets={trend.buckets}
+                  {...(activeInsightView === 'projects' ? projectTrend : modelTrend)}
+                  grandTotal={totals.totalTokens}
+                  ariaLabel={activeInsightView === 'projects' ? '按项目堆叠的 Token 用量趋势' : '按模型堆叠的 Token 用量趋势'}
+                />
+              ) : activeInsightView === 'projects' ? (
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">
+                  {mergedProjects.map((project, idx) => (
+                    <DistributionItem
+                      key={project.projectPath}
+                      rank={idx + 1}
+                      label={project.name}
+                      sublabel={`${project.sessionCount} 会话`}
+                      value={project.totalTokens}
+                      max={maxProjectTokens}
+                      total={totals.totalTokens}
+                      iconType="project"
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">
+                  {mergedModels.map((model, idx) => (
+                    <DistributionItem
+                      key={model.model}
+                      rank={idx + 1}
+                      label={model.model}
+                      sublabel={`${model.sessionCount} 会话`}
+                      value={model.totalTokens}
+                      max={maxModelTokens}
+                      total={totals.totalTokens}
+                      iconType="model"
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
           </>
         )}
       </div>

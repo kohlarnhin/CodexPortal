@@ -2,6 +2,7 @@ import React from 'react';
 import { SessionProject } from '../../types/session';
 import { formatRelativeTime } from '../../utils/time';
 import { formatTokens } from '../../utils/format';
+import { Folder } from 'lucide-react';
 
 interface ProjectCardProps {
   project: SessionProject;
@@ -17,29 +18,29 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onOpen }) => {
     >
       <div className="flex items-center gap-3 mb-3 min-w-0 w-full">
         <div className="w-8 h-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+          <Folder size={16} />
         </div>
         <div className="min-w-0">
-          <h3 className="truncate text-[14px] font-medium text-foreground">{project.name}</h3>
+          <h3 className="truncate text-subtitle font-medium text-foreground">{project.name}</h3>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-3 border-t mt-auto w-full">
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[11px] font-medium text-muted-foreground">
+          <span className="text-caption font-medium text-muted-foreground">
             会话 <span className="font-medium text-foreground tabular-nums">{project.sessionCount}</span>
           </span>
           {project.totalTokens > 0 && (
             <>
-              <span className="text-neutral-300">·</span>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-muted-foreground/50">·</span>
+              <span className="text-caption text-muted-foreground">
                 <span className="font-medium text-foreground tabular-nums">{formatTokens(project.totalTokens)}</span>{' '}
                 tokens
               </span>
             </>
           )}
         </div>
-        <span className="text-[11px] text-muted-foreground truncate">
+        <span className="text-caption text-muted-foreground truncate">
           最近活跃 {formatRelativeTime(project.lastSessionAt)}
         </span>
       </div>
