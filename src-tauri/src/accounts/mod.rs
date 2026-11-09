@@ -1,10 +1,10 @@
-pub(crate) mod auto_switch;
 pub(crate) mod api_keys;
 pub(crate) mod credits;
 pub(crate) mod messages;
 pub(crate) mod periods;
 pub(crate) mod quiet_hours;
 pub(crate) mod scheduler;
+pub(crate) mod scheduling;
 pub(crate) mod usage;
 
 use crate::accounts::credits::ResetCreditsInfo;
@@ -28,12 +28,13 @@ use rusqlite::params;
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use tauri::Emitter;
 use tauri::State;
 use uuid::Uuid;
 
-// 主界面和托盘共用切换锁，凭证写入与 daemon 重启完成前不接受下一次切换。
+// 调度与账号编辑共用切换锁，凭证写入与 daemon 重启完成前不接受下一次切换。
 static ACCOUNT_SWITCH_LOCK: tauri::async_runtime::Mutex<()> =
     tauri::async_runtime::Mutex::const_new(());
 
@@ -80,10 +81,6 @@ pub(crate) struct Account {
     pub(crate) can_activate: bool,
     #[serde(rename = "nextRefreshAt")]
     pub(crate) next_refresh_at: Option<String>,
-    #[serde(rename = "autoActivateWindow")]
-    pub(crate) auto_activate_window: bool,
-    #[serde(default, rename = "autoSwitchThreshold")]
-    pub(crate) auto_switch_threshold: f64,
     #[serde(rename = "chatgptPlanType")]
     pub(crate) chatgpt_plan_type: Option<String>,
     #[serde(rename = "hasAccessToken")]
@@ -117,7 +114,7 @@ pub(crate) async fn get_accounts(app: tauri::AppHandle) -> Result<AccountStore, 
 }
 
 pub(crate) fn read_accounts(db: &rusqlite::Connection) -> Result<AccountStore, String> {
-    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, auto_activate_window, auto_switch_threshold, is_disabled FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, plan_type, usage_json, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, is_disabled FROM accounts ORDER BY is_active DESC, created_at ASC").map_err(|e| e.to_string())?;
     let account_iter = stmt
         .query_map([], |row| {
             let auth_json_content: String = row.get(2)?;
@@ -129,7 +126,7 @@ pub(crate) fn read_accounts(db: &rusqlite::Connection) -> Result<AccountStore, S
                 id: row.get(0)?,
                 account_type,
                 auth_method: auth_method(&auth_json_content),
-                enabled: !row.get::<_, bool>(19)?,
+                enabled: !row.get::<_, bool>(17)?,
                 name: row.get(1)?,
                 can_refresh_usage: !is_api_key && (extract_personal_access_token(&auth_json_content).is_some()
                     || access_token.is_some()),
@@ -145,8 +142,6 @@ pub(crate) fn read_accounts(db: &rusqlite::Connection) -> Result<AccountStore, S
                 plan_type: row.get(7)?,
                 usage: if is_api_key { None } else { parse_cached_usage(row.get(8)?) },
                 next_refresh_at: if is_api_key { None } else { row.get(9)? },
-                auto_activate_window: !is_api_key && row.get::<_, bool>(17)?,
-                auto_switch_threshold: row.get(18)?,
                 chatgpt_plan_type: row.get(10)?,
                 has_access_token: access_token.is_some(),
                 reset_credits: row
@@ -197,12 +192,15 @@ fn set_account_enabled_in_db(
     let active: bool = db.query_row(
         "SELECT is_active FROM accounts WHERE id = ?1", [id], |row| row.get(0),
     ).optional().map_err(|error| error.to_string())?.ok_or("账号不存在")?;
-    if !enabled && active {
-        return Err("当前使用中的账号无法禁用，请先切换到其他账号。".to_string());
-    }
     // 已开始的网络请求结束后才允许禁用，避免禁用成功后仍有请求在途。
     if !enabled && refreshing {
         return Err("该账号正在刷新，请稍候。".to_string());
+    }
+    // 与调度候选条件一致，否则禁用后调度找不到接替账号，已禁用账号会一直留在使用中。
+    if !enabled && active && !read_accounts(db)?.accounts.iter().any(|account| {
+        account.id != id && scheduling::eligible(account)
+    }) {
+        return Err("没有其他可用的订阅账号，无法禁用当前账号。".to_string());
     }
     db.execute(
         "UPDATE accounts SET is_disabled = ?1, updated_at = ?2 WHERE id = ?3",
@@ -226,7 +224,9 @@ pub(crate) fn set_account_enabled(
         let db = state.db.lock().map_err(|error| error.to_string())?;
         set_account_enabled_in_db(&db, &id, enabled, refreshing.contains(&id))?;
     }
+    drop(_switch_guard);
     let _ = app.emit("accounts-updated", ());
+    scheduling::request_evaluation(app);
     crate::logging::info("accounts", if enabled { "账号已启用。" } else { "账号已禁用。" });
     Ok(())
 }
@@ -366,6 +366,7 @@ pub(crate) async fn reauth_oauth_account(
 /// 保存通过 rt 兑换的账号（at + 新 rt + at 过期时间）。
 #[tauri::command]
 pub(crate) async fn save_rt_account(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     email: String,
     chatgpt_plan_type: Option<String>,
@@ -376,7 +377,7 @@ pub(crate) async fn save_rt_account(
     at_expires_at: i64,
     notes: Option<String>,
 ) -> Result<Account, String> {
-    insert_rt_account(
+    let account = insert_rt_account(
         &state,
         RtTokenInfo {
             email,
@@ -389,7 +390,10 @@ pub(crate) async fn save_rt_account(
         },
         notes,
     )
-    .await
+    .await?;
+    let _ = app.emit("accounts-updated", ());
+    scheduling::request_evaluation(app);
+    Ok(account)
 }
 
 /// 校验 PAT 并入库（手动添加与 auth.json 自动导入共用）。
@@ -430,8 +434,6 @@ async fn insert_pat_account(
         can_refresh_usage,
         can_activate: true,
         next_refresh_at: None,
-        auto_activate_window: false,
-        auto_switch_threshold: 0.0,
         chatgpt_plan_type: meta.chatgpt_plan_type,
         has_access_token: false,
         reset_credits: None,
@@ -470,7 +472,7 @@ async fn insert_pat_account(
 }
 
 /// 入库 rt 兑换出的账号（手动添加与 auth.json 自动导入共用）。
-/// 保存完整 OAuth 凭证，由用户启用时写入本地认证并开启账号活跃时段。
+/// 保存完整 OAuth 凭证，由智能调度写入本地认证并开启账号活跃时段。
 async fn insert_rt_account(
     state: &State<'_, AppState>,
     info: RtTokenInfo,
@@ -502,8 +504,6 @@ async fn insert_rt_account(
         can_refresh_usage: true,
         can_activate: true,
         next_refresh_at: None,
-        auto_activate_window: false,
-        auto_switch_threshold: 0.0,
         chatgpt_plan_type: info.chatgpt_plan_type,
         has_access_token: true,
         reset_credits: None,
@@ -530,11 +530,15 @@ async fn insert_rt_account(
 
 #[tauri::command]
 pub(crate) async fn add_account(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     token: String,
     notes: Option<String>,
 ) -> Result<Account, String> {
-    insert_pat_account(&state, token, notes).await
+    let account = insert_pat_account(&state, token, notes).await?;
+    let _ = app.emit("accounts-updated", ());
+    scheduling::request_evaluation(app);
+    Ok(account)
 }
 
 #[tauri::command]
@@ -567,13 +571,11 @@ pub(crate) async fn update_account(
         existing_refresh_token,
         existing_at_expires_at,
         is_active,
-        existing_auto_activate_window,
-        existing_auto_switch_threshold,
         existing_is_disabled,
     ) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.query_row(
-            "SELECT auth_json_content, name, plan_type, usage_json, usage_updated_at, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, is_active, auto_activate_window, auto_switch_threshold, is_disabled FROM accounts WHERE id = ?1",
+            "SELECT auth_json_content, name, plan_type, usage_json, usage_updated_at, next_refresh_at, chatgpt_plan_type, access_token, chatgpt_account_id, chatgpt_account_is_fedramp, reset_credits_json, refresh_token, at_expires_at, is_active, is_disabled FROM accounts WHERE id = ?1",
             params![id],
             |row| Ok((
                 row.get::<_, String>(0)?,
@@ -591,8 +593,6 @@ pub(crate) async fn update_account(
                 row.get::<_, Option<String>>(12)?,
                 row.get::<_, i32>(13)? == 1,
                 row.get::<_, bool>(14)?,
-                row.get::<_, f64>(15)?,
-                row.get::<_, bool>(16)?,
             )),
         )
         .map_err(|_| "Account not found".to_string())?
@@ -631,8 +631,6 @@ pub(crate) async fn update_account(
             can_refresh_usage: true,
             can_activate: true,
             next_refresh_at: existing_next_refresh_at,
-            auto_activate_window: existing_auto_activate_window,
-            auto_switch_threshold: existing_auto_switch_threshold,
             chatgpt_plan_type: existing_chatgpt_plan_type,
             has_access_token: existing_access_token.is_some(),
             reset_credits: existing_reset_credits_json
@@ -688,8 +686,6 @@ pub(crate) async fn update_account(
         can_refresh_usage: true,
         can_activate: true,
         next_refresh_at: None,
-        auto_activate_window: existing_auto_activate_window,
-        auto_switch_threshold: existing_auto_switch_threshold,
         chatgpt_plan_type: meta.chatgpt_plan_type,
         has_access_token: false,
         reset_credits: None,
@@ -700,28 +696,6 @@ pub(crate) async fn update_account(
         refresh_token: None,
         at_expires_at: None,
     })
-}
-
-#[tauri::command]
-pub(crate) fn set_auto_activate_window(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-    enabled: bool,
-) -> Result<(), String> {
-    let db = state.db.lock().map_err(|error| error.to_string())?;
-    let changed = db
-        .execute(
-            "UPDATE accounts SET auto_activate_window = ?1 WHERE id = ?2",
-            params![enabled, id],
-        )
-        .map_err(|error| error.to_string())?;
-    if changed == 0 {
-        return Err("账号不存在".to_string());
-    }
-    drop(db);
-    let _ = app.emit("accounts-updated", ());
-    Ok(())
 }
 
 /// 保存 team 账号的 Access Token（at），用于获取重置卡等 PAT 无法访问的接口。
@@ -746,6 +720,15 @@ pub(crate) fn set_account_access_token(
         return Err("Account not found".to_string());
     }
     Ok(())
+}
+
+fn deletion_successor(db: &rusqlite::Connection, now: i64) -> Result<Option<Account>, String> {
+    // 删除事务内不能联网续期；只在凭证已完整的订阅账号中应用相同的调度规则。
+    let accounts: Vec<_> = read_accounts(db)?.accounts.into_iter()
+        .filter(|account| scheduling::eligible(account) && can_apply_auth_json(&account.auth_json_content))
+        .collect();
+    let plan = scheduling::evaluate_schedule(&accounts, None, now);
+    Ok(accounts.into_iter().find(|account| plan.decision.target_id() == Some(account.id.as_str())))
 }
 
 #[tauri::command]
@@ -781,22 +764,7 @@ pub(crate) async fn delete_account(
         .map_err(|e| e.to_string())?;
         let mut switched = false;
         if is_active {
-            let candidates = {
-                let mut stmt = tx
-                    .prepare("SELECT id, auth_json_content FROM accounts WHERE is_disabled = 0 ORDER BY created_at, id")
-                    .map_err(|e| e.to_string())?;
-                let rows = stmt
-                    .query_map([], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                    })
-                    .map_err(|e| e.to_string())?;
-                rows.collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?
-            };
-            // 仅选择凭证完整的账号接续会话额度归属；旧版 OAuth 账号需先手动启用以补齐凭证。
-            let next = candidates
-                .into_iter()
-                .find(|(_, content)| can_apply_auth_json(content));
+            let next = deletion_successor(&tx, Utc::now().timestamp())?;
             tx.execute("UPDATE accounts SET is_active = 0", [])
                 .map_err(|e| e.to_string())?;
             tx.execute(
@@ -804,16 +772,16 @@ pub(crate) async fn delete_account(
                 params![now],
             )
             .map_err(|e| e.to_string())?;
-            if let Some((next_id, content)) = next {
-                apply_auth_json(&content)?;
+            if let Some(next) = next {
+                apply_auth_json(&next.auth_json_content)?;
                 tx.execute(
                     "UPDATE accounts SET is_active = 1 WHERE id = ?1",
-                    params![next_id],
+                    params![next.id],
                 )
                 .map_err(|e| e.to_string())?;
                 tx.execute(
                     "INSERT INTO account_active_periods (account_id, started_at) VALUES (?1, ?2)",
-                    params![next_id, now],
+                    params![next.id, now],
                 )
                 .map_err(|e| e.to_string())?;
                 switched = true;
@@ -832,31 +800,22 @@ pub(crate) async fn delete_account(
         crate::codex::events::resume_after_account_switch(&app);
         crate::logging::info("accounts", "账号已删除。");
     }
+    drop(_switch_guard);
+    scheduling::request_evaluation(app);
     Ok(())
 }
 
-#[tauri::command]
-pub(crate) async fn set_active_account(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
-    let _switch_guard = ACCOUNT_SWITCH_LOCK
-        .try_lock()
-        .map_err(|_| "正在切换账号并重启 Codex，请稍候。".to_string())?;
-    switch_active_account_locked(&app, &state, &id, None).await.map(|_| ())
-}
-
-/// 调用者持有 ACCOUNT_SWITCH_LOCK；手动与自动切换共用凭证更新和 daemon 重启流程。
+/// 只供智能调度调用，调用者持有 ACCOUNT_SWITCH_LOCK。
 async fn switch_active_account_locked(
     app: &tauri::AppHandle,
     state: &AppState,
     id: &str,
-    automatic: Option<&auto_switch::SwitchRequest>,
+    excluded: &HashSet<String>,
 ) -> Result<bool, String> {
-    if let Some(request) = automatic {
+    {
         let db = state.db.lock().map_err(|error| error.to_string())?;
-        if !auto_switch::selection_is_current(app, &db, request, id)? {
+        let plan = scheduling::evaluate_candidates(&read_accounts(&db)?, excluded, Utc::now().timestamp());
+        if plan.decision.target_id() != Some(id) {
             return Ok(false);
         }
     }
@@ -903,11 +862,10 @@ async fn switch_active_account_locked(
     {
         let mut db = state.db.lock().map_err(|e| e.to_string())?;
         sync_active_oauth_account(&db)?;
-        // 认证续期期间额度或阈值可能已改变；提交切换前再次确认来源账号与候选额度。
-        if let Some(request) = automatic {
-            if !auto_switch::selection_is_current(app, &db, request, id)? {
-                return Ok(false);
-            }
+        // 认证续期期间额度可能已改变；在同一个数据库临界区中重新决策后才提交。
+        let plan = scheduling::evaluate_candidates(&read_accounts(&db)?, excluded, Utc::now().timestamp());
+        if plan.decision.target_id() != Some(id) {
+            return Ok(false);
         }
         let tx = db.transaction().map_err(|e| e.to_string())?;
 
@@ -998,7 +956,7 @@ pub(crate) async fn import_account_from_auth_json(
 
     let account = match credential {
         AuthJsonCredential::OpenaiApiKey => {
-            api_keys::save_api_key_account(app, state, None, String::new(), content, None).await?
+            api_keys::save_api_key_account(app.clone(), state, None, String::new(), content, None).await?
         }
         AuthJsonCredential::Pat(token) => insert_pat_account(&state, token, None).await?,
         AuthJsonCredential::RefreshToken(rt) => {
@@ -1007,6 +965,8 @@ pub(crate) async fn import_account_from_auth_json(
             insert_rt_account(&state, info, None).await?
         }
     };
+    let _ = app.emit("accounts-updated", ());
+    scheduling::request_evaluation(app);
     crate::logging::info("auth-import", "已自动导入本机账号。");
     Ok(Some(account))
 }
@@ -1071,22 +1031,59 @@ mod tests {
     }
 
     #[test]
-    fn enable_guard_rejects_active_and_busy_accounts_and_unknown_ids() {
+    fn enable_guard_requires_another_subscription_for_active_and_rejects_busy_and_unknown() {
         let db = database();
         insert(&db, "oauth", "{}", true);
         let before = snapshot(&db, "*");
         assert_eq!(set_account_enabled_in_db(&db, "oauth", false, false).unwrap_err(),
-            "当前使用中的账号无法禁用，请先切换到其他账号。");
+            "没有其他可用的订阅账号，无法禁用当前账号。");
+        assert_eq!(snapshot(&db, "*"), before);
+        insert(&db, "api", &crate::auth::build_api_key_auth_json("sk-test"), false);
+        insert(&db, "incomplete", "{}", false);
+        insert(&db, "disabled", &build_auth_json("test-pat"), false);
+        db.execute("UPDATE accounts SET is_disabled = 1 WHERE id = 'disabled'", []).unwrap();
+        assert_eq!(set_account_enabled_in_db(&db, "oauth", false, false).unwrap_err(),
+            "没有其他可用的订阅账号，无法禁用当前账号。");
         assert_eq!(snapshot(&db, "*"), before);
         assert_eq!(set_account_enabled_in_db(&db, "missing", false, false).unwrap_err(), "账号不存在");
-        db.execute("UPDATE accounts SET is_active = 0", []).unwrap();
+        insert(&db, "replacement", &build_auth_json("test-pat"), false);
         assert_eq!(set_account_enabled_in_db(&db, "oauth", false, true).unwrap_err(), "该账号正在刷新，请稍候。");
+        assert_eq!(snapshot(&db, "*"), before);
         set_account_enabled_in_db(&db, "oauth", false, false).unwrap();
+        // 只修改启用状态，活跃账号由随后的调度评估切走。
+        assert!(read_accounts(&db).unwrap().accounts.iter().find(|account| account.id == "oauth").unwrap().is_active);
         let disabled = snapshot(&db, "*");
         assert_eq!(ensure_account_enabled(&db, "oauth").unwrap_err(), "账号已禁用，请先启用。");
         assert_eq!(snapshot(&db, "*"), disabled);
         set_account_enabled_in_db(&db, "oauth", true, false).unwrap();
         assert!(ensure_account_enabled(&db, "oauth").is_ok());
+    }
+
+    #[test]
+    fn deletion_successor_uses_schedule_order_and_recovery_without_api_or_incomplete_auth() {
+        let db = database();
+        let now = 1_900_000_000;
+        for id in ["later", "earlier", "disabled"] {
+            insert(&db, id, &build_auth_json("test-pat"), false);
+        }
+        insert(&db, "api", &crate::auth::build_api_key_auth_json("sk-test"), false);
+        insert(&db, "incomplete", "{}", false);
+        db.execute("UPDATE accounts SET is_disabled = 1 WHERE id = 'disabled'", []).unwrap();
+        // rt 可以续期，但事务中不能联网，因此不能选择缺少完整 auth.json 的账号。
+        db.execute("UPDATE accounts SET refresh_token = 'test-rt', access_token = 'test-at' WHERE id = 'incomplete'", []).unwrap();
+        for (id, used, reset) in [("later", 0.0, now + 900), ("earlier", 0.0, now + 100),
+            ("disabled", 0.0, now + 1), ("incomplete", 0.0, now + 1)] {
+            db.execute("UPDATE accounts SET usage_json = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&crate::test_support::usage(used, Some(reset))).unwrap(), id]).unwrap();
+        }
+        assert_eq!(deletion_successor(&db, now).unwrap().unwrap().id, "earlier");
+        for (id, reset) in [("earlier", now + 600), ("later", now + 300)] {
+            db.execute("UPDATE accounts SET usage_json = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&crate::test_support::usage(100.0, Some(reset))).unwrap(), id]).unwrap();
+        }
+        assert_eq!(deletion_successor(&db, now).unwrap().unwrap().id, "later");
+        db.execute("DELETE FROM accounts WHERE id IN ('earlier', 'later')", []).unwrap();
+        assert!(deletion_successor(&db, now).unwrap().is_none());
     }
 
     #[test]

@@ -4,12 +4,10 @@ import { listen } from '@tauri-apps/api/event';
 import { Account, TestMessageResult } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import { isApiKeyAccount } from '../utils/accountAuth';
-import ToggleSwitch from './ToggleSwitch';
 import Button from './ui/button';
 import Input from './ui/input';
 import { Dialog, DialogContent } from './ui/dialog';
 import { Check, CircleAlert, Info, LoaderCircle, MessageCircle, Settings, X, Zap } from 'lucide-react';
-import { errorMessage, toast } from './ui/toast';
 
 const ACTIVATION_MODEL = 'gpt-5.6-luna';
 
@@ -29,19 +27,13 @@ export default function QuotaActivationModal({
   const isApiKey = isApiKeyAccount(account);
   const canSendTest = isApiKey ? account.canActivate : account.canRefreshUsage;
   const [apiModel, setApiModel] = useState(ACTIVATION_MODEL);
-  const [autoActivateWindow, setAutoActivateWindow] = useState(account.autoActivateWindow);
-  const [isSaving, setIsSaving] = useState(false);
   const [result, setResult] = useState<TestMessageResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const [copied, setCopied] = useState(false);
   const sending = useRef(false);
-  const isBusy = isSending || isSaving;
-
-  useEffect(() => {
-    setAutoActivateWindow(account.autoActivateWindow);
-  }, [account.autoActivateWindow]);
+  const isBusy = isSending;
 
   useEffect(() => {
     let disposed = false;
@@ -62,21 +54,8 @@ export default function QuotaActivationModal({
     };
   }, [account.id]);
 
-  const saveAutoActivation = async (enabled: boolean) => {
-    if (isBusy || isUsageRefreshing) return;
-    setIsSaving(true);
-    try {
-      await invoke('set_auto_activate_window', { id: account.id, enabled });
-      setAutoActivateWindow(enabled);
-    } catch (saveError) {
-      toast.error(errorMessage(saveError), { title: '自动激活设置保存失败，请手动处理' });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const activateWindow = async () => {
-    if (sending.current || isSaving || isUsageRefreshing || !canSendTest || isApiKey && !apiModel.trim()) return;
+    if (sending.current || isUsageRefreshing || !canSendTest || isApiKey && !apiModel.trim()) return;
     sending.current = true;
     setIsSending(true);
     setResult(null);
@@ -134,24 +113,6 @@ export default function QuotaActivationModal({
 
         {/* Content */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          {/* 自动激活开关卡片 */}
-          {!isApiKey && <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/40 p-4 transition-colors">
-            <div className="min-w-0">
-              <div className="text-body font-semibold text-foreground">自动刷新前激活额度窗口</div>
-              <p className="mt-1 text-label leading-relaxed text-muted-foreground">
-                仅作用于当前账号。开启后，在自动刷新前主动发送一条消息唤醒窗口并获取额度（会消耗额度）。
-              </p>
-            </div>
-            <div className="shrink-0 pt-0.5">
-              <ToggleSwitch
-                label="自动刷新前激活额度窗口"
-                checked={autoActivateWindow}
-                disabled={isBusy || isUsageRefreshing}
-                onToggle={() => void saveAutoActivation(!autoActivateWindow)}
-              />
-            </div>
-          </div>}
-
           {/* 参数概览面板 */}
           <div className="rounded-lg border bg-muted/40 p-3.5 space-y-3">
             <div className="flex items-center justify-between gap-2">

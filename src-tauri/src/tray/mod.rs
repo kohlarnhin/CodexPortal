@@ -39,8 +39,6 @@ enum Command {
     EmailMasking(bool),
     GetSettings(Sender<TraySettings>),
     SetEnabled(bool, Sender<TraySettings>),
-    Switch(String),
-    SwitchFinished(bool),
     GetIconState(Sender<TrayIconState>),
     SetIcon(TrayIconPixels),
 }
@@ -57,7 +55,7 @@ pub(crate) fn is_enabled(app: &AppHandle) -> bool {
 pub(crate) fn start(app: AppHandle) -> Result<(), std::io::Error> {
     let (sender, receiver) = mpsc::channel();
     app.manage(TrayState { sender: sender.clone(), enabled: AtomicBool::new(false) });
-    // 只注册一次菜单监听，反复开关托盘不会累积账号切换回调。
+    // 只注册一次菜单监听，反复开关托盘不会累积页面导航回调。
     app.on_menu_event(|app, event| {
         match event.id().as_ref() {
             view::SHOW_MAIN => crate::windows::show_main_window(app),
@@ -66,8 +64,8 @@ pub(crate) fn start(app: AppHandle) -> Result<(), std::io::Error> {
             view::STATUS => crate::windows::show_page(app, "accounts"),
             view::QUIT => app.exit(0),
             id => {
-                if let Some(account_id) = id.strip_prefix(view::SWITCH_PREFIX) {
-                    let _ = app.state::<TrayState>().sender.send(Command::Switch(account_id.into()));
+                if id.starts_with(view::ACCOUNT_PREFIX) {
+                    crate::windows::show_page(app, "accounts");
                 }
             }
         }
@@ -81,8 +79,6 @@ pub(crate) fn start(app: AppHandle) -> Result<(), std::io::Error> {
             app,
             enabled: false,
             masking: true,
-            switching: false,
-            switch_failed: false,
             error: None,
             tray: None,
             menu: None,
@@ -97,8 +93,6 @@ struct Worker {
     app: AppHandle,
     enabled: bool,
     masking: bool,
-    switching: bool,
-    switch_failed: bool,
     error: Option<String>,
     tray: Option<TrayIcon>,
     menu: Option<TrayMenu>,
@@ -148,12 +142,6 @@ impl Worker {
                     self.refresh_if_enabled();
                 }
                 Command::Refresh => self.refresh_if_enabled(),
-                Command::Switch(id) => self.switch_account(id),
-                Command::SwitchFinished(success) => {
-                    self.switching = false;
-                    self.switch_failed = !success;
-                    self.refresh_if_enabled();
-                }
             }
         }
     }
@@ -212,7 +200,7 @@ impl Worker {
     }
 
     fn refresh(&mut self) -> Result<(), String> {
-        let snapshot = Snapshot::read(&self.app, self.masking, self.switching, self.switch_failed)?;
+        let snapshot = Snapshot::read(&self.app, self.masking)?;
         if self.snapshot.as_ref() == Some(&snapshot) {
             return Ok(());
         }
@@ -242,29 +230,6 @@ impl Worker {
             let _ = self.app.emit_to("main", "tray-icon-state", self.icon_state());
         }
         Ok(())
-    }
-
-    fn switch_account(&mut self, id: String) {
-        if !self.enabled || self.switching {
-            return;
-        }
-        let can_switch = self.snapshot.as_ref().is_some_and(|snapshot| snapshot.accounts.iter()
-            .any(|account| account.id == id && account.enabled && account.can_activate && !account.active));
-        if !can_switch {
-            return;
-        }
-        self.switching = true;
-        self.switch_failed = false;
-        self.refresh_if_enabled();
-        let app = self.app.clone();
-        let sender = self.app.state::<TrayState>().sender.clone();
-        // 复用主界面的认证续期、写入 auth.json 与账号归属事务；切换不阻塞托盘线程。
-        tauri::async_runtime::spawn_blocking(move || {
-            let result = tauri::async_runtime::block_on(crate::accounts::set_active_account(
-                app.clone(), app.state::<AppState>(), id,
-            ));
-            let _ = sender.send(Command::SwitchFinished(result.is_ok()));
-        });
     }
 }
 

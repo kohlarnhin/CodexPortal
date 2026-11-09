@@ -68,7 +68,7 @@ export default function About({ updater }: AboutProps) {
           <Logo className="h-14 w-14 rounded-xl" />
           <h1 className="mt-4 text-heading font-semibold tracking-tight text-foreground select-none">{appName}</h1>
           <p className="mt-1.5 text-body leading-relaxed text-muted-foreground">
-            Codex 账号与本地环境配置的管理入口，帮助你轻松切换账号、管理会话与配置。
+            Codex 账号与本地环境配置的管理入口，帮助你智能调度账号、管理会话与配置。
           </p>
 
           <div className="mt-6 w-full divide-y rounded-xl border bg-card text-left shadow-xs">

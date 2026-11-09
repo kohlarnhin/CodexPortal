@@ -25,8 +25,6 @@ export interface Account {
   canRefreshUsage: boolean;
   canActivate: boolean;
   nextRefreshAt?: string | null;
-  autoActivateWindow: boolean;
-  autoSwitchThreshold: number;
   chatgptPlanType?: string | null;
   hasAccessToken: boolean;
   atExpiresAt: string | null;
@@ -51,6 +49,20 @@ export interface ResetCreditsInfo {
 export interface AccountStore {
   activeAccountId: string | null;
   accounts: Account[];
+}
+
+export interface ScheduleAccount {
+  id: string;
+  remainingPercent: number;
+  resetsAt: number | null;
+  usable: boolean;
+}
+
+export interface ScheduleStatus {
+  current: ScheduleAccount | null;
+  next: ScheduleAccount | null;
+  allExhausted: boolean;
+  earliestRecoveryAt: number | null;
 }
 
 export interface AccountFormData {

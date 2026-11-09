@@ -14,20 +14,18 @@ import {
   getUsageTone,
   USAGE_TONE_FILL,
 } from '../utils/accountUsage';
-import { ArrowLeftRight, ChartLine, CircleCheck, FileText, LoaderCircle, PenLine, Power, PowerOff, RefreshCw, Trash2, Zap } from 'lucide-react';
+import { ChartLine, CircleCheck, FileText, LoaderCircle, PenLine, Power, PowerOff, RefreshCw, Trash2, Zap } from 'lucide-react';
 
 interface AccountCardProps {
   account: Account;
   isActive: boolean;
   isEmailMaskingEnabled: boolean;
-  onSetActive: (id: string) => void | Promise<void>;
   onEdit: (account: Account) => void;
   onSetEnabled: (id: string, enabled: boolean) => Promise<void>;
   onDelete: (id: string) => void;
   onRefreshUsage: (id: string) => void;
   onActivateWindow: (account: Account) => void;
   onShowReset: (account: Account) => void;
-  onConfigureAutoSwitch: (account: Account) => void;
   isUsageRefreshing: boolean;
 }
 
@@ -68,21 +66,18 @@ const AccountCard: React.FC<AccountCardProps> = ({
   account,
   isActive,
   isEmailMaskingEnabled,
-  onSetActive,
   onEdit,
   onSetEnabled,
   onDelete,
   onRefreshUsage,
   onActivateWindow,
   onShowReset,
-  onConfigureAutoSwitch,
   isUsageRefreshing,
 }) => {
-  const [isSwitching, setIsSwitching] = useState(false);
   const [isSavingEnabled, setIsSavingEnabled] = useState(false);
   const isApiKey = isApiKeyAccount(account);
   const canSendTest = account.enabled && (isApiKey ? account.canActivate : account.canRefreshUsage);
-  const enabledLabel = isActive ? '当前使用中的账号无法禁用，请先切换到其他账号'
+  const enabledLabel = isUsageRefreshing ? '该账号正在刷新，请稍候'
     : account.enabled ? '禁用账号' : '启用账号';
   const handleToggleEnabled = async () => {
     setIsSavingEnabled(true);
@@ -92,14 +87,6 @@ const AccountCard: React.FC<AccountCardProps> = ({
       toast.error(errorMessage(error), { title: '账号状态修改失败' });
     } finally {
       setIsSavingEnabled(false);
-    }
-  };
-  const handleSetActive = async () => {
-    setIsSwitching(true);
-    try {
-      await onSetActive(account.id);
-    } finally {
-      setIsSwitching(false);
     }
   };
 
@@ -175,7 +162,7 @@ const AccountCard: React.FC<AccountCardProps> = ({
               <ActionTooltip label={enabledLabel}>
                 <span className="inline-flex">
                   <Button type="button" variant="ghost" size="icon-sm"
-                    disabled={isActive || isSavingEnabled} aria-label={account.enabled ? '禁用账号' : '启用账号'}
+                    disabled={isSavingEnabled || isUsageRefreshing} aria-label={account.enabled ? '禁用账号' : '启用账号'}
                     onClick={() => void handleToggleEnabled()}>
                     {isSavingEnabled ? <LoaderCircle size={14} className="animate-spin" />
                       : account.enabled ? <PowerOff size={14} /> : <Power size={14} />}
@@ -204,27 +191,14 @@ const AccountCard: React.FC<AccountCardProps> = ({
                 </Button>
               </ActionTooltip>
             </div>
-            <div className="w-px h-4 bg-border"></div>
-            {isActive ? (
-              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-success/25 bg-success/10 px-2.5 text-label font-medium text-success">
-                <CircleCheck size={13} />
-                当前使用
-              </span>
-            ) : (
-              <ActionTooltip label={!account.enabled ? '账号已禁用' : account.canActivate ? '写入 Codex 认证并设为当前账号' : '该账号暂无可用认证，无法切换'}>
-                <span className="inline-flex">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2.5 text-label"
-                  disabled={!account.enabled || !account.canActivate || isSwitching}
-                  onClick={() => void handleSetActive()}
-                >
-                  {isSwitching ? <LoaderCircle size={13} className="animate-spin" /> : <ArrowLeftRight size={13} />}
-                  {isSwitching ? '切换中…' : '切换到此'}
-                </Button>
+            {isActive && (
+              <>
+                <div className="w-px h-4 bg-border"></div>
+                <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-success/25 bg-success/10 px-2.5 text-label font-medium text-success">
+                  <CircleCheck size={13} />
+                  当前使用
                 </span>
-              </ActionTooltip>
+              </>
             )}
           </div>
         </div>
@@ -267,13 +241,6 @@ const AccountCard: React.FC<AccountCardProps> = ({
         
         <div className="flex flex-wrap items-center justify-between gap-y-2 pt-4 border-t mt-auto">
           <div className="flex min-w-0 items-center gap-2 overflow-hidden mr-4">
-            {!isApiKey && <ActionTooltip label="设置剩余额度达到阈值时自动切换账号">
-              <Button type="button" variant="outline" size="sm" className="h-6 shrink-0 px-2 text-caption font-normal"
-                onClick={() => onConfigureAutoSwitch(account)}>
-                <ArrowLeftRight aria-hidden="true" size={12} strokeWidth={1.8} />
-                自动切换 ≤ {account.autoSwitchThreshold}%
-              </Button>
-            </ActionTooltip>}
             {account.notes && (
               <>
                 <div className="w-5 h-5 shrink-0 rounded-md bg-muted flex items-center justify-center">

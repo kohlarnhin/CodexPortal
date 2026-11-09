@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAccounts } from '../hooks/useAccounts';
-import { useAutoSwitchSettings } from '../hooks/useAutoSwitchSettings';
 import AccountCard from './AccountCard';
 import AccountModal from './AccountModal';
-import AccountAutoSwitchModal from './AccountAutoSwitchModal';
+import SchedulePreview from './SchedulePreview';
 import ConfirmModal from './ConfirmModal';
 import QuotaActivationModal from './QuotaActivationModal';
 import ResetInfoModal from './ResetInfoModal';
@@ -48,13 +47,11 @@ const AccountList: React.FC<AccountListProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, setAccountEnabled, updateAccountNotes, reauthOauthAccount, setAutoSwitchThreshold, importFromAuthJson, validatePersonalToken, exchangeRefreshToken, saveRtAccount, saveApiKeyAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
-  const autoSwitch = useAutoSwitchSettings();
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setAccountEnabled, updateAccountNotes, reauthOauthAccount, importFromAuthJson, validatePersonalToken, exchangeRefreshToken, saveRtAccount, saveApiKeyAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [activationAccountId, setActivationAccountId] = useState<string | null>(null);
-  const [autoSwitchAccountId, setAutoSwitchAccountId] = useState<string | null>(null);
   const [resetAccount, setResetAccount] = useState<Account | null>(null);
   const [planFilter, setPlanFilter] = useState<string | null>(null);
   const [authFilter, setAuthFilter] = useState<Account['authMethod'] | 'all'>('all');
@@ -62,7 +59,6 @@ const AccountList: React.FC<AccountListProps> = ({
   const [sort, setSort] = useState(readAccountSort);
   const [isImporting, setIsImporting] = useState(false);
   const activationAccount = accounts.find((account) => account.id === activationAccountId);
-  const autoSwitchAccount = accounts.find((account) => account.id === autoSwitchAccountId);
 
   const eligibleAccounts = useMemo(() => accounts.filter(account =>
     (authFilter === 'all' || account.authMethod === authFilter)
@@ -192,19 +188,10 @@ const AccountList: React.FC<AccountListProps> = ({
       <PageHeader
         className="relative z-10"
         title="账号管理"
-        description="管理并无缝切换本地的 Codex 认证配置。"
+        description="管理 Codex 账号，智能调度优先使用最早到期的额度。"
         actions={
           <>
-            <ActionTooltip label={autoSwitch.enabled ? '关闭自动切换账号' : '开启自动切换账号'}>
-              <Button type="button" variant="outline" size="sm" role="switch"
-                aria-label="自动切换账号" aria-checked={autoSwitch.enabled === true}
-                disabled={autoSwitch.isLoading || autoSwitch.isSaving || autoSwitch.enabled === null}
-                onClick={() => void autoSwitch.toggle()} className="gap-2">
-                <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${autoSwitch.enabled ? 'bg-success' : 'bg-muted-foreground/40'}`} />
-                {autoSwitch.isSaving ? '保存中…' : autoSwitch.isLoading ? '读取设置…'
-                  : autoSwitch.enabled === null ? '设置不可用' : autoSwitch.enabled ? '自动切换已开启' : '自动切换已关闭'}
-              </Button>
-            </ActionTooltip>
+            <SchedulePreview accounts={accounts} isEmailMaskingEnabled={isEmailMaskingEnabled} className="max-w-[360px]" />
             <ActionTooltip label="添加账号">
               <Button onClick={handleAdd} size="sm">
                 <Plus size={14} />
@@ -214,14 +201,6 @@ const AccountList: React.FC<AccountListProps> = ({
           </>
         }
       />
-
-      {autoSwitch.error && (
-        <div role="alert" className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-label text-destructive">
-          <p className="min-w-0 break-words">{autoSwitch.error}</p>
-          <Button type="button" variant="ghost" size="sm" disabled={autoSwitch.isLoading || autoSwitch.isSaving}
-            onClick={() => void autoSwitch.reload()}>重新读取</Button>
-        </div>
-      )}
 
       {accounts.length > 0 && (
         <div className="relative z-20 mb-3 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-3">
@@ -339,22 +318,12 @@ const AccountList: React.FC<AccountListProps> = ({
                 account={account}
                 isActive={account.id === activeAccountId}
                 isEmailMaskingEnabled={isEmailMaskingEnabled}
-                onSetActive={async (id) => {
-                  try {
-                    await setActiveAccount(id);
-                    // 切换成功后自动刷新新账号的剩余额度。
-                    void handleRefreshUsage(id);
-                  } catch (err: any) {
-                    toast.error(errorMessage(err), { title: '切换账号失败' });
-                  }
-                }}
                 onEdit={handleEdit}
                 onSetEnabled={setAccountEnabled}
                 onDelete={(id) => setDeleteConfirmId(id)}
                 onRefreshUsage={(id) => void handleRefreshUsage(id)}
                 onActivateWindow={(target) => setActivationAccountId(target.id)}
                 onShowReset={(target) => setResetAccount(target)}
-                onConfigureAutoSwitch={(target) => setAutoSwitchAccountId(target.id)}
                 isUsageRefreshing={account.canRefreshUsage && isUsageRefreshing(account.id)}
               />
             </div>
@@ -404,17 +373,6 @@ const AccountList: React.FC<AccountListProps> = ({
           onClose={() => setActivationAccountId(null)}
           isUsageRefreshing={isUsageRefreshing(activationAccount.id)}
           isEmailMaskingEnabled={isEmailMaskingEnabled}
-        />
-      )}
-
-      {autoSwitchAccount && (
-        <AccountAutoSwitchModal
-          key={autoSwitchAccount.id}
-          account={autoSwitchAccount}
-          isEmailMaskingEnabled={isEmailMaskingEnabled}
-          autoSwitchEnabled={autoSwitch.enabled}
-          onClose={() => setAutoSwitchAccountId(null)}
-          onSave={setAutoSwitchThreshold}
         />
       )}
 

@@ -75,8 +75,7 @@ pub(crate) async fn save_api_key_account(
                 "UPDATE accounts SET name = ?1, auth_json_content = ?2, notes = ?3, updated_at = ?4,
                  usage_json = NULL, usage_updated_at = NULL, next_refresh_at = NULL,
                  chatgpt_plan_type = NULL, access_token = NULL, refresh_token = NULL,
-                 at_expires_at = NULL, chatgpt_account_id = NULL, reset_credits_json = NULL,
-                 auto_activate_window = 0, auto_switch_threshold = 0 WHERE id = ?5",
+                 at_expires_at = NULL, chatgpt_account_id = NULL, reset_credits_json = NULL WHERE id = ?5",
                 params![name, content, notes, now, account_id],
             ).map_err(|error| error.to_string())?;
         } else {

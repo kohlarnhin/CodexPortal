@@ -67,7 +67,7 @@ pub fn run() {
                 syncing_sessions: Mutex::new(false),
             });
             app.manage(codex::events::EventListenerState::default());
-            app.manage(accounts::auto_switch::AutoSwitchState::default());
+            app.manage(accounts::scheduling::ScheduleState::default());
 
             tray::start(app.handle().clone())?;
             start_usage_scheduler(app.handle().clone());
@@ -124,12 +124,8 @@ pub fn run() {
             accounts::reauth_oauth_account,
             accounts::set_account_enabled,
             accounts::delete_account,
-            accounts::set_active_account,
             accounts::set_account_access_token,
-            accounts::set_auto_activate_window,
-            accounts::auto_switch::set_auto_switch_threshold,
-            accounts::auto_switch::get_auto_switch_enabled,
-            accounts::auto_switch::set_auto_switch_enabled,
+            accounts::scheduling::get_schedule_status,
             accounts::quiet_hours::get_quota_quiet_hours,
             accounts::quiet_hours::set_quota_quiet_hours,
             accounts::credits::get_reset_credits,

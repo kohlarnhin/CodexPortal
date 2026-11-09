@@ -1,9 +1,9 @@
 use crate::accounts::{ensure_account_enabled, read_accounts};
 use crate::accounts::messages::send_test_message;
 use crate::accounts::quiet_hours::defer_usage_during_quiet_hours;
+use crate::accounts::scheduling::request_evaluation;
 use crate::accounts::usage::{
     begin_account_refresh, save_fallback_reset, persist_rotated_access_token,
-    refresh_account_usage,
 };
 use crate::auth::{exchange_rt_for_at, extract_personal_access_token, resolve_token_metadata};
 use crate::codex::version::sync_codex_version;
@@ -130,6 +130,12 @@ fn refresh_due_access_tokens(app: &tauri::AppHandle, state: &AppState) {
 
 /// 每次到期只执行一轮，按已保存的下次刷新时间调度。
 pub(crate) fn start_usage_scheduler(app: tauri::AppHandle) {
+    // 独立计时，额度激活、凭证续期和启动回填的网络请求不会推迟三十秒评估。
+    let evaluation_app = app.clone();
+    thread::spawn(move || loop {
+        request_evaluation(evaluation_app.clone());
+        thread::sleep(Duration::from_secs(USAGE_CHECK_INTERVAL_SECONDS));
+    });
     thread::spawn(move || {
         {
             let state = app.state::<AppState>();
@@ -175,7 +181,6 @@ pub(crate) fn start_usage_scheduler(app: tauri::AppHandle) {
                                 .map(|time| time.with_timezone(&Utc))
                                 .unwrap_or(DateTime::<Utc>::MIN_UTC);
                             (account.enabled && account.can_refresh_usage
-                                && (store.active_account_id.as_ref() != Some(&account.id) || account.auto_activate_window)
                                 && !refreshing.contains(&account.id)
                                 && due_at <= now)
                                 .then_some((due_at, account))
@@ -192,21 +197,13 @@ pub(crate) fn start_usage_scheduler(app: tauri::AppHandle) {
                             }
                         };
                         if should_refresh {
-                            // 两个入口都负责保存下次时间并通知异常，调度器不重复发送或补查。
-                            if account.auto_activate_window {
-                                let _ = tauri::async_runtime::block_on(send_test_message(
-                                    app.clone(),
-                                    app.state::<AppState>(),
-                                    account.id.clone(),
-                                    None,
-                                ));
-                            } else {
-                                let _ = tauri::async_runtime::block_on(refresh_account_usage(
-                                    app.clone(),
-                                    app.state::<AppState>(),
-                                    account.id.clone(),
-                                ));
-                            }
+                            // 所有启用的订阅账号（包括当前账号）自动续上窗口。
+                            let _ = tauri::async_runtime::block_on(send_test_message(
+                                app.clone(),
+                                app.state::<AppState>(),
+                                account.id.clone(),
+                                None,
+                            ));
                             next_usage_request_at = Utc::now()
                                 + chrono::Duration::seconds(USAGE_REFRESH_BATCH_SLEEP_SECONDS);
                         }

@@ -4,6 +4,7 @@ import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
 import { getAccountApiKey, isApiKeyAccount, maskApiKey } from '../utils/accountAuth';
 import PlanBadge from './PlanBadge';
+import SchedulePreview from './SchedulePreview';
 import CodexSessionsPanel from './CodexSessionsPanel';
 import type { CodexLiveUsage, CodexSessionMonitor } from '../types/codexEvents';
 import Button from './ui/button';
@@ -21,7 +22,7 @@ import {
   type UsageTone,
 } from '../utils/accountUsage';
 import { cn } from '../lib/utils';
-import { ArrowLeftRight, ArrowRight, Calendar, ChartLine, Check, CircleAlert, Clock, Copy, RefreshCw, User } from 'lucide-react';
+import { ArrowRight, Calendar, ChartLine, Check, CircleAlert, Clock, Copy, RefreshCw, User } from 'lucide-react';
 
 interface ActiveAccountProps {
   isEmailMaskingEnabled: boolean;
@@ -230,8 +231,9 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
           </div>
           <h2 className="mb-1.5 text-title font-semibold text-foreground">未设置活跃账号</h2>
           <p className="mb-6 max-w-sm text-body text-muted-foreground leading-relaxed">
-            当前没有正在使用的 Codex 账号配置。请前往“账号管理”页面选择或添加一个账号。
+            当前没有正在使用的 Codex 账号配置。请前往“账号管理”页面启用或添加订阅账号。
           </p>
+          <SchedulePreview accounts={accounts} isEmailMaskingEnabled={isEmailMaskingEnabled} className="mb-4 max-w-full" />
           <Button onClick={onNavigateToAccounts} size="sm" className="gap-2">
             <span>前往账号管理</span>
             <ArrowRight size={14} />
@@ -361,15 +363,10 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                     <span className="text-muted-foreground">Codex 活跃会话凭据</span>
                   )}
 
-                  {(activeAccount.autoActivateWindow || activeAccount.resetCredits) && (
+                  {activeAccount.resetCredits && (
                     <span className="text-muted-foreground/50">·</span>
                   )}
 
-                  {activeAccount.autoActivateWindow && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-caption font-medium bg-muted text-muted-foreground">
-                      自动唤醒已开
-                    </span>
-                  )}
                   {activeAccount.resetCredits && (
                     <span className="inline-flex items-center px-2 py-0.5 rounded-md text-caption font-medium bg-warning/10 text-warning">
                       重置卡 ×{activeAccount.resetCredits.availableCount}
@@ -395,20 +392,21 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                   </Button>
                 </ActionTooltip>}
 
-                <ActionTooltip label="前往账号管理与切换">
+                <ActionTooltip label="前往账号管理">
                   <Button
                     variant="outline"
                     size="icon"
                     onClick={onNavigateToAccounts}
-                    aria-label="切换账号"
+                    aria-label="前往账号管理"
                     className="text-foreground"
                   >
-                    <ArrowLeftRight size={14} />
+                    <User size={14} />
                   </Button>
                 </ActionTooltip>
               </div>
             </div>
           </div>
+          <SchedulePreview accounts={accounts} isEmailMaskingEnabled={isEmailMaskingEnabled} className="mt-3 border-t pt-3" />
         </section>
 
         {/* 错误提示 */}

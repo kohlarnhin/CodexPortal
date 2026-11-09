@@ -81,7 +81,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({
               <div className="min-w-0">
                 <div className="text-subtitle font-medium text-foreground">系统托盘</div>
                 <div className="mt-0.5 text-label leading-relaxed text-muted-foreground">
-                  进度条显示当前账号第一窗口的剩余百分比，点击查看额度、快捷切换账号
+                  进度条显示当前账号第一窗口的剩余百分比，点击查看额度或前往账号管理
                 </div>
                 <div className="mt-1 text-caption text-muted-foreground/70">
                   开启后关闭窗口可继续在后台运行，通过托盘菜单退出程序

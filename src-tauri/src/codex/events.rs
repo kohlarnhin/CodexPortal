@@ -168,21 +168,11 @@ pub(crate) fn save_codex_live_usage(
         "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?4, plan_type = COALESCE(?5, plan_type) WHERE id = ?3 AND is_active = 1",
         rusqlite::params![json, usage.synced_at, account_id, next, plan],
     ).map_err(|_| "额度缓存保存失败")?;
-    if changed > 0 {
-        // 与额度缓存一起更新决策快照；切换提交时不会读到上一条推送。
-        crate::accounts::auto_switch::schedule(app.clone(), account_id.clone(), epoch, usage);
-    }
     drop(db);
     if changed > 0 {
         let _ = app.emit("usage-updated", crate::accounts::usage::AccountRefreshEvent { account_id });
     }
     Ok(())
-}
-
-pub(crate) fn account_epoch_is_current(app: &tauri::AppHandle, epoch: u64) -> bool {
-    app.try_state::<EventListenerState>().is_some_and(|state| {
-        state.epoch.load(Ordering::Acquire) == epoch && !state.switching.load(Ordering::Acquire)
-    })
 }
 
 pub(crate) fn pause_for_account_switch(app: &tauri::AppHandle) {
