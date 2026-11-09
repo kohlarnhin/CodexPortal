@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAccounts } from '../hooks/useAccounts';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import { getAccountApiKey, isApiKeyAccount, maskApiKey } from '../utils/accountAuth';
 import PlanBadge from './PlanBadge';
 import CodexSessionsPanel from './CodexSessionsPanel';
 import type { CodexLiveUsage, CodexSessionMonitor } from '../types/codexEvents';
@@ -244,6 +245,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
     window: AccountUsageWindow;
     kind: 'primary' | 'secondary';
   }> = [];
+  const isApiKey = isApiKeyAccount(activeAccount);
   const { usage: currentUsage, isLive: displayingLive } = resolveCurrentUsage(activeAccount, liveUsage);
   if (currentUsage?.primary) {
     usageWindows.push({ window: currentUsage.primary, kind: 'primary' });
@@ -292,7 +294,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
             {displayingLive ? liveUsage.source === 'push' ? '实时推送' : liveUsage.source === 'manualRead' ? '手动读取' : '初始额度' : '已同步额度'} · {formatUsageSyncedAt(currentUsage.syncedAt)}
           </span>
         )}
-        description="会话同步更新当前账号额度，启用实时监听后也会接收额度推送。"
+        description={isApiKey ? '当前使用 OpenAI 官方 API Key，费用计入 OpenAI Platform 账户。' : '会话同步更新当前账号额度，启用实时监听后也会接收额度推送。'}
       />
 
       <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
@@ -338,7 +340,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                     </button>
                   </ActionTooltip>
 
-                  <PlanBadge planType={activeAccount.chatgptPlanType} />
+                  <PlanBadge planType={activeAccount.chatgptPlanType} accountType={activeAccount.accountType} />
 
                   <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-caption font-medium bg-success/10 text-success border border-success/25">
                     <span className="h-1.5 w-1.5 rounded-full bg-success" />
@@ -380,7 +382,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
             {/* 右侧：集成式操作工具栏（纯图标 + 悬浮文字） */}
             <div className="flex items-center self-start sm:self-center shrink-0">
               <div className="flex items-center gap-2">
-                <ActionTooltip label={usageRefreshing ? '正在刷新额度...' : sessionMonitor.connectionStatus === 'connected' ? '立即刷新额度' : '同步会话额度'}>
+                {!isApiKey && <ActionTooltip label={usageRefreshing ? '正在刷新额度...' : sessionMonitor.connectionStatus === 'connected' ? '立即刷新额度' : '同步会话额度'}>
                   <Button
                     variant="outline"
                     size="icon"
@@ -391,7 +393,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
                   >
                     <RefreshCw size={14} className={usageRefreshing ? 'animate-spin' : ''} />
                   </Button>
-                </ActionTooltip>
+                </ActionTooltip>}
 
                 <ActionTooltip label="前往账号管理与切换">
                   <Button
@@ -410,7 +412,7 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
         </section>
 
         {/* 错误提示 */}
-        {displayedUsageError && (
+        {!isApiKey && displayedUsageError && (
           <div
             role="alert"
             className="flex items-start gap-2.5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-label text-destructive"
@@ -421,7 +423,17 @@ const ActiveAccount: React.FC<ActiveAccountProps> = ({
         )}
 
         {/* 额度数据看板 */}
-        {usageWindows.length > 0 ? (
+        {isApiKey ? (
+          <div className="rounded-xl border bg-card p-5 shadow-xs">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-subtitle font-semibold text-foreground">官方 API · 按量计费</p>
+              <span className="font-mono text-label text-muted-foreground">{maskApiKey(getAccountApiKey(activeAccount))}</span>
+            </div>
+            <p className="mt-2 text-label leading-relaxed text-muted-foreground">
+              使用你的 OpenAI API 账户额度。可在账号管理中测试 Key，在「Token 用量」中查看本地会话消耗。
+            </p>
+          </div>
+        ) : usageWindows.length > 0 ? (
           <div
             className={`grid grid-cols-1 ${
               usageWindows.length > 1 ? '@min-[600px]/page:grid-cols-2' : ''

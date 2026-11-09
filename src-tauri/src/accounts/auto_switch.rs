@@ -131,7 +131,7 @@ fn reached_threshold(usage: &AccountUsage, threshold: f64, now: i64) -> Option<(
 }
 
 fn candidate_reset(account: &Account, now: i64) -> Option<i64> {
-    if account.is_active || !account.can_activate {
+    if !account.enabled || account.is_active || !account.can_activate {
         return None;
     }
     let usage = account.usage.as_ref()?;
@@ -171,7 +171,7 @@ fn current_trigger(
         return Ok(None);
     };
     let current: Option<(f64, Option<String>)> = db.query_row(
-        "SELECT auto_switch_threshold, usage_updated_at FROM accounts WHERE id = ?1 AND is_active = 1",
+        "SELECT auto_switch_threshold, usage_updated_at FROM accounts WHERE id = ?1 AND is_active = 1 AND is_disabled = 0",
         params![request.account_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional().map_err(|error| error.to_string())?;
@@ -294,7 +294,7 @@ async fn try_switch(app: &tauri::AppHandle, request: &SwitchRequest) -> Result<(
         };
         let store = read_accounts(&db)?;
         let ids: Vec<String> = store.accounts.into_iter()
-            .filter(|account| !account.is_active && account.can_activate && account.can_refresh_usage)
+            .filter(|account| account.enabled && !account.is_active && account.can_activate && account.can_refresh_usage)
             .map(|account| account.id)
             .collect();
         (threshold, window, percent, ids)
@@ -372,4 +372,29 @@ async fn try_switch(app: &tauri::AppHandle, request: &SwitchRequest) -> Result<(
     }
     logging::warn(SOURCE, "没有可切换的账号：需有可用认证、足够的剩余额度和有效的短周期重置时间。保留当前账号，后续额度更新时将重试。");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_reset_excludes_disabled_accounts() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::init_db(&db).unwrap();
+        let now = 1_900_000_000;
+        let usage = serde_json::to_string(&crate::test_support::usage(10.0, Some(now + 300))).unwrap();
+        db.execute(
+            "INSERT INTO accounts (id, name, auth_json_content, created_at, updated_at, is_active, usage_json)
+             VALUES ('candidate', 'test@example.invalid', ?1, '', '', 0, ?2)",
+            params![crate::auth::build_auth_json("test-pat"), usage],
+        ).unwrap();
+        let mut account = read_accounts(&db).unwrap().accounts.remove(0);
+        assert_eq!(candidate_reset(&account, now), Some(now + 300));
+        account.enabled = false;
+        assert_eq!(candidate_reset(&account, now), None);
+        account.enabled = true;
+        account.auto_switch_threshold = 95.0;
+        assert_eq!(candidate_reset(&account, now), None);
+    }
 }

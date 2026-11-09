@@ -1,4 +1,4 @@
-import { AccountUsage, AccountUsageWindow } from '../types/account';
+import { Account, AccountUsage, AccountUsageWindow } from '../types/account';
 
 export function getRemainingPercent(window: AccountUsageWindow): number | null {
   if (window.usedPercent === null || !Number.isFinite(window.usedPercent)) return null;
@@ -106,9 +106,10 @@ export const USAGE_TONE_FILL: Record<UsageTone, string> = {
  * 同步后的缓存可比上一条推送更新；无订阅时仍显示正常同步的账号额度。
  */
 export function resolveCurrentUsage(
-  account: { id: string; usage: AccountUsage | null },
+  account: { id: string; usage: AccountUsage | null; accountType?: Account['accountType'] },
   live: { accountId: string | null; usage: AccountUsage | null },
 ): { usage: AccountUsage | null; isLive: boolean } {
+  if (account.accountType === 'openai_api_key') return { usage: null, isLive: false };
   const pushed = live.accountId === account.id ? live.usage : null;
   const pushedAt = pushed ? Date.parse(pushed.syncedAt) : NaN;
   const cachedAt = account.usage ? Date.parse(account.usage.syncedAt) : NaN;

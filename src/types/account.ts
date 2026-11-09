@@ -12,6 +12,9 @@ export interface AccountUsage {
 
 export interface Account {
   id: string;
+  accountType: 'chatgpt' | 'openai_api_key';
+  authMethod: 'api_key' | 'pat' | 'oauth';
+  enabled: boolean;
   name: string;
   authJsonContent: string;
   notes?: string;
@@ -26,6 +29,7 @@ export interface Account {
   autoSwitchThreshold: number;
   chatgptPlanType?: string | null;
   hasAccessToken: boolean;
+  atExpiresAt: string | null;
   resetCredits: ResetCreditsInfo | null;
 }
 
@@ -77,6 +81,13 @@ export interface SaveRtAccountParams {
   accessToken: string;
   refreshToken: string;
   atExpiresAt: number;
+  notes?: string;
+}
+
+export interface SaveApiKeyAccountParams {
+  id?: string;
+  name: string;
+  apiKey: string;
   notes?: string;
 }
 

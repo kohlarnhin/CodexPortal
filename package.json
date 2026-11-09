@@ -7,6 +7,7 @@
     "dev": "vite --host localhost --port 1421 --strictPort",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "install:local": "bash install_local.sh",
     "tauri": "tauri"
   },
   "dependencies": {

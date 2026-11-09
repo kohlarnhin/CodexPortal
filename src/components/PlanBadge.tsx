@@ -1,4 +1,5 @@
 import React from 'react';
+import type { Account } from '../types/account';
 
 /**
  * 账号订阅类型铭牌（team/plus/pro/free 等）。
@@ -6,6 +7,7 @@ import React from 'react';
  */
 
 const PLAN_META: Record<string, { label: string; className: string }> = {
+  openai_api_key: { label: 'OpenAI API', className: 'bg-muted text-foreground border-border' },
   team: { label: 'Team', className: 'bg-primary text-primary-foreground border-primary' },
   business: { label: 'Business', className: 'bg-primary text-primary-foreground border-primary' },
   enterprise: { label: 'Enterprise', className: 'bg-primary text-primary-foreground border-primary' },
@@ -15,8 +17,8 @@ const PLAN_META: Record<string, { label: string; className: string }> = {
   edu: { label: 'Edu', className: 'bg-success/10 text-success border-success/25' },
 };
 
-export default function PlanBadge({ planType }: { planType?: string | null }) {
-  const key = (planType || '').toLowerCase();
+export default function PlanBadge({ planType, accountType }: { planType?: string | null; accountType?: Account['accountType'] }) {
+  const key = accountType === 'openai_api_key' ? accountType : (planType || '').toLowerCase();
   const meta = PLAN_META[key];
 
   if (!meta) {

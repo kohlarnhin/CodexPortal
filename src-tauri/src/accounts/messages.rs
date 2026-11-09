@@ -3,7 +3,7 @@ use crate::accounts::usage::{
     persist_rotated_access_token, refresh_account_usage_inner, report_account_request_error,
 };
 use crate::auth::{
-    exchange_rt_for_at, extract_personal_access_token, PersonalAccessTokenMetadata,
+    exchange_rt_for_at, extract_openai_api_key, extract_personal_access_token, PersonalAccessTokenMetadata,
     PERSONAL_ACCESS_TOKEN_METADATA_URL,
 };
 use crate::codex::version::codex_cli_user_agent;
@@ -20,6 +20,7 @@ use tauri::Emitter;
 use tauri::State;
 
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 
 const TEST_MESSAGE_CONTENT: &str = "Introduce yourself.";
 const DEFAULT_ACTIVATION_MODEL: &str = "gpt-5.6-luna";
@@ -33,7 +34,7 @@ fn curl_post_stream(
     app: &tauri::AppHandle,
     url: &str,
     token: &str,
-    chatgpt_account_id: &str,
+    chatgpt_account_id: Option<&str>,
     event_account_id: &str,
     is_fedramp: bool,
     body: &str,
@@ -51,10 +52,12 @@ fn curl_post_stream(
     append_curl_header(&mut config, "Accept", "text/event-stream")?;
     append_curl_header(&mut config, "Content-Type", "application/json")?;
     append_curl_header(&mut config, "Authorization", &format!("Bearer {token}"))?;
-    append_curl_header(&mut config, "OpenAI-Beta", "responses=experimental")?;
-    append_curl_header(&mut config, "originator", "codex_cli_rs")?;
     append_curl_header(&mut config, "User-Agent", &codex_cli_user_agent())?;
-    append_curl_header(&mut config, "ChatGPT-Account-ID", chatgpt_account_id)?;
+    if let Some(account_id) = chatgpt_account_id {
+        append_curl_header(&mut config, "OpenAI-Beta", "responses=experimental")?;
+        append_curl_header(&mut config, "originator", "codex_cli_rs")?;
+        append_curl_header(&mut config, "ChatGPT-Account-ID", account_id)?;
+    }
     if is_fedramp {
         append_curl_header(&mut config, "X-OpenAI-Fedramp", "true")?;
     }
@@ -342,8 +345,7 @@ fn extract_responses_output_from_body(body: &str) -> String {
 }
 
 /// 发送一条消息激活额度窗口，成功后读取额度；任一步失败即结束本次流程。
-/// 所有账号类型均支持：有 PAT 用 PAT（account_id 经 whoami 获取）；
-/// 无 PAT（OAuth / rt 账号）用 at + 存库 account_id，at 临近过期先兑换。
+/// API Key 调用官方 Responses API；订阅账号继续使用 PAT 或 OAuth 凭证。
 #[tauri::command]
 pub(crate) async fn send_test_message(
     app: tauri::AppHandle,
@@ -351,13 +353,39 @@ pub(crate) async fn send_test_message(
     id: String,
     model: Option<String>,
 ) -> Result<TestMessageResult, String> {
+    {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        super::ensure_account_enabled(&db, &id)?;
+    }
     let _guard = begin_account_refresh(&state, &id, Some(app.clone())).map_err(|error| {
-        report_account_request_error(&app, &state, &id, "额度窗口激活未执行", &error);
+        report_account_request_error(&app, &state, &id, "测试消息未发送", &error);
         error
     })?;
+    let api_key = {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        super::ensure_account_enabled(&db, &id)?;
+        let content: String = db.query_row(
+            "SELECT auth_json_content FROM accounts WHERE id = ?1", [&id], |row| row.get(0),
+        ).map_err(|_| "账号不存在")?;
+        extract_openai_api_key(&content)
+    };
     let model = model
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_ACTIVATION_MODEL.to_string());
+    if let Some(key) = api_key {
+        // API 测试只在用户手动点击时发送，不刷新订阅额度，也不安排自动重试。
+        let request_body = serde_json::json!({
+            "model": model,
+            "input": TEST_MESSAGE_CONTENT,
+            "stream": true,
+            "store": false,
+        }).to_string();
+        let output = tauri::async_runtime::spawn_blocking(move || {
+            curl_post_stream(&app, OPENAI_RESPONSES_URL, &key, None, &id, false, &request_body)
+                .map_err(|error| error.replace(&key, "[已隐藏]"))
+        }).await.map_err(|_| "API 测试任务失败")??;
+        return Ok(TestMessageResult { model, input: TEST_MESSAGE_CONTENT.to_string(), output });
+    }
     let result = send_account_message(&app, &state, &id, model).await;
     if let Err(error) = &result {
         save_fallback_reset(&app, &state, &id, "额度窗口激活失败", error);
@@ -469,7 +497,7 @@ async fn send_account_message(
             &app,
             CODEX_RESPONSES_URL,
             &bearer,
-            account_id.as_deref().unwrap_or(""),
+            Some(account_id.as_deref().unwrap_or("")),
             &id,
             fedramp,
             &request_body,

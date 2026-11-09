@@ -247,12 +247,39 @@ input, textarea, code {
   animation: dialog-content-in 0.15s ease-out;
 }
 
+/* Logo 圆点与外圈光条沿 C 字轨道反向往复滑动 */
+@keyframes portal-dot-slide {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(270deg); }
+}
+
+@keyframes portal-strip-slide {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-210deg); }
+}
+
+.portal-logo-dot,
+.portal-logo-strip {
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+}
+
+.portal-logo-dot {
+  animation: portal-dot-slide 4.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+}
+
+.portal-logo-strip {
+  animation: portal-strip-slide 4.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dialog-overlay[data-state="open"],
   .dialog-content[data-state="open"],
   .animate-modal-in,
   .animate-fade-in,
-  .animate-toast-in {
+  .animate-toast-in,
+  .portal-logo-dot,
+  .portal-logo-strip {
     animation: none;
   }
 }

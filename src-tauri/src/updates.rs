@@ -45,6 +45,18 @@ fn read_pending_update(db: &rusqlite::Connection) -> Result<Option<String>, Stri
     Ok(version.filter(|value| !value.trim().is_empty()))
 }
 
+/// 清除已提醒过的新版本号，避免版本追上后仍显示旧提示。
+#[tauri::command]
+pub(crate) fn clear_pending_update(state: State<'_, AppState>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "DELETE FROM configs WHERE key = 'updater_pending_version'",
+        params![],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 记录已提醒过的新版本号（每次检测到新版本时写入，无论弹窗是否被关闭）。
 #[tauri::command]
 pub(crate) fn set_pending_update(

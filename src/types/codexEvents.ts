@@ -2,6 +2,7 @@ import type { AccountUsage } from './account';
 
 export interface CodexEventContext {
   accountId: string | null;
+  supportsSubscriptionUsage: boolean;
   epoch: number;
   switching: boolean;
 }

@@ -3,8 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Account, TestMessageResult } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import { isApiKeyAccount } from '../utils/accountAuth';
 import ToggleSwitch from './ToggleSwitch';
 import Button from './ui/button';
+import Input from './ui/input';
 import { Dialog, DialogContent } from './ui/dialog';
 import { Check, CircleAlert, Info, LoaderCircle, MessageCircle, Settings, X, Zap } from 'lucide-react';
 import { errorMessage, toast } from './ui/toast';
@@ -24,6 +26,9 @@ export default function QuotaActivationModal({
   isUsageRefreshing,
   isEmailMaskingEnabled,
 }: QuotaActivationModalProps) {
+  const isApiKey = isApiKeyAccount(account);
+  const canSendTest = isApiKey ? account.canActivate : account.canRefreshUsage;
+  const [apiModel, setApiModel] = useState(ACTIVATION_MODEL);
   const [autoActivateWindow, setAutoActivateWindow] = useState(account.autoActivateWindow);
   const [isSaving, setIsSaving] = useState(false);
   const [result, setResult] = useState<TestMessageResult | null>(null);
@@ -71,7 +76,7 @@ export default function QuotaActivationModal({
   };
 
   const activateWindow = async () => {
-    if (sending.current || isSaving || isUsageRefreshing || !account.canRefreshUsage) return;
+    if (sending.current || isSaving || isUsageRefreshing || !canSendTest || isApiKey && !apiModel.trim()) return;
     sending.current = true;
     setIsSending(true);
     setResult(null);
@@ -80,11 +85,11 @@ export default function QuotaActivationModal({
     try {
       const response = await invoke<TestMessageResult>('send_test_message', {
         id: account.id,
-        model: ACTIVATION_MODEL,
+        model: isApiKey ? apiModel.trim() : ACTIVATION_MODEL,
       });
       setResult(response);
     } catch (sendError) {
-      // 请求异常同时由全局弹窗展示，后端已安排下一次自动刷新。
+      // API 测试只在此处展示结果；订阅账号保留原有额度调度。
       setError(String(sendError));
     } finally {
       sending.current = false;
@@ -108,19 +113,19 @@ export default function QuotaActivationModal({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 id="quota-activation-title" className="text-title font-semibold tracking-tight text-foreground">额度窗口激活</h3>
+                <h3 id="quota-activation-title" className="text-title font-semibold tracking-tight text-foreground">{isApiKey ? '测试 API Key' : '额度窗口激活'}</h3>
                 <span className="inline-block px-2 py-0.5 rounded-md bg-muted text-caption font-mono text-muted-foreground truncate max-w-[200px]">
                   {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
                 </span>
               </div>
-              <p className="mt-0.5 text-label text-muted-foreground">发送测试消息以刷新并激活该账号的额度窗口</p>
+              <p className="mt-0.5 text-label text-muted-foreground">{isApiKey ? '向 OpenAI 官方 API 发送一条测试消息' : '发送测试消息以刷新并激活该账号的额度窗口'}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={isBusy}
-            aria-label="关闭额度窗口激活"
+            aria-label={isApiKey ? '关闭 API 测试' : '关闭额度窗口激活'}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
           >
             <X size={18} />
@@ -130,7 +135,7 @@ export default function QuotaActivationModal({
         {/* Content */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-4">
           {/* 自动激活开关卡片 */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/40 p-4 transition-colors">
+          {!isApiKey && <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/40 p-4 transition-colors">
             <div className="min-w-0">
               <div className="text-body font-semibold text-foreground">自动刷新前激活额度窗口</div>
               <p className="mt-1 text-label leading-relaxed text-muted-foreground">
@@ -145,25 +150,33 @@ export default function QuotaActivationModal({
                 onToggle={() => void saveAutoActivation(!autoActivateWindow)}
               />
             </div>
-          </div>
+          </div>}
 
           {/* 参数概览面板 */}
           <div className="rounded-lg border bg-muted/40 p-3.5 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-label font-medium text-muted-foreground flex items-center gap-1.5">
                 <Settings size={13} />
-                激活配置
+                {isApiKey ? '测试配置' : '激活配置'}
               </span>
               <div className="flex items-center gap-1.5">
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-2 py-0.5 text-caption font-mono font-medium text-foreground shadow-xs">
                   <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                  {result?.model || ACTIVATION_MODEL}
+                  {result?.model || (isApiKey ? apiModel : ACTIVATION_MODEL)}
                 </span>
-                <span className="inline-flex items-center rounded-md bg-card border border-border px-1.5 py-0.5 text-caption text-muted-foreground shadow-xs">
+                {!isApiKey && <span className="inline-flex items-center rounded-md bg-card border border-border px-1.5 py-0.5 text-caption text-muted-foreground shadow-xs">
                   思考: low
-                </span>
+                </span>}
               </div>
             </div>
+
+            {isApiKey && (
+              <div>
+                <label htmlFor="apiTestModel" className="mb-1.5 block text-label font-medium text-foreground">模型</label>
+                <Input id="apiTestModel" value={apiModel} onChange={(event) => setApiModel(event.target.value)}
+                  disabled={isBusy} placeholder="输入此 Key 可用的模型名称" className="font-mono text-label" />
+              </div>
+            )}
 
             <div className="rounded-lg bg-card border px-3.5 py-2.5">
               <div className="flex items-center justify-between text-caption text-muted-foreground/70 mb-1">
@@ -204,7 +217,7 @@ export default function QuotaActivationModal({
               <div className="flex items-center justify-between pb-2 mb-2 border-b border-border">
                 <div className="flex items-center gap-1.5 text-label font-medium text-success">
                   <Check size={13} strokeWidth={2.5} />
-                  <span>消息已成功发送 · 额度已更新</span>
+                  <span>{isApiKey ? 'API 测试成功 · 消息已发送' : '消息已成功发送 · 额度已更新'}</span>
                 </div>
                 {output && (
                   <button
@@ -227,7 +240,7 @@ export default function QuotaActivationModal({
           ) : (
             <div className="rounded-xl border border-dashed border-border bg-muted/40 px-4 py-4 text-center">
               <p className="text-body text-muted-foreground">
-                点击下方「立即激活」，将向该账号发送一条消息唤醒额度窗口并同步状态
+                {isApiKey ? '选择可用模型后，点击「发送测试」查看回复' : '点击下方「立即激活」，将向该账号发送一条消息唤醒额度窗口并同步状态'}
               </p>
             </div>
           )}
@@ -235,7 +248,7 @@ export default function QuotaActivationModal({
           {/* 底部轻量提示条 */}
           <div className="flex items-center gap-2 rounded-lg bg-muted/50 border border-border px-3 py-2 text-caption text-muted-foreground">
             <Info size={12} className="shrink-0 text-muted-foreground/70" />
-            <span>若激活失败将自动延后 5 分钟重试，并在重置后 1 分钟自动刷新</span>
+            <span>{isApiKey ? '测试消息会消耗 API 额度，按 OpenAI 官方价格计费' : '若激活失败将自动延后 5 分钟重试，并在重置后 1 分钟自动刷新'}</span>
           </div>
         </div>
 
@@ -255,16 +268,16 @@ export default function QuotaActivationModal({
             variant="default"
             size="sm"
             onClick={() => void activateWindow()}
-            disabled={isBusy || isUsageRefreshing || !account.canRefreshUsage}
+            disabled={isBusy || isUsageRefreshing || !canSendTest || isApiKey && !apiModel.trim()}
             className="min-w-[96px]"
           >
             {isSending ? (
               <>
                 <LoaderCircle size={13} strokeWidth={2.5} className="animate-spin" />
-                <span>激活中…</span>
+                <span>{isApiKey ? '测试中…' : '激活中…'}</span>
               </>
             ) : (
-              <span>立即激活</span>
+              <span>{isApiKey ? '发送测试' : '立即激活'}</span>
             )}
           </Button>
         </div>

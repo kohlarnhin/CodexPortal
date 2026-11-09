@@ -41,7 +41,8 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
             refresh_token TEXT,
             at_expires_at TEXT,
             auto_activate_window INTEGER NOT NULL DEFAULT 0,
-            auto_switch_threshold REAL NOT NULL DEFAULT 0
+            auto_switch_threshold REAL NOT NULL DEFAULT 0,
+            is_disabled INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
@@ -75,6 +76,10 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
     );
     let _ = conn.execute(
         "ALTER TABLE accounts ADD COLUMN auto_switch_threshold REAL NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE accounts ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0",
         [],
     );
 
@@ -220,4 +225,26 @@ pub(crate) fn set_config_value(db: &Connection, key: &str, value: &str) {
         "INSERT INTO configs (key, content) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET content = ?2",
         params![key, value],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_accounts_migrate_as_enabled_without_changing_existing_data() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL, auth_json_content TEXT NOT NULL,
+             notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, is_active INTEGER NOT NULL);
+             INSERT INTO accounts VALUES ('old', 'test@example.invalid', '{}', '原备注', 'created', 'updated', 1);",
+        ).unwrap();
+        init_db(&db).unwrap();
+        init_db(&db).unwrap();
+        let row: (String, String, String, String, String, String, bool, bool) = db.query_row(
+            "SELECT id, name, auth_json_content, notes, created_at, updated_at, is_active, is_disabled FROM accounts",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
+        ).unwrap();
+        assert_eq!(row, ("old".into(), "test@example.invalid".into(), "{}".into(), "原备注".into(), "created".into(), "updated".into(), true, false));
+    }
 }

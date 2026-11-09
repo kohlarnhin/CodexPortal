@@ -59,7 +59,7 @@ function toUsageWindow(window: QuotaWindow | null) {
   return window ? { usedPercent: window.usedPercent, windowMinutes: window.windowDurationMins, resetsAt: window.resetsAt } : null;
 }
 
-// 实时监听是附加能力；连接不可用时结束，sessions 同步独立维护账号额度。
+// 检测到独立 Codex CLI 时才在断开后重连；sessions 同步独立维护账号额度。
 export function useCodexRateLimitListener() {
   const [monitor, setMonitor] = useState<CodexSessionMonitor>(emptyMonitor);
   const [liveUsage, setLiveUsage] = useState<CodexLiveUsage>(() => emptyUsage());
@@ -76,8 +76,11 @@ export function useCodexRateLimitListener() {
     let socket: WebSocket | null = null;
     let connecting = false;
     let stopSession: (() => void) | null = null;
+    let listenersReady = false;
+    let hasCodexCli = false;
     let subscriptionEnded = false;
-    let initializedOnce = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryDelay = 3000;
     let contextConnectionPending = false;
     let failureReported = false;
     let context: CodexEventContext | null = null;
@@ -101,13 +104,28 @@ export function useCodexRateLimitListener() {
         if (!disposed && generation === contextGeneration) await invoke('report_codex_listener_event', { report: payload });
       }).catch(() => {});
     };
+    const clearReconnect = () => {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    };
+    const scheduleReconnect = () => {
+      if (disposed || !listenersReady || !hasCodexCli || reconnectTimer !== undefined || socket) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = undefined;
+        void connect();
+      }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 60000);
+    };
     const applyContext = (next: CodexEventContext) => {
       if (disposed || context && (next.epoch < context.epoch
         || next.epoch === context.epoch && !context.switching && next.switching)) return false;
-      const changed = !context || context.epoch !== next.epoch || context.accountId !== next.accountId;
-      const reconnectForAccount = changed && context !== null && initializedOnce;
+      const changed = !context || context.epoch !== next.epoch || context.accountId !== next.accountId
+        || context.supportsSubscriptionUsage !== next.supportsSubscriptionUsage;
       context = next;
       if (changed) {
+        clearReconnect();
+        retryDelay = 3000;
+        contextConnectionPending = !subscriptionEnded || hasCodexCli;
         contextGeneration += 1;
         quotaRevision = 0;
         snapshot = { primary: null, secondary: null };
@@ -118,12 +136,7 @@ export function useCodexRateLimitListener() {
         sessionHistory.clear();
         cacheFailureReported = false;
         setLiveUsage(emptyUsage(next.accountId));
-        if (reconnectForAccount) {
-          // 已启用监听的客户端切换账号后建立一次新连接；没有服务时不因账号变化再次探测。
-          subscriptionEnded = false;
-          contextConnectionPending = true;
-        }
-        setMonitor({ ...emptyMonitor(), connectionStatus: subscriptionEnded ? 'unavailable' : 'connecting' });
+        setMonitor({ ...emptyMonitor(), connectionStatus: subscriptionEnded && !hasCodexCli ? 'unavailable' : 'connecting' });
         stopSession?.();
         stopSession = null;
         socket?.close();
@@ -141,10 +154,11 @@ export function useCodexRateLimitListener() {
       }
     };
     const reportExhaustion = (reason: ExhaustionReason) => {
+      if (!context?.supportsSubscriptionUsage) return;
       if (!exhaustion.has(reason)) { exhaustion.add(reason); report({ kind: 'quotaExhausted', reason }); }
     };
     const applyLimits = (payload: Record<string, unknown>, source: 'initialRead' | 'push' | 'manualRead', fillOnly = false, observedAt = Date.now()) => {
-      if (!context || context.switching || disposed) return;
+      if (!context || !context.supportsSubscriptionUsage || context.switching || disposed) return;
       const buckets = rpcRecord(payload.rateLimitsByLimitId);
       const limits = rpcRecord(buckets?.codex ?? payload.rateLimits);
       if (!limits || typeof limits.limitId === 'string' && limits.limitId !== 'codex') return;
@@ -186,10 +200,13 @@ export function useCodexRateLimitListener() {
         }).catch(() => {});
       }
     };
-    const connect = async () => {
-      if (disposed || connecting || socket || subscriptionEnded) return;
+    const connect = async (): Promise<void> => {
+      if (disposed || !listenersReady || connecting || socket || subscriptionEnded && !hasCodexCli) return;
+      if (context?.switching) { contextConnectionPending = true; return; }
+      clearReconnect();
       connecting = true;
       contextConnectionPending = false;
+      setMonitor(previous => ({ ...previous, connectionStatus: 'connecting' }));
       let initialized = false;
       let reading: Promise<void> | null = null;
       let tracker: ReturnType<typeof createCodexSessionTracker> | null = null;
@@ -215,6 +232,7 @@ export function useCodexRateLimitListener() {
         const live = () => !disposed && socket === current && generation === contextGeneration
           && !context?.switching && current.readyState === WebSocket.OPEN;
         const readLimits = (manual = false): Promise<void> => {
+          if (!context?.supportsSubscriptionUsage) return Promise.resolve();
           if (!live()) return manual ? Promise.reject(new Error('额度查询连接尚未就绪，请稍后重试。')) : Promise.resolve();
           if (reading) return reading;
           const revision = quotaRevision;
@@ -274,7 +292,8 @@ export function useCodexRateLimitListener() {
               if (!rpc.notify('initialized')) throw new CodexRpcError('closed');
               initialized = true;
               clearTimeout(connectionTimer);
-              initializedOnce = true;
+              subscriptionEnded = false;
+              retryDelay = 3000;
               failureReported = false;
               tracker = createCodexSessionTracker({ history: sessionHistory, rpc, isLive: live,
                 onChange: nextSnapshot => setMonitor(previous => ({ ...previous, ...nextSnapshot })),
@@ -318,6 +337,7 @@ export function useCodexRateLimitListener() {
           setMonitor(previous => ({ ...previous, connectionStatus: 'unavailable', activeCount: null, sessions: [], isRefreshing: false }));
           setLiveUsage(previous => ({ ...previous, isRefreshing: false }));
           if (initialized) report({ kind: 'disconnected' }); else fail('connectionFailed');
+          scheduleReconnect();
         };
       } catch {
         if (!disposed) {
@@ -325,43 +345,51 @@ export function useCodexRateLimitListener() {
           contextConnectionPending = false;
           fail('connectionFailed');
           setMonitor(previous => ({ ...previous, connectionStatus: 'unavailable' }));
+          scheduleReconnect();
         }
       } finally {
         connecting = false;
-        if (!disposed && contextConnectionPending && !subscriptionEnded && !context?.switching) void connect();
+        if (!disposed && contextConnectionPending && (!subscriptionEnded || hasCodexCli) && !context?.switching) void connect();
       }
     };
-    const syncContextAndSessions = async () => {
+    const syncContextAndSessions = async (reconnect = false) => {
       await refreshContext();
-      if (disposed) return;
-      if (socket && !context?.switching) void refreshSessionsRef.current?.();
+      if (disposed || context?.switching) return;
+      if (socket) void refreshSessionsRef.current?.();
+      else if (reconnect || reconnectTimer === undefined) void connect();
     };
     const boot = async () => {
-      const results = await Promise.allSettled([
-        listen<CodexEventContext>('codex-account-context', event => {
-          contextRequest += 1;
-          if (applyContext(event.payload) && !event.payload.switching && contextConnectionPending) void connect();
-        }),
-        listen('accounts-updated', () => { void syncContextAndSessions(); }),
+      const [results, versions] = await Promise.all([
+        Promise.allSettled([
+          listen<CodexEventContext>('codex-account-context', event => {
+            contextRequest += 1;
+            if (applyContext(event.payload) && !event.payload.switching && contextConnectionPending) void connect();
+          }),
+          listen('accounts-updated', () => { void syncContextAndSessions(); }),
+        ]),
+        invoke<{ cli: string | null }>('get_codex_versions').catch(() => null),
       ]);
       if (disposed || results.some(result => result.status === 'rejected')) {
         for (const result of results) if (result.status === 'fulfilled') result.value();
         if (!disposed) {
-          subscriptionEnded = true;
           setMonitor(previous => ({ ...previous, connectionStatus: 'unavailable' }));
           report({ kind: 'connectionFailed' });
         }
         return;
       }
       for (const result of results) if (result.status === 'fulfilled') unlisteners.push(result.value);
+      // 后端的 cli 字段仅表示独立 CLI，桌面内置引擎不会启用失败重连。
+      hasCodexCli = Boolean(versions?.cli);
+      listenersReady = true;
       if (!disposed) void connect();
     };
-    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void syncContextAndSessions(); };
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void syncContextAndSessions(true); };
     window.addEventListener('focus', refreshWhenVisible);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     void boot();
     return () => {
       disposed = true;
+      clearReconnect();
       stopSession?.();
       socket?.close();
       refreshSessionsRef.current = null;

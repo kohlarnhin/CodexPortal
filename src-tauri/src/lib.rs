@@ -78,7 +78,7 @@ pub fn run() {
                 let import_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let state = import_app.state::<AppState>();
-                    match accounts::import_account_from_auth_json(state).await {
+                    match accounts::import_account_from_auth_json(import_app.clone(), state).await {
                         Ok(_) => {}
                         Err(_) => logging::warn("auth-import", "自动导入账号失败，请在账号管理中手动导入。"),
                     }
@@ -114,11 +114,15 @@ pub fn run() {
             auth::validate_personal_token,
             auth::exchange_refresh_token,
             accounts::save_rt_account,
+            accounts::api_keys::save_api_key_account,
             auth::oauth::start_oauth_login,
             auth::oauth::check_oauth_callback,
             auth::oauth::complete_oauth_login,
             accounts::add_account,
             accounts::update_account,
+            accounts::update_account_notes,
+            accounts::reauth_oauth_account,
+            accounts::set_account_enabled,
             accounts::delete_account,
             accounts::set_active_account,
             accounts::set_account_access_token,
@@ -146,6 +150,7 @@ pub fn run() {
             sessions::usage::get_token_usage,
             updates::get_pending_update,
             updates::set_pending_update,
+            updates::clear_pending_update,
             updates::get_update_install_mode,
             updates::install_portable_update,
             accounts::import_account_from_auth_json,

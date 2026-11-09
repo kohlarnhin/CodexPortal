@@ -4,6 +4,7 @@ import { useAccounts } from '../hooks/useAccounts';
 import type { CodexLiveUsage } from '../types/codexEvents';
 import type { AccountUsageWindow } from '../types/account';
 import { getDisplayedEmail } from '../utils/accountEmail';
+import { isApiKeyAccount } from '../utils/accountAuth';
 import {
   formatUsageWindowLabel,
   getRemainingPercent,
@@ -88,7 +89,7 @@ const SidebarAccountStatus: React.FC<SidebarAccountStatusProps> = ({
     <button
       type="button"
       onClick={onOpenDashboard}
-      aria-label="查看当前账号额度"
+      aria-label="查看当前账号"
       className="w-full cursor-pointer rounded-lg border bg-card px-3 py-2.5 text-left shadow-xs outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >
       <div className="flex min-w-0 items-center gap-1.5">
@@ -96,9 +97,11 @@ const SidebarAccountStatus: React.FC<SidebarAccountStatusProps> = ({
         <span className="min-w-0 flex-1 truncate text-label font-medium text-foreground">
           {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
         </span>
-        <PlanBadge planType={account.chatgptPlanType} />
+        <PlanBadge planType={account.chatgptPlanType} accountType={account.accountType} />
       </div>
-      {usage?.primary || usage?.secondary ? (
+      {isApiKeyAccount(account) ? (
+        <p className="mt-1.5 text-caption text-muted-foreground">官方 API · 按量计费</p>
+      ) : usage?.primary || usage?.secondary ? (
         <div className="mt-2 space-y-1.5">
           {usage.primary && <MiniMeter window={usage.primary} kind="primary" />}
           {usage.secondary && <MiniMeter window={usage.secondary} kind="secondary" />}

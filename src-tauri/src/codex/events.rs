@@ -110,6 +110,7 @@ pub(crate) fn get_codex_event_url(
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EventContext {
     account_id: Option<String>,
+    supports_subscription_usage: bool,
     epoch: u64,
     switching: bool,
 }
@@ -120,8 +121,12 @@ pub(crate) fn get_codex_event_context(
 ) -> Result<EventContext, String> {
     let accounts = app.state::<crate::state::AppState>();
     let db = accounts.db.lock().map_err(|_| "账号状态不可用")?;
-    let account_id = db.query_row("SELECT id FROM accounts WHERE is_active = 1 LIMIT 1", [], |row| row.get(0)).ok();
-    Ok(EventContext { account_id, epoch: state.epoch.load(Ordering::Acquire), switching: state.switching.load(Ordering::Acquire) })
+    let active = db.query_row("SELECT id, auth_json_content FROM accounts WHERE is_active = 1 LIMIT 1", [],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).ok();
+    let supports_subscription_usage = active.as_ref().map_or(true,
+        |(_, content)| crate::auth::account_type(content) != crate::auth::AccountType::OpenaiApiKey);
+    Ok(EventContext { account_id: active.map(|(id, _)| id), supports_subscription_usage,
+        epoch: state.epoch.load(Ordering::Acquire), switching: state.switching.load(Ordering::Acquire) })
 }
 
 #[tauri::command]
@@ -136,6 +141,10 @@ pub(crate) fn save_codex_live_usage(
     let db = accounts.db.lock().map_err(|_| "账号状态不可用")?;
     // 与账号切换共用数据库锁；旧连接的迟到数据不能写入新账号。
     if state.epoch.load(Ordering::Acquire) != epoch || state.switching.load(Ordering::Acquire) { return Ok(()); }
+    let content: String = db.query_row(
+        "SELECT auth_json_content FROM accounts WHERE id = ?1", [&account_id], |row| row.get(0),
+    ).map_err(|_| "账号不可用")?;
+    if crate::auth::account_type(&content) == crate::auth::AccountType::OpenaiApiKey { return Ok(()); }
     for window in [&mut usage.primary, &mut usage.secondary].into_iter().flatten() {
         window.used_percent = window.used_percent.filter(|used| used.is_finite() && *used >= 0.0);
         window.window_minutes = window.window_minutes.filter(|minutes| *minutes > 0);
@@ -203,6 +212,9 @@ fn forward_connection(
 ) -> Result<(), ()> {
     if switching.load(Ordering::Acquire) { return Err(()); }
     let epoch = account_epoch.load(Ordering::Acquire);
+    // macOS 与 Windows 的 accept 会继承监听端的非阻塞模式，读写超时随之失效：
+    // 握手未到达即被丢弃，转发循环空转占满 CPU，推送稍多就因 WouldBlock 断开。
+    stream.set_nonblocking(false).map_err(|_| ())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .map_err(|_| ())?;
@@ -431,14 +443,14 @@ pub(crate) fn report_codex_listener_event(report: ListenerReport) {
             logging::info(SOURCE, "Codex app-server 监听已连接，正在发现活跃会话并订阅额度事件。")
         }
         ListenerReport::Disconnected => {
-            logging::info(SOURCE, "Codex 实时额度连接已断开，本次监听已结束；会话同步继续更新额度。")
+            logging::info(SOURCE, "Codex 实时额度连接已断开；检测到独立 Codex CLI 时自动重连，会话同步继续更新额度。")
         }
         ListenerReport::ConnectionFailed => logging::info(
             SOURCE,
-            "未接入可用的 app-server，本次实时监听已结束；会话同步继续更新额度。",
+            "暂未接入可用的 app-server；会话同步继续更新额度。",
         ),
         ListenerReport::InitializationFailed => {
-            logging::info(SOURCE, "Codex 额度事件初始化未完成，本次实时监听已结束；会话同步继续更新额度。")
+            logging::info(SOURCE, "Codex 额度事件初始化未完成；检测到独立 Codex CLI 时自动重试，会话同步继续更新额度。")
         }
         ListenerReport::InitialReadFailed => {
             logging::warn(SOURCE, "主动读取 Codex 额度失败；会话额度推送仍可更新展示。")

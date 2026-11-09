@@ -152,6 +152,7 @@ function App() {
             onToggleEmailMasking={toggleEmailMasking}
             isAutoLaunchEnabled={autostart.isEnabled}
             isAutoLaunchLoading={autostart.isLoading}
+            isAutoLaunchReadOnly={autostart.isReadOnly}
             onToggleAutoLaunch={autostart.toggleAutostart}
             systemTray={systemTray}
           />

@@ -11,6 +11,7 @@ interface AppSettingsProps {
   onToggleEmailMasking: () => void;
   isAutoLaunchEnabled: boolean;
   isAutoLaunchLoading: boolean;
+  isAutoLaunchReadOnly: boolean;
   onToggleAutoLaunch: (value: boolean) => void;
   systemTray: ReturnType<typeof useSystemTray>;
 }
@@ -20,6 +21,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({
   onToggleEmailMasking,
   isAutoLaunchEnabled,
   isAutoLaunchLoading,
+  isAutoLaunchReadOnly,
   onToggleAutoLaunch,
   systemTray,
 }) => {
@@ -56,14 +58,16 @@ const AppSettings: React.FC<AppSettingsProps> = ({
             <div className="min-w-0">
               <div className="text-subtitle font-medium text-foreground">开机自启动</div>
               <div className="text-label text-muted-foreground mt-0.5">
-                登录系统后自动启动 Codex Portal
+                {isAutoLaunchReadOnly
+                  ? '开发模式下不修改系统登录项，请在已安装版本中设置'
+                  : '登录系统后自动启动 Codex Portal'}
               </div>
             </div>
           </div>
           <ToggleSwitch
             label="开机自启动"
             checked={isAutoLaunchEnabled}
-            disabled={isAutoLaunchLoading}
+            disabled={isAutoLaunchLoading || isAutoLaunchReadOnly}
             onToggle={() => onToggleAutoLaunch(!isAutoLaunchEnabled)}
           />
         </div>

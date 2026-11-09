@@ -6,6 +6,7 @@ import { cn } from '../lib/utils';
 import Button from './ui/button';
 import PageHeader from './ui/page-header';
 import { RotateCcw } from 'lucide-react';
+import { isVersionNewer } from '../utils/version';
 
 interface AboutProps {
   updater: UpdaterController;
@@ -38,7 +39,7 @@ export default function About({ updater }: AboutProps) {
   }, []);
 
   const hasPendingUpdate =
-    updater.pendingVersion !== null && updater.pendingVersion !== appVersion;
+    updater.pendingVersion !== null && isVersionNewer(updater.pendingVersion, appVersion);
 
   const updateStatus = updater.status === 'checking'
     ? '正在检查...'

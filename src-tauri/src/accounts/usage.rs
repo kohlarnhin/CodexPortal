@@ -575,10 +575,18 @@ pub(crate) async fn refresh_account_usage(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<AccountUsage, String> {
+    {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        super::ensure_account_enabled(&db, &id)?;
+    }
     let _guard = begin_account_refresh(&state, &id, Some(app.clone())).map_err(|error| {
         report_account_request_error(&app, &state, &id, "额度刷新未执行", &error);
         error
     })?;
+    {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        super::ensure_account_enabled(&db, &id)?;
+    }
     refresh_account_usage_inner(&app, &state, &id).await
 }
 
@@ -613,6 +621,8 @@ pub(super) async fn fetch_and_persist_account_usage(
         at_expires_at,
     ) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
+        // 自动切换候选可能在收集后被禁用；登记刷新互斥后再查一次。
+        super::ensure_account_enabled(&db, id)?;
         db.query_row(
             "SELECT auth_json_content, access_token, refresh_token, chatgpt_account_id, chatgpt_account_is_fedramp, at_expires_at FROM accounts WHERE id = ?1",
             params![id],

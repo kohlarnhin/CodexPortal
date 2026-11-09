@@ -39,13 +39,29 @@ Use the date alone, without prefixes such as `feat/`, `feature/`, or `codex/`, a
 - Prefer browser-native APIs and existing dependencies. Do not install packages merely for small parsing, formatting, or state-persistence tasks.
 - Persist application-only UI preferences separately from Codex's `config.toml`; do not mix portal preferences into the user's Codex configuration.
 - Do not start services, build, package, install dependencies, deploy, modify unrelated configuration, or update documentation without explicit user authorization. Requested project skill and rule updates authorize editing those files.
-  An authorized release also covers the required README updates described below.
+  An authorized release also covers the required README updates described below. The only other exception is the local self-use install described in the next subsection.
+
+### Local Self-Use Install
+
+`npm run install:local` is an explicit exception to the local-build prohibition. Run it only when the user explicitly asks to install the current working tree for local daily use; a general request to implement, fix, or verify does not authorize it.
+
+- Build only the local macOS `.app` with updater artifacts disabled: `tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'` (invoked via `npm run tauri -- ...` or `npx tauri ...`). It must not generate updater bundles or signatures, need the release signing key, upload artifacts, push, tag, or create a GitHub Release.
+- Replace `/Applications/Codex Portal.app` with the new build and reopen it. Do not touch the installed app if the build fails.
+- Treat it as a local convenience install, not a release: do not bump the version, update `README.md`, commit, or dispatch the release workflow as part of the install command.
+- During a development batch, keep the application version equal to the latest published release. Run `install:local` for each acceptance build; the matching version keeps the updater quiet.
+- Do not bump the version per feature or per local build. Bump exactly once when preparing the release, after the batch passes local acceptance.
+- To verify the updater, keep the last local build at the old version and do not run `install:local` after the release version bump. After the release is published, use the About page's check for updates to install the new version. If the bumped version is installed locally before release, the versions match and no update is offered.
+- The local app shares its database, settings, and login item with the installed release. Back up data or use a test account before destructive migrations.
+- Do not launch the `.app` from `src-tauri/target/release/bundle/macos` directly; a release build rewrites the login item to that path. Install it through `install:local`.
+- Do not extend this exception to other local builds, packaging, or verification. The "No Tests or Browser Calls by Default" rules still apply to everything else.
+- If the command fails, report the failure and stop; do not work around it by disabling signing, skipping checks, or editing the installed app manually.
 
 ## No Tests or Browser Calls by Default
 
 For this project, complete the requested edits without creating or running tests, executing validation commands, or invoking browser/computer-use tools. This also applies when creating or updating this project skill. A general request to implement, fix, or finish work does not authorize these actions.
 
 - Do not run unit, integration, end-to-end, or ad hoc assertion tests; type checks; lint or formatting checks; `git diff --check`; skill validators such as `quick_validate.py`; or builds and previews for verification.
+- The `npm run install:local` exception under Implement Changes is a user-requested installation, not a verification build. It does not authorize running that command on your own initiative.
 - Do not open a browser, call browser automation tools, take screenshots, perform visual or interaction testing, or start a service or create a preview page for those purposes.
 - Use only the source reads and ordinary Git status/diff inspection needed to understand and edit the requested files. Do not add a testing or validation phase, delegate one, or ask for permission to run one as a routine completion step.
 - Run a particular check only if the user later explicitly requests it, and stay within that request. An explicitly authorized release may use the release workflow below; it does not authorize extra local tests or browser calls.
@@ -65,6 +81,8 @@ Also synchronize any app-version fallback literal in `src/components/About.tsx` 
 
 When the user requests the next version without naming it, increment the patch component by exactly one. When the user gives an explicit version, use it unchanged. Do not update dependency versions as part of an application version bump.
 
+During local acceptance, keep the version equal to the latest published release. Do not bump it for individual features or local builds. Bump exactly once when the batch is ready for release, so the previous local build can verify the updater after publication.
+
 A version bump is development work only. It never authorizes a release.
 
 ## Release Gate
@@ -79,7 +97,7 @@ Without explicit release authorization, do not:
 - create or push a tag
 - create, edit, or publish a GitHub Release
 - push commits or branches
-- build local release artifacts
+- build local release artifacts, except for the local self-use install described under Implement Changes
 
 ### Release Shorthand
 
@@ -106,5 +124,5 @@ After explicit release authorization:
    gh workflow run release.yml --ref main -f release_notes='<release notes>'
    ```
 6. Stop after the push and workflow dispatch succeed. Do not query or poll Actions status, watch logs, or wait for publication unless the user explicitly asks. The user receives build-failure emails and wants to avoid consuming quota on repeated checks. If a local watcher is already running when this instruction applies, stop only that watcher, leaving the remote workflow running. This preference was adopted on 2026-09-20.
-7. Perform all building, packaging, signing, and release uploads in GitHub Actions. Do not build local release artifacts. Let the workflow build both macOS architectures and the Windows portable executable, keep intermediate files in Actions artifacts, and create `v<version>` with a published GitHub Release only after all builds succeed. Mark the release as latest after every asset has uploaded. Do not create GitHub Release drafts or a competing manual tag or release. This project preference was explicitly adopted on 2026-09-09.
+7. Perform all building, packaging, signing, and release uploads in GitHub Actions. Do not build local release artifacts for publishing. Let the workflow build both macOS architectures and the Windows portable executable, keep intermediate files in Actions artifacts, and create `v<version>` with a published GitHub Release only after all builds succeed. Mark the release as latest after every asset has uploaded. Do not create GitHub Release drafts or a competing manual tag or release. This project preference was explicitly adopted on 2026-09-09.
 8. Report the version, commit, successful push to `main`, and successful workflow dispatch. Link the workflow page or a run URL already available without further status queries. Do not claim the build or publication succeeded when its result has not been checked. Later rule-only updates do not require dispatching the same release again.

@@ -18,7 +18,9 @@ pub(super) struct TrayAccount {
     pub id: String,
     label: String,
     pub active: bool,
+    pub enabled: bool,
     pub can_activate: bool,
+    is_api_key: bool,
     remaining: Option<u8>,
     resets_at: Option<i64>,
     reset_due: bool,
@@ -62,7 +64,9 @@ fn account_snapshot(account: Account, masking: bool) -> TrayAccount {
         id: account.id,
         label,
         active: account.is_active,
+        enabled: account.enabled,
         can_activate: account.can_activate,
+        is_api_key: account.account_type == crate::auth::AccountType::OpenaiApiKey,
         remaining,
         resets_at: primary.and_then(|window| window.resets_at),
         reset_due: primary.and_then(|window| window.resets_at).is_some_and(|time| time <= chrono::Utc::now().timestamp()),
@@ -98,6 +102,7 @@ impl Snapshot {
 
     pub fn tooltip(&self) -> String {
         match self.active() {
+            Some(account) if account.is_api_key => format!("Codex Portal · {}\nOpenAI API · 按量计费", account.label),
             Some(account) => format!("Codex Portal · {}\n第一窗口{}", account.label, quota_label(account.remaining)),
             None => "Codex Portal · 未启用账号".into(),
         }
@@ -158,13 +163,16 @@ impl TrayMenu {
         }
         self.current.set_text(menu_text(&snapshot.active().map(|account| account.label.clone())
             .unwrap_or_else(|| "添加或启用账号…".into())))?;
-        self.quota.set_text(format!("第一窗口 · {}", quota_label(snapshot.remaining())))?;
+        let is_api_key = snapshot.active().is_some_and(|account| account.is_api_key);
+        self.quota.set_text(if is_api_key { "OpenAI API · 按量计费".to_string() }
+            else { format!("第一窗口 · {}", quota_label(snapshot.remaining())) })?;
         self.quota.set_icon(Some(super::icon::status_icon(snapshot.remaining())))?;
         let reset_time = snapshot.active().and_then(|account| account.resets_at)
             .and_then(|timestamp| DateTime::from_timestamp(timestamp, 0));
-        let reset_label = match reset_time {
-            Some(time) if time <= chrono::Utc::now() => "窗口已到期 · 等待额度更新".into(),
-            Some(time) => {
+        let reset_label = match (is_api_key, reset_time) {
+            (true, _) => "使用 OpenAI Platform 账户额度".into(),
+            (false, Some(time)) if time <= chrono::Utc::now() => "窗口已到期 · 等待额度更新".into(),
+            (false, Some(time)) => {
                 let local = time.with_timezone(&Local);
                 if local.date_naive() == Local::now().date_naive() {
                     format!("今天 {} 重置", local.format("%H:%M"))
@@ -172,7 +180,7 @@ impl TrayMenu {
                     format!("{} 重置", local.format("%m-%d %H:%M"))
                 }
             }
-            None => "重置时间未知".into(),
+            (false, None) => "重置时间未知".into(),
         };
         self.reset.set_text(reset_label)?;
         let show_status = snapshot.switching || snapshot.switch_failed;
@@ -197,10 +205,11 @@ impl TrayMenu {
             }
         }
         for (index, ((_, row), account)) in self.rows.iter().zip(&snapshot.accounts).enumerate() {
-            let suffix = if account.active { " · 当前" } else if !account.can_activate { " · 需重新登录" } else { "" };
-            row.set_text(menu_text(&format!("{}. {} · {}{suffix}", index + 1, account.label, quota_label(account.remaining))))?;
+            let suffix = if !account.enabled { " · 已禁用" } else if account.active { " · 当前" } else if !account.can_activate { " · 需重新登录" } else { "" };
+            let usage_label = if account.is_api_key { "API 按量计费".to_string() } else { quota_label(account.remaining) };
+            row.set_text(menu_text(&format!("{}. {} · {}{suffix}", index + 1, account.label, usage_label)))?;
             row.set_icon(Some(super::icon::status_icon(account.remaining)))?;
-            row.set_enabled(account.can_activate && !snapshot.switching)?;
+            row.set_enabled(account.enabled && account.can_activate && !snapshot.switching)?;
         }
         Ok(())
     }

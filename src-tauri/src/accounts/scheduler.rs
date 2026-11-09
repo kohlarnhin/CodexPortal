@@ -1,4 +1,4 @@
-use crate::accounts::read_accounts;
+use crate::accounts::{ensure_account_enabled, read_accounts};
 use crate::accounts::messages::send_test_message;
 use crate::accounts::quiet_hours::defer_usage_during_quiet_hours;
 use crate::accounts::usage::{
@@ -27,7 +27,7 @@ fn backfill_account_metadata(app: &tauri::AppHandle, state: &AppState) {
             return;
         };
         let Ok(mut stmt) = db
-            .prepare("SELECT id, auth_json_content FROM accounts WHERE chatgpt_plan_type IS NULL")
+            .prepare("SELECT id, auth_json_content FROM accounts WHERE chatgpt_plan_type IS NULL AND is_disabled = 0")
         else {
             return;
         };
@@ -47,6 +47,10 @@ fn backfill_account_metadata(app: &tauri::AppHandle, state: &AppState) {
     };
 
     for (id, token) in targets {
+        let Ok(_guard) = begin_account_refresh(state, &id, None) else { continue };
+        let enabled = state.db.lock().ok()
+            .is_some_and(|db| ensure_account_enabled(&db, &id).is_ok());
+        if !enabled { continue; }
         match resolve_token_metadata(&token) {
             Ok(meta) => {
                 let Ok(db) = state.db.lock() else {
@@ -72,7 +76,7 @@ fn refresh_due_access_tokens(app: &tauri::AppHandle, state: &AppState) {
         };
         let cutoff = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
         let Ok(mut stmt) = db.prepare(
-            "SELECT id, refresh_token FROM accounts WHERE refresh_token IS NOT NULL AND at_expires_at IS NOT NULL AND at_expires_at <= ?1",
+            "SELECT id, refresh_token FROM accounts WHERE is_disabled = 0 AND refresh_token IS NOT NULL AND at_expires_at IS NOT NULL AND at_expires_at <= ?1",
         ) else {
             return;
         };
@@ -95,7 +99,7 @@ fn refresh_due_access_tokens(app: &tauri::AppHandle, state: &AppState) {
             .ok()
             .and_then(|db| {
                 db.query_row(
-                    "SELECT refresh_token = ?1 FROM accounts WHERE id = ?2",
+                    "SELECT refresh_token = ?1 FROM accounts WHERE id = ?2 AND is_disabled = 0",
                     params![rt, id],
                     |row| row.get::<_, bool>(0),
                 )
@@ -170,7 +174,7 @@ pub(crate) fn start_usage_scheduler(app: tauri::AppHandle) {
                                 .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
                                 .map(|time| time.with_timezone(&Utc))
                                 .unwrap_or(DateTime::<Utc>::MIN_UTC);
-                            (account.can_refresh_usage
+                            (account.enabled && account.can_refresh_usage
                                 && (store.active_account_id.as_ref() != Some(&account.id) || account.auto_activate_window)
                                 && !refreshing.contains(&account.id)
                                 && due_at <= now)

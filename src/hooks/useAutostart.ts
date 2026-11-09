@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
-import { enable, disable } from '@tauri-apps/plugin-autostart';
+import { enable, disable, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 
 const AUTOSTART_STORAGE_KEY = 'codex-portal.autostart-enabled';
+
+/**
+ * 开发模式（vite dev / tauri dev）下不写入系统登录项。
+ *
+ * 插件的登录项按应用名唯一，dev 的 debug 二进制与已安装版本共用同一个 plist，
+ * 一旦在 dev 里调用 enable() 就会把登录项改指向 target/debug，而该二进制依赖
+ * 本地 dev server，开机启动时无法加载页面。因此 dev 只读取状态，不修改。
+ */
+const IS_DEV = import.meta.env.DEV;
 
 /**
  * 开机自启动偏好。
@@ -17,15 +26,21 @@ export function useAutostart() {
     let disposed = false;
 
     (async () => {
-      let pref: string | null = null;
       try {
-        pref = window.localStorage.getItem(AUTOSTART_STORAGE_KEY);
-      } catch {
-        // 无持久化存储时按默认开启处理。
-      }
+        if (IS_DEV) {
+          const enabled = await isAutostartEnabled();
+          if (!disposed) setIsEnabled(enabled);
+          return;
+        }
 
-      const target = pref !== 'false';
-      try {
+        let pref: string | null = null;
+        try {
+          pref = window.localStorage.getItem(AUTOSTART_STORAGE_KEY);
+        } catch {
+          // 无持久化存储时按默认开启处理。
+        }
+
+        const target = pref !== 'false';
         if (target) {
           await enable();
         } else {
@@ -33,7 +48,7 @@ export function useAutostart() {
         }
         if (!disposed) setIsEnabled(target);
       } catch (error) {
-        console.error('开机自启动初始化失败', error);
+        console.error(IS_DEV ? '读取开机自启动状态失败' : '开机自启动初始化失败', error);
       } finally {
         if (!disposed) setIsLoading(false);
       }
@@ -45,6 +60,8 @@ export function useAutostart() {
   }, []);
 
   const toggleAutostart = async (value: boolean) => {
+    if (IS_DEV) return;
+
     setIsEnabled(value);
     try {
       if (value) {
@@ -66,6 +83,7 @@ export function useAutostart() {
   return {
     isEnabled,
     isLoading,
+    isReadOnly: IS_DEV,
     toggleAutostart,
   };
 }

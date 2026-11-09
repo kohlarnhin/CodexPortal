@@ -249,7 +249,7 @@ impl Worker {
             return;
         }
         let can_switch = self.snapshot.as_ref().is_some_and(|snapshot| snapshot.accounts.iter()
-            .any(|account| account.id == id && account.can_activate && !account.active));
+            .any(|account| account.id == id && account.enabled && account.can_activate && !account.active));
         if !can_switch {
             return;
         }

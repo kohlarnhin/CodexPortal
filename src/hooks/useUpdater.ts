@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
+import { isVersionNewer } from '../utils/version';
 
 export type UpdaterStatus =
   | 'idle'
@@ -64,6 +66,16 @@ export function useUpdater(): UpdaterController {
     }
   }, []);
 
+  /** 清除已记录的待更新版本，避免版本追上后仍显示旧提示。 */
+  const clearPending = useCallback(async () => {
+    setPendingVersion(null);
+    try {
+      await invoke('clear_pending_update');
+    } catch (err) {
+      console.error('Failed to clear pending update:', err);
+    }
+  }, []);
+
   const checkForUpdates = useCallback(
     async (showResult: boolean, isAuto: boolean) => {
       if (checkingRef.current || installingRef.current) return;
@@ -99,6 +111,9 @@ export function useUpdater(): UpdaterController {
           }
         } else {
           setStatus('up-to-date');
+          if (pendingVersion) {
+            await clearPending();
+          }
           if (showResult) setIsModalOpen(false);
         }
       } catch (checkError) {
@@ -108,7 +123,7 @@ export function useUpdater(): UpdaterController {
         checkingRef.current = false;
       }
     },
-    [pendingVersion, recordPending],
+    [pendingVersion, recordPending, clearPending],
   );
 
   const checkNow = useCallback(async () => {
@@ -199,7 +214,15 @@ export function useUpdater(): UpdaterController {
       try {
         const recorded = await invoke<string | null>('get_pending_update');
         if (cancelled) return;
-        if (recorded) setPendingVersion(recorded);
+        if (recorded) {
+          const currentVersion = await getVersion();
+          if (cancelled) return;
+          if (isVersionNewer(recorded, currentVersion)) {
+            setPendingVersion(recorded);
+          } else {
+            await invoke('clear_pending_update');
+          }
+        }
       } catch (err) {
         console.error('Failed to load pending update:', err);
       }

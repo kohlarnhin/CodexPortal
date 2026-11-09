@@ -31,6 +31,9 @@ pub(crate) struct PersonalAccessTokenMetadata {
 
 pub(crate) fn extract_personal_access_token(auth_json_content: &str) -> Option<String> {
     let auth_json = serde_json::from_str::<Value>(auth_json_content).ok()?;
+    if openai_api_key_from_value(&auth_json).is_some() {
+        return None;
+    }
     auth_json
         .get("personal_access_token")?
         .as_str()
@@ -39,9 +42,63 @@ pub(crate) fn extract_personal_access_token(auth_json_content: &str) -> Option<S
         .map(str::to_string)
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AccountType {
+    #[default]
+    Chatgpt,
+    OpenaiApiKey,
+}
+
+fn openai_api_key_from_value(auth: &Value) -> Option<&str> {
+    if auth.get("auth_mode").and_then(Value::as_str)
+        .is_some_and(|mode| mode != "apikey")
+    {
+        return None;
+    }
+    auth.get("OPENAI_API_KEY")?.as_str()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+}
+
+pub(crate) fn extract_openai_api_key(content: &str) -> Option<String> {
+    let auth = serde_json::from_str::<Value>(content).ok()?;
+    openai_api_key_from_value(&auth).map(str::to_string)
+}
+
+pub(crate) fn account_type(content: &str) -> AccountType {
+    if extract_openai_api_key(content).is_some() {
+        AccountType::OpenaiApiKey
+    } else {
+        AccountType::Chatgpt
+    }
+}
+
+pub(crate) fn parse_openai_api_key(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    let key = if input.starts_with('{') {
+        extract_openai_api_key(input)
+            .ok_or("JSON 中未找到 OpenAI API Key 登录信息")?
+    } else {
+        input.to_string()
+    };
+    if !key.starts_with("sk-") || key.len() <= 8
+        || key.chars().any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err("请输入有效的 OpenAI API Key（sk-...）".to_string());
+    }
+    Ok(key)
+}
+
+pub(crate) fn build_api_key_auth_json(key: &str) -> String {
+    serde_json::json!({ "auth_mode": "apikey", "OPENAI_API_KEY": key }).to_string()
+}
+
 /// auth.json 中可自动导入的凭证类型。
 #[derive(Debug)]
 pub(crate) enum AuthJsonCredential {
+    /// API Key 登录；导入时保留原始认证 JSON。
+    OpenaiApiKey,
     /// Personal Access Token（personal_access_token 字段）。
     Pat(String),
     /// Refresh Token（任意层级嵌套的 refresh_token 字段）。
@@ -49,9 +106,12 @@ pub(crate) enum AuthJsonCredential {
 }
 
 /// 从 auth.json 内容中解析支持的凭证：与"添加账号"支持的格式一致——
-/// 优先 personal_access_token（PAT），其次任意层级 refresh_token（rt）；
-/// 两者都不支持则返回 None。
+/// API Key 登录优先按 auth_mode 识别，其次 PAT 和任意层级 refresh_token（rt）；
+/// 没有支持的凭证则返回 None。
 pub(crate) fn resolve_auth_json_credential(content: &str) -> Option<AuthJsonCredential> {
+    if extract_openai_api_key(content).is_some() {
+        return Some(AuthJsonCredential::OpenaiApiKey);
+    }
     if let Some(pat) = extract_personal_access_token(content) {
         return Some(AuthJsonCredential::Pat(pat));
     }
@@ -102,7 +162,7 @@ pub(crate) fn update_oauth_auth_json(content: &str, info: &RtTokenInfo) -> Strin
 }
 
 pub(crate) fn can_apply_auth_json(content: &str) -> bool {
-    if extract_personal_access_token(content).is_some() {
+    if extract_openai_api_key(content).is_some() || extract_personal_access_token(content).is_some() {
         return true;
     }
     let Ok(auth) = serde_json::from_str::<Value>(content) else {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Account, AccountStore, AccountFormData, OAuthLoginInfo, ResetCreditsInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
+import { Account, AccountStore, AccountFormData, OAuthLoginInfo, ResetCreditsInfo, RtTokenInfo, SaveApiKeyAccountParams, SaveRtAccountParams, TokenInfo } from '../types/account';
 
 export function useAccounts() {
   const [store, setStore] = useState<AccountStore>({ activeAccountId: null, accounts: [] });
@@ -57,6 +57,32 @@ export function useAccounts() {
     }
   };
 
+  const setAccountEnabled = async (id: string, enabled: boolean) => {
+    await invoke('set_account_enabled', { id, enabled });
+    await loadAccounts(false);
+  };
+
+  const updateAccountNotes = async (id: string, notes: string) => {
+    await invoke('update_account_notes', { id, notes: notes.trim() || null });
+    await loadAccounts(false);
+  };
+
+  const reauthOauthAccount = async (id: string, params: SaveRtAccountParams): Promise<Account> => {
+    const account = await invoke<Account>('reauth_oauth_account', {
+      id,
+      email: params.email,
+      chatgptPlanType: params.chatgptPlanType ?? null,
+      chatgptAccountId: params.chatgptAccountId ?? null,
+      idToken: params.idToken ?? null,
+      accessToken: params.accessToken,
+      refreshToken: params.refreshToken,
+      atExpiresAt: params.atExpiresAt,
+      notes: params.notes ?? null,
+    });
+    await loadAccounts(false);
+    return account;
+  };
+
   const validatePersonalToken = async (token: string): Promise<TokenInfo> => {
     return await invoke<TokenInfo>('validate_personal_token', { token });
   };
@@ -100,6 +126,17 @@ export function useAccounts() {
       console.error('Failed to save access token:', err);
       throw err;
     }
+  };
+
+  const saveApiKeyAccount = async (params: SaveApiKeyAccountParams): Promise<Account> => {
+    const account = await invoke<Account>('save_api_key_account', {
+      id: params.id ?? null,
+      name: params.name,
+      apiKey: params.apiKey,
+      notes: params.notes || null,
+    });
+    await loadAccounts(false);
+    return account;
   };
 
   const getResetCredits = async (id: string, force = false): Promise<ResetCreditsInfo> => {
@@ -156,6 +193,9 @@ export function useAccounts() {
     error,
     addAccount,
     updateAccount,
+    setAccountEnabled,
+    updateAccountNotes,
+    reauthOauthAccount,
     deleteAccount,
     setActiveAccount,
     setAutoSwitchThreshold,
@@ -163,6 +203,7 @@ export function useAccounts() {
     validatePersonalToken,
     exchangeRefreshToken,
     saveRtAccount,
+    saveApiKeyAccount,
     startOauthLogin,
     checkOauthCallback,
     completeOauthLogin,

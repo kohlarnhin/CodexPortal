@@ -10,9 +10,12 @@ import ResetInfoModal from './ResetInfoModal';
 import Button from './ui/button';
 import { ActionTooltip } from './ui/tooltip';
 import PageHeader from './ui/page-header';
-import { Account, AccountFormData, AccountUsage, SaveRtAccountParams } from '../types/account';
+import Select from './Select';
+import { Account, AccountFormData, AccountUsage, SaveApiKeyAccountParams, SaveRtAccountParams } from '../types/account';
+import { isApiKeyAccount } from '../utils/accountAuth';
 import { getDisplayedEmail } from '../utils/accountEmail';
-import { FileInput, LoaderCircle, Plus, User } from 'lucide-react';
+import { AccountSortField, DEFAULT_SORT_DIRECTIONS, readAccountSort, saveAccountSort, sortAccounts } from '../utils/accountSort';
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, FileInput, LoaderCircle, Plus, User } from 'lucide-react';
 import { errorMessage, toast } from './ui/toast';
 
 const PLAN_FILTER_LABELS: Record<string, string> = {
@@ -45,7 +48,7 @@ const AccountList: React.FC<AccountListProps> = ({
   onRefreshUsage,
   isUsageRefreshing,
 }) => {
-  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, setAutoSwitchThreshold, importFromAuthJson, validatePersonalToken, exchangeRefreshToken, saveRtAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
+  const { accounts, activeAccountId, isLoading, addAccount, updateAccount, deleteAccount, setActiveAccount, setAccountEnabled, updateAccountNotes, reauthOauthAccount, setAutoSwitchThreshold, importFromAuthJson, validatePersonalToken, exchangeRefreshToken, saveRtAccount, saveApiKeyAccount, startOauthLogin, checkOauthCallback, completeOauthLogin, setAccountAccessToken, getResetCredits, consumeResetCredit, refresh } = useAccounts();
   const autoSwitch = useAutoSwitchSettings();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
@@ -54,24 +57,38 @@ const AccountList: React.FC<AccountListProps> = ({
   const [autoSwitchAccountId, setAutoSwitchAccountId] = useState<string | null>(null);
   const [resetAccount, setResetAccount] = useState<Account | null>(null);
   const [planFilter, setPlanFilter] = useState<string | null>(null);
+  const [authFilter, setAuthFilter] = useState<Account['authMethod'] | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  const [sort, setSort] = useState(readAccountSort);
   const [isImporting, setIsImporting] = useState(false);
   const activationAccount = accounts.find((account) => account.id === activationAccountId);
   const autoSwitchAccount = accounts.find((account) => account.id === autoSwitchAccountId);
 
-  // 各订阅类型的账号数量（用于筛选 chip）
+  const eligibleAccounts = useMemo(() => accounts.filter(account =>
+    (authFilter === 'all' || account.authMethod === authFilter)
+      && (statusFilter === 'all' || account.enabled === (statusFilter === 'enabled')),
+  ), [accounts, authFilter, statusFilter]);
+
+  // 订阅 chip 的计数随认证方式和状态变化，选中的空订阅仍保留。
   const planCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const account of accounts) {
+    for (const account of eligibleAccounts) {
+      if (isApiKeyAccount(account)) continue;
       const plan = (account.chatgptPlanType || '').toLowerCase();
       if (plan) counts[plan] = (counts[plan] || 0) + 1;
     }
+    if (planFilter && counts[planFilter] === undefined) counts[planFilter] = 0;
     return counts;
-  }, [accounts]);
+  }, [eligibleAccounts, planFilter]);
 
   const filteredAccounts = useMemo(
-    () => (planFilter ? accounts.filter(a => (a.chatgptPlanType || '').toLowerCase() === planFilter) : accounts),
-    [accounts, planFilter],
+    () => sortAccounts(planFilter
+      ? eligibleAccounts.filter(account => !isApiKeyAccount(account) && (account.chatgptPlanType || '').toLowerCase() === planFilter)
+      : eligibleAccounts, sort),
+    [eligibleAccounts, planFilter, sort],
   );
+
+  useEffect(() => { saveAccountSort(sort); }, [sort]);
 
   useEffect(() => {
     if (usageRevision > 0) {
@@ -99,7 +116,7 @@ const AccountList: React.FC<AccountListProps> = ({
     setIsModalOpen(false);
 
     // PAT 未变化时无需重新获取额度
-    if (savedAccount.canRefreshUsage && shouldRefreshUsage) {
+    if (savedAccount.enabled && savedAccount.canRefreshUsage && shouldRefreshUsage) {
       void handleRefreshUsage(savedAccount.id);
     }
   };
@@ -113,6 +130,19 @@ const AccountList: React.FC<AccountListProps> = ({
     return savedAccount;
   };
 
+  const handleSaveApiKey = async (params: SaveApiKeyAccountParams): Promise<Account> => {
+    const account = await saveApiKeyAccount(params);
+    setIsModalOpen(false);
+    return account;
+  };
+
+  const handleReauthOauth = async (id: string, params: SaveRtAccountParams): Promise<Account> => {
+    const account = await reauthOauthAccount(id, params);
+    setIsModalOpen(false);
+    toast.success('账号凭证已更新');
+    return account;
+  };
+
   const handleImportAuthJson = async () => {
     setIsImporting(true);
     try {
@@ -121,7 +151,7 @@ const AccountList: React.FC<AccountListProps> = ({
         toast.success(`已导入 ${getDisplayedEmail(account.name, isEmailMaskingEnabled)}`);
         if (account.canRefreshUsage) void handleRefreshUsage(account.id);
       } else {
-        toast.info('未找到可导入的登录信息：~/.codex/auth.json 不存在，或其中不是 PAT / Refresh Token 登录。');
+        toast.info('未找到可导入的登录信息：支持本机 Codex 的 API Key、PAT 或 Refresh Token 登录。');
       }
     } catch (err) {
       toast.error(errorMessage(err), { title: '导入失败' });
@@ -194,14 +224,15 @@ const AccountList: React.FC<AccountListProps> = ({
       )}
 
       {accounts.length > 0 && (
-        <div className="flex items-center gap-2 mb-3 flex-wrap shrink-0">
+        <div className="relative z-20 mb-3 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-3">
+          <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setPlanFilter(null)}
             className={filterChipClass(planFilter === null)}
           >
             全部
-            <span className="opacity-60 tabular-nums">{accounts.length}</span>
+            <span className="opacity-60 tabular-nums">{eligibleAccounts.length}</span>
           </button>
           {Object.keys(planCounts)
             .sort()
@@ -219,6 +250,50 @@ const AccountList: React.FC<AccountListProps> = ({
                 </button>
               );
             })}
+          </div>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-caption text-muted-foreground">认证方式</span>
+              <Select value={authFilter} onChange={value => setAuthFilter(value as typeof authFilter)} align="right"
+                className="w-28" options={[
+                  { value: 'all', label: '全部认证' },
+                  { value: 'api_key', label: 'API Key' },
+                  { value: 'pat', label: 'PAT' },
+                  { value: 'oauth', label: 'OAuth' },
+                ]} />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-caption text-muted-foreground">状态</span>
+              <Select value={statusFilter} onChange={value => setStatusFilter(value as typeof statusFilter)} align="right"
+                className="w-28" options={[
+                  { value: 'all', label: '全部状态' },
+                  { value: 'enabled', label: '已启用' },
+                  { value: 'disabled', label: '已禁用' },
+                ]} />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-caption text-muted-foreground">排序</span>
+              <Select value={sort.field} onChange={value => {
+                const field = value as AccountSortField;
+                setSort({ field, direction: DEFAULT_SORT_DIRECTIONS[field] });
+              }} align="right" className="w-28" options={[
+                { value: 'default', label: '默认' },
+                { value: 'remaining', label: '剩余额度' },
+                { value: 'reset', label: '重置时间' },
+                { value: 'name', label: '名称' },
+                { value: 'created', label: '添加时间' },
+              ]} />
+              {sort.field !== 'default' && (
+                <ActionTooltip label={sort.direction === 'asc' ? '升序，点击改为降序' : '降序，点击改为升序'}>
+                  <Button type="button" variant="outline" size="icon" className="h-9 w-9"
+                    aria-label={sort.direction === 'asc' ? '改为降序' : '改为升序'}
+                    onClick={() => setSort(current => ({ ...current, direction: current.direction === 'asc' ? 'desc' : 'asc' }))}>
+                    {sort.direction === 'asc' ? <ArrowUpNarrowWide size={14} /> : <ArrowDownWideNarrow size={14} />}
+                  </Button>
+                </ActionTooltip>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -236,7 +311,7 @@ const AccountList: React.FC<AccountListProps> = ({
               <Plus size={14} />
               添加账号
             </Button>
-            <ActionTooltip label="读取 ~/.codex/auth.json 中的 PAT 或 Refresh Token">
+            <ActionTooltip label="读取本机 auth.json 中的 API Key、PAT 或 Refresh Token">
               <Button variant="outline" size="sm" disabled={isImporting} onClick={() => void handleImportAuthJson()}>
                 {isImporting ? <LoaderCircle size={14} className="animate-spin" /> : <FileInput size={14} />}
                 {isImporting ? '导入中…' : '导入当前 Codex 登录'}
@@ -249,7 +324,7 @@ const AccountList: React.FC<AccountListProps> = ({
           <p className="text-subtitle text-muted-foreground mb-2">该筛选下暂无账号</p>
           <Button
             variant="link"
-            onClick={() => setPlanFilter(null)}
+            onClick={() => { setPlanFilter(null); setAuthFilter('all'); setStatusFilter('all'); }}
             className="text-body font-medium"
           >
             查看全部账号
@@ -274,6 +349,7 @@ const AccountList: React.FC<AccountListProps> = ({
                   }
                 }}
                 onEdit={handleEdit}
+                onSetEnabled={setAccountEnabled}
                 onDelete={(id) => setDeleteConfirmId(id)}
                 onRefreshUsage={(id) => void handleRefreshUsage(id)}
                 onActivateWindow={(target) => setActivationAccountId(target.id)}
@@ -294,10 +370,14 @@ const AccountList: React.FC<AccountListProps> = ({
         onValidate={validatePersonalToken}
         onExchangeRt={exchangeRefreshToken}
         onSaveRt={handleSaveRt}
+        onSaveApiKey={handleSaveApiKey}
+        onSaveNotes={updateAccountNotes}
+        onReauthOauth={handleReauthOauth}
         onStartOauth={startOauthLogin}
         onCheckOauth={checkOauthCallback}
         onCompleteOauth={completeOauthLogin}
         editingAccount={editingAccount}
+        isEmailMaskingEnabled={isEmailMaskingEnabled}
       />
 
       <ConfirmModal

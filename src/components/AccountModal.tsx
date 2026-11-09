@@ -1,9 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { Account, AccountFormData, OAuthLoginInfo, RtTokenInfo, SaveRtAccountParams, TokenInfo } from '../types/account';
+import { Account, AccountFormData, OAuthLoginInfo, RtTokenInfo, SaveApiKeyAccountParams, SaveRtAccountParams, TokenInfo } from '../types/account';
+import { getAccountApiKey, isApiKeyAccount } from '../utils/accountAuth';
+import { getDisplayedEmail } from '../utils/accountEmail';
+import PlanBadge from './PlanBadge';
 import Select from './Select';
 import Button from './ui/button';
 import Input from './ui/input';
+import { toast } from './ui/toast';
 import {
   Dialog,
   DialogContent,
@@ -21,10 +25,14 @@ interface AccountModalProps {
   onValidate: (token: string) => Promise<TokenInfo>;
   onExchangeRt: (input: string) => Promise<RtTokenInfo>;
   onSaveRt: (params: SaveRtAccountParams) => Promise<Account>;
+  onSaveApiKey: (params: SaveApiKeyAccountParams) => Promise<Account>;
+  onSaveNotes: (id: string, notes: string) => Promise<void>;
+  onReauthOauth: (id: string, params: SaveRtAccountParams) => Promise<Account>;
   onStartOauth: () => Promise<OAuthLoginInfo>;
   onCheckOauth: () => Promise<RtTokenInfo | null>;
   onCompleteOauth: (redirectUrl: string) => Promise<RtTokenInfo>;
   editingAccount?: Account | null;
+  isEmailMaskingEnabled: boolean;
 }
 
 const PLAN_LABELS: Record<string, string> = {
@@ -34,8 +42,45 @@ const PLAN_LABELS: Record<string, string> = {
   free: 'Free',
 };
 
-type AuthMethod = 'personal' | 'refresh' | 'oauth';
+type AuthMethod = 'personal' | 'refresh' | 'oauth' | 'apiKey';
 type Step = 'form' | 'oauth' | 'confirm';
+
+function oauthDetails(account: Account) {
+  try {
+    const tokens = JSON.parse(account.authJsonContent).tokens;
+    const maskedToken = (token: unknown) => typeof token === 'string' && token
+      ? `•••• ${token.slice(-4)}` : '未保存';
+    return {
+      accountId: typeof tokens?.account_id === 'string' ? tokens.account_id : '未保存',
+      accessToken: maskedToken(tokens?.access_token),
+      refreshToken: maskedToken(tokens?.refresh_token),
+    };
+  } catch {
+    return { accountId: '未保存', accessToken: '未保存', refreshToken: '未保存' };
+  }
+}
+
+function getOauthReauthError(account: Account, info: RtTokenInfo | null, isEmailMaskingEnabled: boolean): string | null {
+  if (!info) return null;
+  let storedAccountId: string | null = null;
+  try {
+    const accountId = JSON.parse(account.authJsonContent).tokens?.account_id;
+    if (typeof accountId === 'string') storedAccountId = accountId;
+  } catch {
+    // 旧凭证缺少账号 ID 时仍校验邮箱，最终身份校验由后端执行。
+  }
+  const accountIdMismatch = storedAccountId !== null && info.chatgptAccountId != null
+    && storedAccountId !== info.chatgptAccountId;
+  if (account.name.toLowerCase() === info.email.toLowerCase() && !accountIdMismatch) return null;
+  return `登录的账号与当前账号不一致，请登录 ${getDisplayedEmail(account.name, isEmailMaskingEnabled)}。`;
+}
+
+function formatTokenExpiry(expiry: string | null): string {
+  const date = expiry ? new Date(expiry) : null;
+  return date && Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(date)
+    : '未知';
+}
 
 const AccountModal: React.FC<AccountModalProps> = ({
   isOpen,
@@ -44,15 +89,20 @@ const AccountModal: React.FC<AccountModalProps> = ({
   onValidate,
   onExchangeRt,
   onSaveRt,
+  onSaveApiKey,
+  onSaveNotes,
+  onReauthOauth,
   onStartOauth,
   onCheckOauth,
   onCompleteOauth,
   editingAccount,
+  isEmailMaskingEnabled,
 }) => {
   const [authMethod, setAuthMethod] = useState<AuthMethod>('personal');
   const [input, setInput] = useState('');
   const [originalToken, setOriginalToken] = useState('');
   const [notes, setNotes] = useState('');
+  const [name, setName] = useState('');
   const [step, setStep] = useState<Step>('form');
   const [personalInfo, setPersonalInfo] = useState<TokenInfo | null>(null);
   const [rtInfo, setRtInfo] = useState<RtTokenInfo | null>(null);
@@ -62,10 +112,12 @@ const AccountModal: React.FC<AccountModalProps> = ({
   const [isValidating, setIsValidating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [unsupportedFormat, setUnsupportedFormat] = useState(false);
   const [copied, setCopied] = useState(false);
+  const modalRevision = useRef(0);
+  const isEditingOauth = editingAccount?.authMethod === 'oauth';
 
   useEffect(() => {
+    modalRevision.current += 1;
     if (!isOpen) return;
     setStep('form');
     setPersonalInfo(null);
@@ -77,23 +129,24 @@ const AccountModal: React.FC<AccountModalProps> = ({
     setIsSubmitting(false);
     setError(null);
     setCopied(false);
+    setName(editingAccount?.name || '');
 
     if (editingAccount) {
-      setAuthMethod('personal');
+      const apiKey = isApiKeyAccount(editingAccount);
+      setAuthMethod(apiKey ? 'apiKey' : editingAccount.authMethod === 'oauth' ? 'oauth' : 'personal');
       let token = '';
       try {
         const parsed = JSON.parse(editingAccount.authJsonContent);
-        if (parsed.personal_access_token) token = parsed.personal_access_token;
+        if (apiKey) token = getAccountApiKey(editingAccount);
+        else if (parsed.personal_access_token) token = parsed.personal_access_token;
       } catch {
         // ignore
       }
-      setUnsupportedFormat(!token);
       setOriginalToken(token);
       setInput(token);
       setNotes(editingAccount.notes || '');
     } else {
       setAuthMethod('personal');
-      setUnsupportedFormat(false);
       setOriginalToken('');
       setInput('');
       setNotes('');
@@ -136,18 +189,22 @@ const AccountModal: React.FC<AccountModalProps> = ({
   const isTokenUnchanged = editingAccount ? input.trim() === originalToken : false;
   const isRt = authMethod === 'refresh';
   const isOauth = authMethod === 'oauth';
+  const isApiKey = authMethod === 'apiKey';
+  const details = isEditingOauth && editingAccount ? oauthDetails(editingAccount) : null;
 
   const handleStartOauth = async () => {
+    const revision = modalRevision.current;
     setError(null);
     setIsValidating(true);
     try {
       const info = await onStartOauth();
+      if (revision !== modalRevision.current) return;
       setOauthInfo(info);
       setStep('oauth');
     } catch (err: any) {
-      setError(err?.toString() || '启动 OAuth 登录失败');
+      if (revision === modalRevision.current) setError(err?.toString() || '启动 OAuth 登录失败');
     } finally {
-      setIsValidating(false);
+      if (revision === modalRevision.current) setIsValidating(false);
     }
   };
 
@@ -172,6 +229,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
   };
 
   const handleManualComplete = async () => {
+    const revision = modalRevision.current;
     setError(null);
     if (!manualUrl.trim()) {
       setError('请粘贴回调地址');
@@ -180,16 +238,18 @@ const AccountModal: React.FC<AccountModalProps> = ({
     setIsValidating(true);
     try {
       const info = await onCompleteOauth(manualUrl.trim());
+      if (revision !== modalRevision.current) return;
       setOauthRtInfo(info);
       setStep('confirm');
     } catch (err: any) {
-      setError(err?.toString() || '回调完成失败');
+      if (revision === modalRevision.current) setError(err?.toString() || '回调完成失败');
     } finally {
-      setIsValidating(false);
+      if (revision === modalRevision.current) setIsValidating(false);
     }
   };
 
   const handleValidate = async () => {
+    const revision = modalRevision.current;
     setError(null);
     if (!input.trim()) {
       setError(isRt ? '请输入 Refresh Token' : '请输入 Token');
@@ -198,26 +258,36 @@ const AccountModal: React.FC<AccountModalProps> = ({
     setIsValidating(true);
     try {
       if (isRt) {
-        setRtInfo(await onExchangeRt(input));
+        const info = await onExchangeRt(input);
+        if (revision !== modalRevision.current) return;
+        setRtInfo(info);
       } else {
-        setPersonalInfo(await onValidate(input.trim()));
+        const info = await onValidate(input.trim());
+        if (revision !== modalRevision.current) return;
+        setPersonalInfo(info);
       }
       setStep('confirm');
     } catch (err: any) {
-      setError(err?.toString() || '验证失败');
+      if (revision === modalRevision.current) setError(err?.toString() || '验证失败');
     } finally {
-      setIsValidating(false);
+      if (revision === modalRevision.current) setIsValidating(false);
     }
   };
 
   const handleConfirmSave = async () => {
+    if (reauthIdentityError) return;
+    const revision = modalRevision.current;
     setIsSubmitting(true);
     setError(null);
     try {
+      if (isApiKey) {
+        await onSaveApiKey({ id: editingAccount?.id, name, apiKey: input.trim(), notes });
+        return;
+      }
       const rtToSave = isRt ? rtInfo : oauthRtInfo;
       if (isRt || isOauth) {
         if (!rtToSave) return;
-        await onSaveRt({
+        const params: SaveRtAccountParams = {
           email: rtToSave.email,
           chatgptPlanType: rtToSave.chatgptPlanType,
           chatgptAccountId: rtToSave.chatgptAccountId,
@@ -226,14 +296,34 @@ const AccountModal: React.FC<AccountModalProps> = ({
           refreshToken: rtToSave.refreshToken,
           atExpiresAt: rtToSave.atExpiresAt,
           notes,
-        });
+        };
+        if (isEditingOauth && editingAccount) {
+          await onReauthOauth(editingAccount.id, params);
+        } else {
+          await onSaveRt(params);
+        }
       } else {
         await onSubmit({ token: input.trim(), notes }, !isTokenUnchanged);
       }
     } catch (err: any) {
-      setError(err?.message || err?.toString() || '保存时发生未知错误');
+      if (revision === modalRevision.current) setError(err?.message || err?.toString() || '保存时发生未知错误');
     } finally {
-      setIsSubmitting(false);
+      if (revision === modalRevision.current) setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveNotes = async () => {
+    if (!editingAccount) return;
+    const revision = modalRevision.current;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await onSaveNotes(editingAccount.id, notes);
+      if (revision === modalRevision.current) toast.success('备注已保存');
+    } catch (err: any) {
+      if (revision === modalRevision.current) setError(err?.toString() || '备注保存失败');
+    } finally {
+      if (revision === modalRevision.current) setIsSubmitting(false);
     }
   };
 
@@ -241,12 +331,15 @@ const AccountModal: React.FC<AccountModalProps> = ({
   const confirmEmail = confirmRt?.email || personalInfo?.email || '';
   const confirmPlanRaw = confirmRt?.chatgptPlanType || personalInfo?.chatgptPlanType || '';
   const confirmPlanLabel = PLAN_LABELS[confirmPlanRaw.toLowerCase()] || confirmPlanRaw || '未知';
+  const reauthIdentityError = isEditingOauth && editingAccount
+    ? getOauthReauthError(editingAccount, confirmRt, isEmailMaskingEnabled) : null;
+  const visibleError = step === 'confirm' ? reauthIdentityError || error : error;
 
   const renderError = () =>
-    error ? (
+    visibleError ? (
       <div className="flex items-start gap-1.5 px-3 py-2 bg-destructive/5 border border-destructive/20 text-destructive text-label rounded-md">
         <CircleAlert size={14} className="shrink-0 mt-0.5" />
-        <span className="break-all">{error}</span>
+        <span className="break-all">{visibleError}</span>
       </div>
     ) : null;
 
@@ -285,27 +378,85 @@ const AccountModal: React.FC<AccountModalProps> = ({
   );
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-[490px] p-6 sm:p-7 gap-5">
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open && !(isEditingOauth && isSubmitting)) onClose(); }}>
+      <DialogContent className={`max-w-[490px] p-6 sm:p-7 gap-5 ${isEditingOauth ? 'max-h-[90vh] overflow-y-auto' : ''}`}>
         <DialogHeader>
           <DialogTitle>
             {editingAccount ? '编辑账号配置' : '新增账号配置'}
           </DialogTitle>
           <DialogDescription>
             {editingAccount
-              ? '修改该账号的认证 Token 或备注信息。'
-              : '配置 Codex 认证凭据，支持 PAT、Refresh Token 及 OAuth 登录。'}
+              ? isEditingOauth ? '查看登录信息、修改备注或重新登录更新凭证。' : '修改该账号的认证 Token 或备注信息。'
+              : '支持 OpenAI 官方 API Key、PAT、Refresh Token 及 OAuth 登录。'}
           </DialogDescription>
         </DialogHeader>
 
-        {unsupportedFormat ? (
-          <div className="py-6 text-center space-y-4">
-            <p className="text-body text-muted-foreground leading-relaxed">
-              该账号为 OAuth / Refresh Token 登录的账号，无法直接编辑。<br />可删除后重新添加。
-            </p>
-            <Button onClick={onClose} size="sm">
-              关闭
-            </Button>
+        {step === 'form' && isEditingOauth && editingAccount ? (
+          <div className="flex flex-col gap-5">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2.5 rounded-lg border bg-muted/40 p-4 text-label">
+              <dt className="text-muted-foreground">账号邮箱</dt>
+              <dd className="min-w-0 break-all text-right font-medium select-text">{getDisplayedEmail(editingAccount.name, isEmailMaskingEnabled)}</dd>
+              <dt className="text-muted-foreground">订阅</dt>
+              <dd className="flex justify-end">{editingAccount.chatgptPlanType
+                ? <PlanBadge planType={editingAccount.chatgptPlanType} accountType={editingAccount.accountType} /> : '未知'}</dd>
+              <dt className="text-muted-foreground">认证方式</dt>
+              <dd className="text-right">OAuth / Refresh Token</dd>
+              <dt className="text-muted-foreground">ChatGPT 账号 ID</dt>
+              <dd className="min-w-0 break-all text-right font-mono text-caption select-text">{details?.accountId}</dd>
+              <dt className="text-muted-foreground">Access Token 过期时间</dt>
+              <dd className="text-right tabular-nums">{formatTokenExpiry(editingAccount.atExpiresAt)}</dd>
+              <dt className="text-muted-foreground">凭证状态</dt>
+              <dd className={`text-right font-medium ${editingAccount.canActivate ? 'text-success' : 'text-warning'}`}>
+                {editingAccount.canActivate ? '完整' : '需重新登录'}
+              </dd>
+              <dt className="text-muted-foreground">Access Token</dt>
+              <dd className="text-right font-mono text-caption">{details?.accessToken}</dd>
+              <dt className="text-muted-foreground">Refresh Token</dt>
+              <dd className="text-right font-mono text-caption">{details?.refreshToken}</dd>
+            </dl>
+
+            <div>
+              <label htmlFor="oauthNotes" className="mb-1.5 block text-label font-medium">备注 (可选)</label>
+              <div className="flex items-center gap-2">
+                <Input id="oauthNotes" value={notes} onChange={event => setNotes(event.target.value)}
+                  placeholder="为账号添加备注…" className="min-w-0 text-body" disabled={isSubmitting} />
+                <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" disabled={isSubmitting || isValidating}
+                  onClick={() => void handleSaveNotes()}>保存</Button>
+              </div>
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <h3 className="text-body font-semibold">重新登录</h3>
+                <p className="mt-1 text-caption text-muted-foreground">请登录同一账号，确认后替换此账号的登录凭证。</p>
+              </div>
+              <Select value={authMethod} disabled={isValidating || isSubmitting} onChange={value => {
+                setAuthMethod(value as 'oauth' | 'refresh');
+                setInput('');
+                setRtInfo(null);
+                setOauthInfo(null);
+                setOauthRtInfo(null);
+                setManualUrl('');
+                setError(null);
+              }} options={[
+                { value: 'oauth', label: 'OAuth 登录' },
+                { value: 'refresh', label: 'Refresh Token' },
+              ]} />
+              {isRt && (
+                <div>
+                  <label htmlFor="reauthRefreshToken" className="mb-1.5 block text-label font-medium">Refresh Token</label>
+                  <Input id="reauthRefreshToken" type="password" autoComplete="off" spellCheck={false}
+                    value={input} onChange={event => { setInput(event.target.value); setError(null); }}
+                    placeholder="粘贴新的 Refresh Token 或登录 JSON" className="font-mono text-body" />
+                  <p className="mt-1.5 text-caption text-muted-foreground">Refresh Token 一次性使用，兑换后旧凭证失效。</p>
+                </div>
+              )}
+            </div>
+            {renderFooterButtons(
+              isRt ? '验证并继续' : '开始 OAuth 登录', isValidating || isSubmitting,
+              () => { if (isRt) void handleValidate(); else void handleStartOauth(); },
+              isRt && !input.trim(), '关闭', onClose,
+            )}
           </div>
         ) : step === 'form' ? (
           <div className="flex flex-col gap-5">
@@ -316,8 +467,21 @@ const AccountModal: React.FC<AccountModalProps> = ({
                 </label>
                 <Select
                   value={authMethod}
-                  onChange={(value) => { setAuthMethod(value as AuthMethod); setStep('form'); setError(null); setPersonalInfo(null); setRtInfo(null); setOauthInfo(null); setOauthRtInfo(null); }}
+                  disabled={!!editingAccount}
+                  onChange={(value) => {
+                    if (value === authMethod) return;
+                    setAuthMethod(value as AuthMethod);
+                    setInput('');
+                    setOriginalToken('');
+                    setStep('form');
+                    setError(null);
+                    setPersonalInfo(null);
+                    setRtInfo(null);
+                    setOauthInfo(null);
+                    setOauthRtInfo(null);
+                  }}
                   options={[
+                    { value: 'apiKey', label: 'OpenAI API Key（官方）' },
                     { value: 'personal', label: 'Personal Access Token' },
                     { value: 'refresh', label: 'Refresh Token' },
                     { value: 'oauth', label: 'OAuth 登录' }
@@ -335,20 +499,32 @@ const AccountModal: React.FC<AccountModalProps> = ({
                 )}
               </div>
 
+              {isApiKey && (
+                <div>
+                  <label htmlFor="apiAccountName" className="block text-label font-medium text-foreground mb-1.5">
+                    账号名称 (可选)
+                  </label>
+                  <Input id="apiAccountName" value={name} onChange={(event) => setName(event.target.value)}
+                    placeholder="例如：我的 OpenAI API" className="text-body" />
+                </div>
+              )}
+
               {!isOauth && (
                 <div>
                   <label htmlFor="tokenInput" className="block text-label font-medium text-foreground mb-1.5">
-                    {isRt ? 'Refresh Token' : 'Personal Access Token'} <span className="text-destructive">*</span>
+                    {isApiKey ? 'OpenAI API Key' : isRt ? 'Refresh Token' : 'Personal Access Token'} <span className="text-destructive">*</span>
                   </label>
                   <Input
-                    type="text"
+                    type={isApiKey ? 'password' : 'text'}
+                    autoComplete={isApiKey ? 'new-password' : 'off'}
+                    spellCheck={false}
                     id="tokenInput"
                     value={input}
                     onChange={(e) => { setInput(e.target.value); setError(null); }}
-                    placeholder={isRt ? '可粘贴 JSON（自动提取 refresh_token）或直接粘贴 rt...' : '在此输入或粘贴 Token...'}
+                    placeholder={isApiKey ? 'sk-... 或 API Key 登录的 auth.json 内容' : isRt ? '可粘贴 JSON（自动提取 refresh_token）或直接粘贴 rt...' : '在此输入或粘贴 Token...'}
                     className="font-mono text-body"
                   />
-                  {!isRt && isTokenUnchanged && (
+                  {!isApiKey && !isRt && isTokenUnchanged && (
                     <p className="mt-1.5 text-caption text-success">
                       Token 未变化，保存将仅更新备注，不会重新获取信息与额度。
                     </p>
@@ -373,7 +549,9 @@ const AccountModal: React.FC<AccountModalProps> = ({
               <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 text-label text-muted-foreground leading-relaxed">
                 <Info size={14} className="shrink-0 mt-0.5 text-muted-foreground" />
                 <span>
-                  {isOauth
+                  {isApiKey
+                    ? '使用 OpenAI 官方 API 额度，按量计费。保存后可手动发送测试消息。'
+                    : isOauth
                     ? '登录成功后邮箱与订阅自动解析；限额类型在额度刷新后自动判断。'
                     : isRt
                       ? '邮箱与订阅将从兑换的 Access Token 自动解析；额度将在刷新后自动获取。'
@@ -383,10 +561,12 @@ const AccountModal: React.FC<AccountModalProps> = ({
             </div>
 
             {renderFooterButtons(
-              isOauth ? '开始 OAuth 登录' : isTokenUnchanged && !isRt ? '保存' : '验证并继续',
-              isOauth ? isValidating : isTokenUnchanged && !isRt ? isSubmitting : isValidating,
+              isApiKey ? '保存' : isOauth ? '开始 OAuth 登录' : isTokenUnchanged && !isRt ? '保存' : '验证并继续',
+              isApiKey ? isSubmitting : isOauth ? isValidating : isTokenUnchanged && !isRt ? isSubmitting : isValidating,
               () => {
-                if (isOauth) {
+                if (isApiKey) {
+                  void handleConfirmSave();
+                } else if (isOauth) {
                   void handleStartOauth();
                 } else if (isTokenUnchanged && !isRt) {
                   void handleConfirmSave();
@@ -487,7 +667,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
               <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-label text-muted-foreground shrink-0">账号邮箱</span>
-                  <span className="text-subtitle font-medium text-foreground select-text break-all text-right">{confirmEmail}</span>
+                  <span className="text-subtitle font-medium text-foreground select-text break-all text-right">{getDisplayedEmail(confirmEmail, isEmailMaskingEnabled)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-label text-muted-foreground shrink-0">订阅方式</span>
@@ -498,7 +678,9 @@ const AccountModal: React.FC<AccountModalProps> = ({
               <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 text-label text-muted-foreground leading-relaxed">
                 <Info size={14} className="shrink-0 mt-0.5 text-muted-foreground" />
                 <span>
-                  {isOauth
+                  {isEditingOauth
+                    ? '确认后将替换此账号的登录凭证，请确认登录的是同一账号。'
+                    : isOauth
                     ? '确认后保存账号；登录已成功，Refresh Token 将用于后续自动刷新。'
                     : isRt
                       ? '确认后保存账号；Refresh Token 已一次性消耗，无法重复兑换。'
@@ -507,7 +689,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
               </div>
             </div>
 
-            {renderFooterButtons('确认保存', isSubmitting, () => void handleConfirmSave(), false, '返回修改', () => setStep(isOauth ? 'oauth' : 'form'))}
+            {renderFooterButtons(isEditingOauth ? '确认替换凭证' : '确认保存', isSubmitting, () => void handleConfirmSave(), !!reauthIdentityError, '返回修改', () => setStep(isOauth ? 'oauth' : 'form'))}
           </div>
         )}
       </DialogContent>

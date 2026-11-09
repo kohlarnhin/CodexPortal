@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECTION_BUDGET: Duration = Duration::from_secs(12);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
+const DAEMON_NOT_RUNNING: &str = "共享 app-server 未运行";
 
 struct AppServerProbe {
     engine: CodexExecutable,
@@ -66,11 +67,17 @@ fn probe_engine(engine: CodexExecutable, home: &Path) -> AppServerProbe {
     };
     if !output.status.success() {
         // 仅归类固定的 CLI 错误，不记录可能包含账号或目录信息的输出正文。
-        let unsupported = [&output.stdout, &output.stderr].into_iter().any(|bytes| {
-            let text = String::from_utf8_lossy(bytes);
-            text.contains("unrecognized subcommand") || text.contains("unexpected argument")
+        let text = [&output.stdout, &output.stderr].into_iter()
+            .map(|bytes| String::from_utf8_lossy(bytes))
+            .collect::<String>();
+        probe.failure = Some(if text.contains("unrecognized subcommand") || text.contains("unexpected argument") {
+            "不支持 daemon 查询命令"
+        } else if text.contains("failed to connect to") {
+            // daemon 未启动时控制入口不存在，version 查询以连接失败退出。
+            DAEMON_NOT_RUNNING
+        } else {
+            "daemon 查询命令执行失败"
         });
-        probe.failure = Some(if unsupported { "不支持 daemon 查询命令" } else { "daemon 查询命令执行失败" });
         return probe;
     }
     let Ok(metadata) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
@@ -123,6 +130,41 @@ fn native_executable(path: &Path) -> bool {
         [0xfe, 0xed, 0xfa, 0xcf] | [0xcf, 0xfa, 0xed, 0xfe] |
         [0xca, 0xfe, 0xba, 0xbe] | [0xbe, 0xba, 0xfe, 0xca] |
         [0xca, 0xfe, 0xba, 0xbf] | [0xbf, 0xba, 0xfe, 0xca])
+}
+
+fn native_proxy_candidates(engine: &CodexExecutable) -> Vec<CodexExecutable> {
+    if native_executable(&engine.path) { return vec![engine.clone()]; }
+    let (package, target) = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "x86_64") => ("@openai/codex-darwin-x64", "x86_64-apple-darwin"),
+        ("macos", "aarch64") => ("@openai/codex-darwin-arm64", "aarch64-apple-darwin"),
+        ("linux" | "android", "x86_64") => ("@openai/codex-linux-x64", "x86_64-unknown-linux-musl"),
+        ("linux" | "android", "aarch64") => ("@openai/codex-linux-arm64", "aarch64-unknown-linux-musl"),
+        ("windows", "x86_64") => ("@openai/codex-win32-x64", "x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => ("@openai/codex-win32-arm64", "aarch64-pc-windows-msvc"),
+        _ => return Vec::new(),
+    };
+    let Ok(path) = fs::canonicalize(&engine.path) else { return Vec::new() };
+    let Some(parent) = path.parent() else { return Vec::new() };
+    // npm 的 Unix 入口指向 bin/codex.js；Windows 的 cmd 入口与 node_modules 同级。
+    let roots = parent.parent().map(Path::to_path_buf).into_iter()
+        .chain(std::iter::once(parent.join("node_modules/@openai/codex")));
+    let mut candidates = Vec::new();
+    for root in roots {
+        let is_codex_package = fs::read(root.join("package.json")).ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|metadata| metadata.get("name").and_then(serde_json::Value::as_str) == Some("@openai/codex"));
+        if !is_codex_package { continue; }
+        // 与官方 npm 启动器一致，优先解析平台依赖，再尝试旧版 vendor 布局。
+        let vendors = root.ancestors()
+            .map(|directory| directory.join("node_modules").join(package).join("vendor"))
+            .chain(std::iter::once(root.join("vendor")));
+        for vendor in vendors {
+            let executable = vendor.join(target).join("bin")
+                .join(if cfg!(windows) { "codex.exe" } else { "codex" });
+            if native_executable(&executable) { candidates.push(engine.with_path(executable)); }
+        }
+    }
+    candidates
 }
 
 fn read_upgrade_response(mut output: Box<dyn Read + Send>)
@@ -209,12 +251,16 @@ pub(super) fn connect_app_server(
     let mut seen_sockets = HashSet::new();
     let mut native_engines = Vec::new();
     let mut seen_engines = HashSet::new();
-    for engine in probes.iter().filter_map(|probe| probe.managed_engine.as_ref())
-        .chain(probes.iter().map(|probe| &probe.engine))
+    for (engine, probe) in probes.iter()
+        .filter_map(|probe| probe.managed_engine.as_ref().map(|engine| (engine, probe)))
+        .chain(probes.iter().map(|probe| (&probe.engine, probe)))
     {
-        let path = fs::canonicalize(&engine.path).unwrap_or_else(|_| engine.path.clone());
-        if native_executable(&engine.path) && seen_engines.insert(path) {
-            native_engines.push(engine);
+        // daemon 查询失败时也能从 npm 安装解析原生引擎，保留默认 proxy 的回退机会；
+        // 已确认控制入口不存在时，默认 proxy 只会连接同一地址，不再启动注定失败的代理。
+        let default_proxy = probe.failure != Some(DAEMON_NOT_RUNNING);
+        for engine in native_proxy_candidates(engine) {
+            let path = fs::canonicalize(&engine.path).unwrap_or_else(|_| engine.path.clone());
+            if seen_engines.insert(path) { native_engines.push((engine, default_proxy)); }
         }
     }
     for probe in &probes {
@@ -249,7 +295,7 @@ pub(super) fn connect_app_server(
         }
     }
     // 先遍历各控制地址，再尝试不同版本的代理，避免异常 CLI 地址耗尽桌面端的机会。
-    for engine in &native_engines {
+    for (engine, _) in &native_engines {
         for (socket, _) in &sockets {
             if !is_current() { return Err("账号上下文已变化，等待重新连接。".into()); }
             let timeout = HANDSHAKE_TIMEOUT.min(deadline.saturating_duration_since(Instant::now()));
@@ -262,11 +308,11 @@ pub(super) fn connect_app_server(
     }
     // daemon 查询不可用的版本仍可能提供连接默认控制入口的 proxy。
     // 只运行原生引擎，避免 npm/批处理启动器留下代理子进程。
-    for engine in native_engines {
+    for (engine, _) in native_engines.into_iter().filter(|(_, default_proxy)| *default_proxy) {
         if !is_current() { return Err("账号上下文已变化，等待重新连接。".into()); }
         let timeout = HANDSHAKE_TIMEOUT.min(deadline.saturating_duration_since(Instant::now()));
         if timeout.is_zero() { break; }
-        match connect_proxy(engine, &home, None, request, timeout) {
+        match connect_proxy(&engine, &home, None, request, timeout) {
             Ok(connection) => return Ok(connection),
             Err(error) => add_failure(&mut failures, engine.label(), error),
         }
