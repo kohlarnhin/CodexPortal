@@ -33,7 +33,7 @@ pub(super) struct Snapshot {
     dark_menu: bool,
 }
 
-fn display_name(name: &str, masking: bool) -> String {
+pub(crate) fn display_name(name: &str, masking: bool) -> String {
     let name = name.trim();
     if masking {
         if let Some((local, domain)) = name.rsplit_once('@') {

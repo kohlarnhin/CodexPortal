@@ -4,6 +4,7 @@ mod codex;
 mod db;
 mod http;
 mod logging;
+mod mcp;
 mod process;
 mod sessions;
 mod skills;
@@ -27,6 +28,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::sync::Mutex;
 use tauri::Manager;
+
+pub use mcp::run_if_requested as run_mcp_if_requested;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -68,6 +71,7 @@ pub fn run() {
             });
             app.manage(codex::events::EventListenerState::default());
             app.manage(accounts::scheduling::ScheduleState::default());
+            mcp::start(app.handle());
 
             tray::start(app.handle().clone())?;
             start_usage_scheduler(app.handle().clone());
@@ -111,6 +115,8 @@ pub fn run() {
             tray::set_tray_email_masking,
             tray::get_tray_icon_state,
             tray::set_tray_icon,
+            mcp::install::get_claude_mcp_status,
+            mcp::install::install_claude_mcp,
             auth::validate_personal_token,
             auth::exchange_refresh_token,
             accounts::save_rt_account,
@@ -159,7 +165,10 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_app_handle, event| match event {
-        tauri::RunEvent::Exit => codex::events::stop_event_listener(_app_handle),
+        tauri::RunEvent::Exit => {
+            mcp::stop(_app_handle);
+            codex::events::stop_event_listener(_app_handle);
+        }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
             has_visible_windows,

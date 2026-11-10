@@ -113,6 +113,62 @@ fn recovery_at(account: &Account, now: i64) -> Option<i64> {
         .max()
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentAccount {
+    name: String,
+    usable: bool,
+    short_remaining_percent: u8,
+    short_resets_at: Option<String>,
+    long_remaining_percent: u8,
+    long_resets_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentStatus {
+    current: Option<AgentAccount>,
+    next: Option<AgentAccount>,
+    all_exhausted: bool,
+    earliest_recovery_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SwitchResult {
+    switched: bool,
+    #[serde(flatten)]
+    status: AgentStatus,
+}
+
+fn local_timestamp(timestamp: Option<i64>) -> Option<String> {
+    timestamp.and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0))
+        .map(|time| time.with_timezone(&Local).to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
+}
+
+fn agent_account(account: &Account, now: i64) -> AgentAccount {
+    let (short, long) = windows(account, now);
+    AgentAccount {
+        name: crate::tray::display_name(&account.name, true),
+        usable: usable(account, now),
+        short_remaining_percent: short.remaining.round() as u8,
+        short_resets_at: local_timestamp(short.resets_at),
+        long_remaining_percent: long.remaining.round() as u8,
+        long_resets_at: local_timestamp(long.resets_at),
+    }
+}
+
+pub(crate) fn agent_status(store: &AccountStore, now: i64) -> AgentStatus {
+    let status = evaluate_schedule(&store.accounts, store.active_account_id.as_deref(), now).status;
+    AgentStatus {
+        current: store.accounts.iter().find(|account| Some(&account.id) == store.active_account_id.as_ref())
+            .map(|account| agent_account(account, now)),
+        next: status.next.and_then(|next| store.accounts.iter().find(|account| account.id == next.id))
+            .map(|account| agent_account(account, now)),
+        all_exhausted: status.all_exhausted,
+        earliest_recovery_at: local_timestamp(status.earliest_recovery_at),
+    }
+}
+
 fn schedule_account(account: &Account, now: i64) -> ScheduleAccount {
     let (primary, _) = windows(account, now);
     ScheduleAccount {
@@ -202,6 +258,7 @@ impl EvaluationState {
 #[derive(Default)]
 pub(crate) struct ScheduleState {
     evaluation: Mutex<EvaluationState>,
+    run: tauri::async_runtime::Mutex<()>,
 }
 
 /// 请求合并为一位 pending；刷新与 daemon 重启期间不会产生并行评估。
@@ -279,6 +336,35 @@ async fn refresh_for_evaluation(app: &tauri::AppHandle, state: &AppState, id: &s
 }
 
 async fn evaluate_and_switch(app: &tauri::AppHandle) -> Result<(), String> {
+    let schedule = app.state::<ScheduleState>();
+    let _run = schedule.run.lock().await;
+    evaluate_accounts(app, HashSet::new()).await
+}
+
+pub(crate) async fn switch_on_demand(app: &tauri::AppHandle) -> Result<SwitchResult, String> {
+    logging::info("mcp", "收到 MCP 切换请求，正在核对当前账号额度。");
+    let schedule = app.state::<ScheduleState>();
+    let _run = schedule.run.lock().await;
+    let state = app.state::<AppState>();
+    let store = read_store(&state)?;
+    let before = store.active_account_id;
+    let mut verified = HashSet::new();
+    if let Some(current) = store.accounts.iter()
+        .find(|account| Some(&account.id) == before.as_ref()).filter(|account| eligible(account)) {
+        if !refresh_for_evaluation(app, &state, &current.id).await? {
+            return Err("当前账号额度查询失败，未执行切换。".into());
+        }
+        verified.insert(current.id.clone());
+    }
+    evaluate_accounts(app, verified).await?;
+    let store = read_store(&state)?;
+    Ok(SwitchResult {
+        switched: before != store.active_account_id,
+        status: agent_status(&store, Utc::now().timestamp()),
+    })
+}
+
+async fn evaluate_accounts(app: &tauri::AppHandle, mut verified: HashSet<String>) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut excluded: HashSet<String> = {
         let schedule = app.state::<ScheduleState>();
@@ -293,6 +379,7 @@ async fn evaluate_and_switch(app: &tauri::AppHandle) -> Result<(), String> {
 
     let current = store.accounts.iter().find(|account| Some(&account.id) == store.active_account_id.as_ref());
     let mut to_refresh: Vec<_> = store.accounts.iter().filter(|account| eligible(account))
+        .filter(|account| !verified.contains(&account.id))
         .filter(|account| !excluded.contains(&account.id))
         .filter(|account| current.is_none_or(|current| !usable(current, now)
             || sort_key(account, now) <= sort_key(current, now)))
@@ -303,7 +390,6 @@ async fn evaluate_and_switch(app: &tauri::AppHandle) -> Result<(), String> {
         let b_current = Some(&b.id) == store.active_account_id.as_ref();
         b_current.cmp(&a_current).then_with(|| sort_key(a, now).cmp(&sort_key(b, now)))
     });
-    let mut verified = HashSet::new();
     for account in to_refresh {
         if refresh_for_evaluation(app, &state, &account.id).await? {
             verified.insert(account.id.clone());
@@ -596,5 +682,82 @@ mod tests {
         assert_eq!(evaluate_candidates(&store, &excluded, NOW).decision.target_id(), Some("later"));
         let excluded = HashSet::from(["target".into(), "later".into(), "current".into()]);
         assert_eq!(evaluate_candidates(&store, &excluded, NOW).decision, Decision::Keep);
+    }
+
+    fn assert_local_time(value: &serde_json::Value, timestamp: i64) {
+        let text = value.as_str().unwrap();
+        let parsed = chrono::DateTime::parse_from_rfc3339(text).unwrap();
+        assert_eq!(parsed.timestamp(), timestamp);
+        assert_eq!(parsed.timestamp_subsec_nanos(), 0);
+        assert_eq!(parsed.offset(), chrono::DateTime::from_timestamp(timestamp, 0).unwrap()
+            .with_timezone(&Local).offset());
+        assert!(!text.contains('.'));
+    }
+
+    #[test]
+    fn agent_status_masks_names_reports_both_windows_and_uses_schedule_successor() {
+        let mut current = account("current", 63.4, Some(NOW + 1800));
+        secondary(&mut current, 20.4, NOW + 10_000);
+        let mut successor = account("successor", 5.0, Some(NOW + 60));
+        successor.name = "next@example.invalid".into();
+        let store = AccountStore {
+            active_account_id: Some("current".into()),
+            accounts: vec![current, account("later", 0.0, Some(NOW + 900)), successor],
+        };
+        let status = serde_json::to_value(agent_status(&store, NOW)).unwrap();
+        let current = &status["current"];
+        assert_eq!(current.as_object().unwrap().len(), 6);
+        assert_eq!(current["name"], "t***t@example.invalid");
+        assert_eq!(current["usable"], true);
+        assert_eq!(current["shortRemainingPercent"], 37);
+        assert_eq!(current["longRemainingPercent"], 80);
+        assert_local_time(&current["shortResetsAt"], NOW + 1800);
+        assert_local_time(&current["longResetsAt"], NOW + 10_000);
+        assert_eq!(status["next"]["name"], "n***t@example.invalid");
+        assert_eq!(status["next"]["usable"], true);
+        assert_eq!(status["next"]["shortRemainingPercent"], 95);
+        assert_local_time(&status["next"]["shortResetsAt"], NOW + 60);
+        assert_eq!(status["next"]["longRemainingPercent"], 100);
+        assert!(status["next"]["longResetsAt"].is_null());
+        assert_eq!(status["allExhausted"], false);
+        assert!(status["earliestRecoveryAt"].is_null());
+    }
+
+    #[test]
+    fn agent_status_reports_exhaustion_and_earliest_full_recovery() {
+        let mut current = account("current", 100.0, Some(NOW + 600));
+        secondary(&mut current, 100.0, NOW + 1200);
+        let store = AccountStore {
+            active_account_id: Some("current".into()),
+            accounts: vec![current, account("sooner", 100.0, Some(NOW + 900))],
+        };
+        let status = serde_json::to_value(agent_status(&store, NOW)).unwrap();
+        assert_eq!(status["current"]["usable"], false);
+        assert_eq!(status["current"]["shortRemainingPercent"], 0);
+        assert_eq!(status["current"]["longRemainingPercent"], 0);
+        assert!(status["next"].is_null());
+        assert_eq!(status["allExhausted"], true);
+        assert_local_time(&status["earliestRecoveryAt"], NOW + 900);
+    }
+
+    #[test]
+    fn agent_status_handles_missing_accounts_and_expired_windows_and_flattens_switch_result() {
+        for id in [None, Some("deleted".into())] {
+            let store = AccountStore { active_account_id: id, accounts: vec![] };
+            assert_eq!(serde_json::to_value(agent_status(&store, NOW)).unwrap(), serde_json::json!({
+                "current": null, "next": null, "allExhausted": false, "earliestRecoveryAt": null
+            }));
+        }
+        let mut current = account("current", 100.0, Some(NOW));
+        secondary(&mut current, 100.0, NOW - 1);
+        let store = AccountStore { active_account_id: Some("current".into()), accounts: vec![current] };
+        let result = serde_json::to_value(SwitchResult { switched: false, status: agent_status(&store, NOW) }).unwrap();
+        assert_eq!(result.as_object().unwrap().len(), 5);
+        assert_eq!(result["switched"], false);
+        assert_eq!(result["current"]["usable"], true);
+        assert_eq!(result["current"]["shortRemainingPercent"], 100);
+        assert_eq!(result["current"]["longRemainingPercent"], 100);
+        assert!(result["current"]["shortResetsAt"].is_null());
+        assert!(result["current"]["longResetsAt"].is_null());
     }
 }

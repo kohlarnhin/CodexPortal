@@ -1,10 +1,12 @@
 import React from 'react';
 import { useQuotaQuietHours } from '../hooks/useQuotaQuietHours';
+import { useClaudeMcp } from '../hooks/useClaudeMcp';
 import type { useSystemTray } from '../hooks/useSystemTray';
 import ToggleSwitch from './ToggleSwitch';
 import ModelPricingModal from './ModelPricingModal';
 import PageHeader from './ui/page-header';
-import { Check, Eye, LoaderCircle, Moon, PanelTop, Power, Table } from 'lucide-react';
+import { Button } from './ui/button';
+import { Check, Eye, LoaderCircle, Moon, PanelTop, Plug, Power, Table } from 'lucide-react';
 
 interface AppSettingsProps {
   isEmailMaskingEnabled: boolean;
@@ -26,6 +28,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({
   systemTray,
 }) => {
   const quietHours = useQuotaQuietHours();
+  const claudeMcp = useClaudeMcp();
   const quietHoursDisabled = quietHours.isLoading || quietHours.isSaving || !quietHours.settings;
   const crossesMidnight = !!quietHours.settings
     && quietHours.settings.startTime > quietHours.settings.endTime;
@@ -191,6 +194,49 @@ const AppSettings: React.FC<AppSettingsProps> = ({
             </div>
           </div>
           <ModelPricingModal />
+        </div>
+
+        <div className="border-t">
+          <div className="flex items-center justify-between gap-6 px-5 py-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">
+                <Plug aria-hidden="true" size={16} />
+              </div>
+              <div className="min-w-0">
+                <div className="text-subtitle font-medium text-foreground">MCP 服务</div>
+                <div className="mt-0.5 text-label leading-relaxed text-muted-foreground">
+                  让 Claude Code 等 Agent 查看账号额度、触发智能切换
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              {claudeMcp.status === 'installed' ? (
+                <span className="text-label text-success font-medium flex items-center gap-1 animate-fade-in">
+                  <Check aria-hidden="true" size={12} strokeWidth={2.5} />
+                  已安装到 Claude Code
+                </span>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={claudeMcp.isLoading || claudeMcp.isInstalling || !claudeMcp.status || claudeMcp.status === 'claudeNotFound'}
+                  onClick={() => void claudeMcp.install()}
+                >
+                  {claudeMcp.isLoading || claudeMcp.isInstalling ? (
+                    <LoaderCircle aria-hidden="true" size={12} className="animate-spin" />
+                  ) : null}
+                  {claudeMcp.isInstalling ? '安装中…'
+                    : claudeMcp.status === 'outdated' ? '更新 Claude Code 配置' : '安装到 Claude Code'}
+                </Button>
+              )}
+              {claudeMcp.status === 'claudeNotFound' ? (
+                <span className="text-caption text-muted-foreground">未检测到 Claude Code</span>
+              ) : claudeMcp.showInstalledFeedback ? (
+                <span className="text-caption text-muted-foreground">新开的 Claude Code 会话生效</span>
+              ) : null}
+            </div>
+          </div>
+          {claudeMcp.error ? <p role="alert" className="px-5 pb-4 text-label text-destructive">{claudeMcp.error}</p> : null}
         </div>
       </div>
     </div>

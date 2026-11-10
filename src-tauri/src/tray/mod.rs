@@ -10,6 +10,7 @@ use std::time::Duration;
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use view::{Snapshot, TrayMenu};
+pub(crate) use view::display_name;
 
 const TRAY_PREFERENCE_KEY: &str = "tray_enabled";
 
