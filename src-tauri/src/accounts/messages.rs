@@ -1,6 +1,7 @@
 use crate::accounts::usage::{
-    account_usage_context, at_is_due, begin_account_refresh, save_fallback_reset,
-    persist_rotated_access_token, refresh_account_usage_inner, report_account_request_error,
+    account_usage_context, at_is_due, begin_account_refresh, effective_next_refresh_at,
+    finish_account_activation, persist_rotated_access_token, refresh_account_usage_observation,
+    report_account_request_error, schedule_account_usage_retry, ActivationSchedule, UsageObservation,
 };
 use crate::auth::{
     exchange_rt_for_at, extract_openai_api_key, extract_personal_access_token, PersonalAccessTokenMetadata,
@@ -12,6 +13,7 @@ use crate::state::AppState;
 use rusqlite::params;
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write;
@@ -386,13 +388,84 @@ pub(crate) async fn send_test_message(
         }).await.map_err(|_| "API 测试任务失败")??;
         return Ok(TestMessageResult { model, input: TEST_MESSAGE_CONTENT.to_string(), output });
     }
-    let result = send_account_message(&app, &state, &id, model).await;
+    send_subscription_message(&app, &state, &id, model).await.map(|(result, _)| result)
+}
+
+/// 自动请求拿到账号互斥后复查计划，避免旧候选忽略新的窗口、退避或禁用状态。
+pub(crate) async fn activate_due_account(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+) -> Result<bool, String> {
+    {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        super::ensure_account_enabled(&db, id)?;
+    }
+    let _guard = match begin_account_refresh(state, id, Some(app.clone())) {
+        Ok(guard) => guard,
+        Err(error) if error == "该账号正在刷新，请稍候。" => return Ok(false),
+        Err(error) => {
+            schedule_account_usage_retry(app, state, id, "自动激活未执行", &error);
+            return Err(error);
+        }
+    };
+    let scheduled_at = {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        let store = super::read_accounts(&db)?;
+        let Some(account) = store.accounts.iter()
+            .find(|account| account.id == id && account.enabled && account.can_refresh_usage)
+        else { return Ok(false) };
+        let now = chrono::Utc::now();
+        let scheduled_at = effective_next_refresh_at(
+            account.usage.as_ref(), account.next_refresh_at.as_deref(),
+        ).unwrap_or(now);
+        if scheduled_at > now { return Ok(false) }
+        scheduled_at
+    };
+    // 仅对 Portal 内部随机账号 ID 做摘要，不记录邮箱、名称或认证内容。
+    let tag = format!("{:x}", Sha256::digest(id.as_bytes()));
+    crate::logging::info("auto-activation", format!(
+        "账号 {} 开始自动激活，计划时间 {}。", &tag[..12], scheduled_at.to_rfc3339(),
+    ));
+    match send_subscription_message(app, state, id, DEFAULT_ACTIVATION_MODEL.to_string()).await {
+        Ok((_, schedule)) => {
+            let outcome = if schedule.window_pending {
+                "请求成功，窗口尚未确认，等待重试"
+            } else {
+                "激活成功，已确认未来窗口"
+            };
+            crate::logging::info("auto-activation", format!(
+                "账号 {} {}，下次计划 {}。", &tag[..12], outcome, schedule.next_refresh_at.to_rfc3339(),
+            ));
+            Ok(true)
+        }
+        Err(error) => {
+            crate::logging::warn("auto-activation", format!(
+                "账号 {} 自动激活流程失败，已请求安排重试，请检查账号或网络。", &tag[..12],
+            ));
+            Err(error)
+        }
+    }
+}
+
+/// 手动与自动订阅激活共用流程，调用者在请求和后续排期期间持有账号刷新互斥。
+async fn send_subscription_message(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+    model: String,
+) -> Result<(TestMessageResult, ActivationSchedule), String> {
+    let result = send_account_message(app, state, id, model).await;
     if let Err(error) = &result {
-        save_fallback_reset(&app, &state, &id, "额度窗口激活失败", error);
+        schedule_account_usage_retry(app, state, id, "额度窗口激活失败", error);
     }
     let result = result?;
-    refresh_account_usage_inner(&app, &state, &id).await?;
-    Ok(result)
+    refresh_account_usage_observation(app, state, id, UsageObservation::Activation).await?;
+    let schedule = finish_account_activation(app, state, id).map_err(|error| {
+        schedule_account_usage_retry(app, state, id, "激活后排期失败", &error);
+        error
+    })?;
+    Ok((result, schedule))
 }
 
 async fn send_account_message(

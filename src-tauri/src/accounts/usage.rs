@@ -34,7 +34,8 @@ pub(crate) struct RateLimitSnapshot {
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 
-const USAGE_RESET_FALLBACK_SECONDS: i64 = 5 * 60;
+const USAGE_RETRY_DELAY_SECONDS: i64 = 60;
+const USAGE_INITIAL_DELAY_SECONDS: i64 = 6 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AccountUsageWindow {
@@ -176,8 +177,7 @@ pub(crate) fn fetch_account_usage(
     })
 }
 
-/// 成功和失败都按短周期重置时间加一分钟安排刷新。
-pub(crate) fn compute_next_refresh_at(usage: &AccountUsage, now: DateTime<Utc>) -> DateTime<Utc> {
+fn primary_activation_deadline(usage: &AccountUsage) -> Option<DateTime<Utc>> {
     usage
         .primary
         .as_ref()
@@ -185,8 +185,98 @@ pub(crate) fn compute_next_refresh_at(usage: &AccountUsage, now: DateTime<Utc>) 
         .filter(|reset| *reset > 0)
         .and_then(|reset| DateTime::from_timestamp(reset, 0))
         .and_then(|reset| reset.checked_add_signed(chrono::Duration::minutes(1)))
-        .filter(|next| *next > now)
-        .unwrap_or(now + chrono::Duration::seconds(USAGE_RESET_FALLBACK_SECONDS + 60))
+}
+
+fn parse_refresh_at(value: Option<&str>) -> Option<DateTime<Utc>> {
+    value
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|time| time.with_timezone(&Utc))
+}
+
+/// 已知窗口始终使用绝对的重置时间加一分钟，过期窗口仍然到期。
+pub(crate) fn compute_next_refresh_at(usage: &AccountUsage, now: DateTime<Utc>) -> DateTime<Utc> {
+    primary_activation_deadline(usage)
+        .unwrap_or_else(|| now + chrono::Duration::seconds(USAGE_INITIAL_DELAY_SECONDS))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsageObservation {
+    Query,
+    Activation,
+}
+
+fn retain_unexpired_window(
+    window: &mut Option<AccountUsageWindow>,
+    previous: Option<&AccountUsageWindow>,
+    now: DateTime<Utc>,
+) {
+    let Some(previous) = previous.filter(|previous| previous.resets_at
+        .filter(|reset| *reset > 0)
+        .and_then(|reset| DateTime::from_timestamp(reset, 0))
+        .is_some_and(|reset| reset > now)) else { return };
+    let window = window.get_or_insert_with(|| previous.clone());
+    // 百分比采用最新观测，未到期窗口的重置时间和时长保持不动。
+    window.resets_at = previous.resets_at;
+    window.window_minutes = previous.window_minutes;
+}
+
+/// 所有观测入口在数据库临界区内合并窗口和排期；只有激活后允许替换未到期窗口。
+pub(crate) fn reconcile_usage_observation(
+    usage: &mut AccountUsage,
+    previous: Option<&AccountUsage>,
+    existing: Option<&str>,
+    now: DateTime<Utc>,
+    observation: UsageObservation,
+) -> DateTime<Utc> {
+    if observation == UsageObservation::Query {
+        retain_unexpired_window(&mut usage.primary, previous.and_then(|usage| usage.primary.as_ref()), now);
+        retain_unexpired_window(&mut usage.secondary, previous.and_then(|usage| usage.secondary.as_ref()), now);
+    }
+    if let Some(deadline) = primary_activation_deadline(usage).filter(|deadline| *deadline > now) {
+        // 同一窗口中晚于截止时间的计划是显式退避/免打扰，普通查询不能取消它。
+        if observation == UsageObservation::Query
+            && previous.and_then(primary_activation_deadline) == Some(deadline)
+        {
+            return parse_refresh_at(existing).unwrap_or(deadline).max(deadline);
+        }
+        return deadline;
+    }
+    if observation == UsageObservation::Activation {
+        return retry_next_refresh_at(Some(usage), None, now);
+    }
+    parse_refresh_at(existing).unwrap_or_else(|| compute_next_refresh_at(usage, now))
+}
+
+/// 调度、免打扰和重试都不能早于已知窗口的重置时间加一分钟。
+pub(crate) fn effective_next_refresh_at(
+    usage: Option<&AccountUsage>,
+    existing: Option<&str>,
+) -> Option<DateTime<Utc>> {
+    parse_refresh_at(existing)
+        .into_iter()
+        .chain(usage.and_then(primary_activation_deadline))
+        .max()
+}
+
+fn retry_next_refresh_at(
+    usage: Option<&AccountUsage>,
+    existing: Option<&str>,
+    now: DateTime<Utc>,
+) -> DateTime<Utc> {
+    let retry_at = now + chrono::Duration::seconds(USAGE_RETRY_DELAY_SECONDS);
+    effective_next_refresh_at(usage, existing).unwrap_or(retry_at).max(retry_at)
+}
+
+fn read_usage_schedule(
+    db: &Connection,
+    id: &str,
+) -> Result<(Option<AccountUsage>, Option<String>), String> {
+    let (cached, next): (Option<String>, Option<String>) = db.query_row(
+        "SELECT usage_json, next_refresh_at FROM accounts WHERE id = ?1",
+        params![id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).map_err(|error| error.to_string())?;
+    Ok((parse_cached_usage(cached), next))
 }
 
 pub(crate) fn report_account_request_error(
@@ -210,8 +300,8 @@ pub(crate) fn report_account_request_error(
     );
 }
 
-/// 获取失败时只把重置时间写为五分钟后，额度百分比保留已有值。
-pub(crate) fn save_fallback_reset(
+/// 请求失败只安排重试，不改写服务端额度、重置时间或观测时间。
+pub(crate) fn schedule_account_usage_retry(
     app: &tauri::AppHandle,
     state: &AppState,
     id: &str,
@@ -220,46 +310,54 @@ pub(crate) fn save_fallback_reset(
 ) {
     let saved = (|| -> Result<(), String> {
         let db = state.db.lock().map_err(|error| error.to_string())?;
-        let cached = db.query_row(
-            "SELECT usage_json FROM accounts WHERE id = ?1",
-            params![id],
-            |row| row.get::<_, Option<String>>(0),
-        ).map_err(|error| error.to_string())?;
-        let now = Utc::now();
-        let mut usage = parse_cached_usage(cached).unwrap_or(AccountUsage {
-            primary: None,
-            secondary: None,
-            synced_at: now.to_rfc3339(),
-            request_started_at: None,
-            plan_type: None,
-        });
-        let primary = usage.primary.get_or_insert(AccountUsageWindow {
-            used_percent: None,
-            window_minutes: None,
-            resets_at: None,
-        });
-        primary.resets_at = Some(
-            (now + chrono::Duration::seconds(USAGE_RESET_FALLBACK_SECONDS)).timestamp(),
-        );
-        usage.synced_at = now.to_rfc3339();
-        usage.request_started_at = None;
-        let json = serde_json::to_string(&usage).map_err(|error| error.to_string())?;
-        let next = compute_next_refresh_at(&usage, now).to_rfc3339();
+        let (usage, existing) = read_usage_schedule(&db, id)?;
+        let next = retry_next_refresh_at(usage.as_ref(), existing.as_deref(), Utc::now());
         db.execute(
-            "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?3 WHERE id = ?4",
-            params![json, usage.synced_at, next, id],
+            "UPDATE accounts SET next_refresh_at = ?1 WHERE id = ?2",
+            params![next.to_rfc3339(), id],
         ).map_err(|error| error.to_string())?;
         Ok(())
     })();
     let message = match saved {
         Ok(()) => error.to_string(),
-        Err(save_error) => format!("{error}\n默认重置时间保存失败：{save_error}"),
+        Err(save_error) => format!("{error}\n重试计划保存失败：{save_error}"),
     };
     report_account_request_error(app, state, id, title, &message);
     let _ = app.emit(
         "usage-updated",
         AccountRefreshEvent { account_id: id.to_string() },
     );
+}
+
+pub(super) struct ActivationSchedule {
+    pub(super) next_refresh_at: DateTime<Utc>,
+    pub(super) window_pending: bool,
+}
+
+/// 调用者仍持有账号刷新互斥；成功请求尚未确认新窗口时也要有界退避。
+pub(super) fn finish_account_activation(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+) -> Result<ActivationSchedule, String> {
+    let db = state.db.lock().map_err(|error| error.to_string())?;
+    let (usage, existing) = read_usage_schedule(&db, id)?;
+    let now = Utc::now();
+    let window_pending = usage.as_ref().and_then(primary_activation_deadline)
+        .is_none_or(|deadline| deadline <= now + chrono::Duration::seconds(60));
+    let next_refresh_at = if window_pending {
+        retry_next_refresh_at(usage.as_ref(), existing.as_deref(), now)
+    } else {
+        effective_next_refresh_at(usage.as_ref(), existing.as_deref())
+            .unwrap_or_else(|| retry_next_refresh_at(usage.as_ref(), existing.as_deref(), now))
+    };
+    db.execute(
+        "UPDATE accounts SET next_refresh_at = ?1 WHERE id = ?2",
+        params![next_refresh_at.to_rfc3339(), id],
+    ).map_err(|error| error.to_string())?;
+    drop(db);
+    let _ = app.emit("usage-updated", AccountRefreshEvent { account_id: id.to_string() });
+    Ok(ActivationSchedule { next_refresh_at, window_pending })
 }
 
 /// 根据额度响应的长周期（secondary）窗口时长推导账号限额类型（周限/月限）。
@@ -282,8 +380,18 @@ fn persist_account_usage(
     expected_token: &str,
     usage: &AccountUsage,
 ) -> Result<(), String> {
+    persist_account_usage_observation(db, account_id, expected_token, usage, UsageObservation::Query)
+}
+
+fn persist_account_usage_observation(
+    db: &Connection,
+    account_id: &str,
+    expected_token: &str,
+    usage: &AccountUsage,
+    observation: UsageObservation,
+) -> Result<(), String> {
     let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
-    persist_account_usage_inner(&tx, account_id, expected_token, usage)?;
+    persist_account_usage_inner(&tx, account_id, expected_token, usage, observation)?;
     tx.commit().map_err(|e| e.to_string())
 }
 
@@ -292,16 +400,18 @@ fn persist_account_usage_inner(
     account_id: &str,
     expected_token: &str,
     usage: &AccountUsage,
+    observation: UsageObservation,
 ) -> Result<(), String> {
-    let (auth_json_content, existing_plan_type, stored_access_token, existing_chatgpt_plan_type) = db
+    let (auth_json_content, existing_plan_type, stored_access_token, existing_chatgpt_plan_type, existing_next_refresh_at) = db
         .query_row(
-            "SELECT auth_json_content, plan_type, access_token, chatgpt_plan_type FROM accounts WHERE id = ?1",
+            "SELECT auth_json_content, plan_type, access_token, chatgpt_plan_type, next_refresh_at FROM accounts WHERE id = ?1",
             params![account_id],
             |row| Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
             )),
         )
         .map_err(|_| "Account not found".to_string())?;
@@ -315,11 +425,11 @@ fn persist_account_usage_inner(
         return Err("账号认证已变更，请重新刷新额度".to_string());
     }
 
-    let updated_at: Option<String> = db
+    let (updated_at, previous): (Option<String>, Option<String>) = db
         .query_row(
-            "SELECT usage_updated_at FROM accounts WHERE id = ?1",
+            "SELECT usage_updated_at, usage_json FROM accounts WHERE id = ?1",
             params![account_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| e.to_string())?;
     // 请求期间已收到 session 额度时，响应的服务端取样顺序无法确定。
@@ -340,9 +450,13 @@ fn persist_account_usage_inner(
         return Ok(());
     }
 
-    let usage_json = serde_json::to_string(usage).map_err(|e| e.to_string())?;
-    let next_refresh_at = compute_next_refresh_at(usage, Utc::now()).to_rfc3339();
-    let plan_type = match derive_plan_type_from_usage(usage) {
+    let previous = parse_cached_usage(previous);
+    let mut usage = usage.clone();
+    let next_refresh_at = reconcile_usage_observation(
+        &mut usage, previous.as_ref(), existing_next_refresh_at.as_deref(), Utc::now(), observation,
+    ).to_rfc3339();
+    let usage_json = serde_json::to_string(&usage).map_err(|e| e.to_string())?;
+    let plan_type = match derive_plan_type_from_usage(&usage) {
         Some(plan) => plan.to_string(),
         None => existing_plan_type,
     };
@@ -596,10 +710,19 @@ pub(crate) async fn refresh_account_usage_inner(
     state: &AppState,
     id: &str,
 ) -> Result<AccountUsage, String> {
+    refresh_account_usage_observation(app, state, id, UsageObservation::Query).await
+}
+
+pub(super) async fn refresh_account_usage_observation(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+    observation: UsageObservation,
+) -> Result<AccountUsage, String> {
     crate::logging::info("account-usage", "开始刷新账号额度。");
-    let result = fetch_and_persist_account_usage(app, state, id).await;
+    let result = fetch_and_persist_usage_observation(app, state, id, observation).await;
     if let Err(error) = &result {
-        save_fallback_reset(app, state, id, "额度刷新失败", error);
+        schedule_account_usage_retry(app, state, id, "额度刷新失败", error);
     } else {
         crate::logging::info("account-usage", "账号额度刷新完成。");
     }
@@ -610,6 +733,15 @@ pub(super) async fn fetch_and_persist_account_usage(
     app: &tauri::AppHandle,
     state: &AppState,
     id: &str,
+) -> Result<AccountUsage, String> {
+    fetch_and_persist_usage_observation(app, state, id, UsageObservation::Query).await
+}
+
+async fn fetch_and_persist_usage_observation(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    id: &str,
+    observation: UsageObservation,
 ) -> Result<AccountUsage, String> {
     // 读取账号认证上下文。
     let (
@@ -689,7 +821,10 @@ pub(super) async fn fetch_and_persist_account_usage(
 
     let persist_result = (|| {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        persist_account_usage(&db, &id, &bearer, &usage)
+        match observation {
+            UsageObservation::Query => persist_account_usage(&db, id, &bearer, &usage),
+            UsageObservation::Activation => persist_account_usage_observation(&db, id, &bearer, &usage, observation),
+        }
     })();
 
     persist_result?;
@@ -779,15 +914,15 @@ pub(crate) fn update_account_usage_from_session(
         }
     }
 
-    let existing: Option<String> = tx
+    let (existing, existing_next_refresh_at): (Option<String>, Option<String>) = tx
         .query_row(
-            "SELECT usage_json FROM accounts WHERE id = ?1",
+            "SELECT usage_json, next_refresh_at FROM accounts WHERE id = ?1",
             params![account_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .ok();
-    let mut usage = existing
-        .and_then(|json| serde_json::from_str::<AccountUsage>(&json).ok())
+        .map_err(|error| error.to_string())?;
+    let previous = parse_cached_usage(existing);
+    let mut usage = previous.clone()
         .unwrap_or_else(|| AccountUsage {
             request_started_at: None,
             primary: None,
@@ -803,11 +938,11 @@ pub(crate) fn update_account_usage_from_session(
     }
     usage.synced_at = rl.timestamp.clone();
     usage.request_started_at = None;
+    // 历史事件中的窗口可能现已过期，不能据其当时的时间取消当前重试计划。
+    let next_refresh_at = reconcile_usage_observation(
+        &mut usage, previous.as_ref(), existing_next_refresh_at.as_deref(), Utc::now(), UsageObservation::Query,
+    ).to_rfc3339();
     let json = serde_json::to_string(&usage).map_err(|e| e.to_string())?;
-    let observed_at = DateTime::parse_from_rfc3339(&rl.timestamp)
-        .map_err(|error| error.to_string())?
-        .with_timezone(&Utc);
-    let next_refresh_at = compute_next_refresh_at(&usage, observed_at).to_rfc3339();
     tx.execute(
         "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, chatgpt_plan_type = COALESCE(?3, chatgpt_plan_type), next_refresh_at = ?4 WHERE id = ?5",
         params![json, rl.timestamp, rl.plan_type, next_refresh_at, account_id],
@@ -846,11 +981,11 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_with_past_reset_uses_default_reset_plus_minute() {
+    fn exhausted_with_past_reset_remains_due() {
         let now = utc_ts("2026-08-07T10:00:00Z");
         let resets_at = now.timestamp() - 600; // 已过
         let next = compute_next_refresh_at(&usage(100.0, Some(resets_at)), now);
-        assert_eq!(next, utc_ts("2026-08-07T10:06:00Z"));
+        assert_eq!(next, utc_ts("2026-08-07T09:51:00Z"));
     }
 
     #[test]
@@ -1022,10 +1157,8 @@ mod tests {
         // secondary 保留（合并而非覆盖）。
         assert_eq!(usage["secondary"]["usedPercent"], 30.0);
         assert_eq!(usage["syncedAt"], "2026-08-14T03:20:00Z");
-        // 根据最新重置时间安排刷新。
-        let expected = (DateTime::from_timestamp(1787134079, 0).unwrap()
-            + chrono::Duration::minutes(1)).to_rfc3339();
-        assert_eq!(next_refresh.as_deref(), Some(expected.as_str()));
+        // 历史窗口现已过期，保留已到期任务，不从观测时间重新安排。
+        assert_eq!(next_refresh.as_deref(), Some("2026-08-13T11:00:00+00:00"));
         // 订阅类型顺带补全。
         assert_eq!(plan.as_deref(), Some("team"));
     }

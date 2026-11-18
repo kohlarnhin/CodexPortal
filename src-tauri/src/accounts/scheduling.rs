@@ -1,4 +1,7 @@
-use super::usage::{begin_account_refresh, fetch_and_persist_account_usage, AccountUsageWindow};
+use super::usage::{
+    begin_account_refresh, fetch_and_persist_account_usage,
+    AccountUsageWindow,
+};
 use super::{read_accounts, switch_active_account_locked, Account, AccountStore, ACCOUNT_SWITCH_LOCK};
 use crate::auth::AccountType;
 use crate::logging;
@@ -11,7 +14,7 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 
 const SOURCE: &str = "smart-schedule";
-const FAILURE_COOLDOWN: Duration = Duration::from_secs(5 * 60);
+const FAILURE_COOLDOWN: Duration = Duration::from_secs(60);
 const MIN_TARGET_WINDOW_SECONDS: i64 = 300;
 const EXPIRY_ADVANTAGE_SECONDS: i64 = 60;
 
@@ -231,58 +234,128 @@ pub(crate) async fn get_schedule_status(app: tauri::AppHandle) -> Result<Schedul
 #[derive(Default)]
 struct EvaluationState {
     running: bool,
-    pending: bool,
+    next_attempt: Option<Instant>,
     failures: HashMap<String, Instant>,
     exhausted_until: Option<i64>,
+    lifecycle_requested: bool,
 }
 
 impl EvaluationState {
     fn request(&mut self) -> bool {
-        self.pending = true;
-        if self.running { return false; }
+        if self.running || self.next_attempt.is_some_and(|at| at > Instant::now()) { return false; }
         self.running = true;
         true
     }
 
-    fn take_pending(&mut self) -> bool {
-        if self.pending {
-            self.pending = false;
-            true
-        } else {
-            self.running = false;
-            false
+    fn finish(&mut self, failed: bool) {
+        if failed { self.next_attempt = Some(Instant::now() + FAILURE_COOLDOWN); }
+        self.running = false;
+    }
+}
+
+pub(crate) struct ScheduleState {
+    evaluation: Mutex<EvaluationState>,
+}
+
+impl Default for ScheduleState {
+    fn default() -> Self {
+        Self { evaluation: Mutex::new(EvaluationState { lifecycle_requested: true, ..Default::default() }) }
+    }
+}
+
+#[derive(Clone)]
+pub(super) enum SwitchTrigger {
+    OnDemand,
+    Exhausted(String),
+    Lifecycle,
+}
+
+fn current_exhausted(store: &AccountStore, now: i64) -> Option<&Account> {
+    store.accounts.iter().find(|account| Some(&account.id) == store.active_account_id.as_ref())
+        .filter(|account| eligible(account) && !usable(account, now))
+}
+
+impl SwitchTrigger {
+    fn allows(&self, store: &AccountStore, now: i64) -> bool {
+        match self {
+            Self::OnDemand => true,
+            Self::Exhausted(id) => current_exhausted(store, now).is_some_and(|account| account.id == *id),
+            Self::Lifecycle => store.accounts.iter()
+                .find(|account| Some(&account.id) == store.active_account_id.as_ref())
+                .is_none_or(|account| !account.enabled),
         }
     }
 }
 
-#[derive(Default)]
-pub(crate) struct ScheduleState {
-    evaluation: Mutex<EvaluationState>,
-    run: tauri::async_runtime::Mutex<()>,
+struct SwitchRun {
+    app: tauri::AppHandle,
+    failed: bool,
+    retry_lifecycle: bool,
 }
 
-/// 请求合并为一位 pending；刷新与 daemon 重启期间不会产生并行评估。
-pub(crate) fn request_evaluation(app: tauri::AppHandle) {
-    let start = {
+impl SwitchRun {
+    fn begin(app: &tauri::AppHandle) -> Option<Self> {
         let state = app.state::<ScheduleState>();
-        let Ok(mut evaluation) = state.evaluation.lock() else { return };
-        evaluation.request()
-    };
-    if start {
-        tauri::async_runtime::spawn(async move {
-            loop {
-                let pending = {
-                    let state = app.state::<ScheduleState>();
-                    let Ok(mut evaluation) = state.evaluation.lock() else { return };
-                    evaluation.take_pending()
-                };
-                if !pending { break; }
-                if evaluate_and_switch(&app).await.is_err() {
-                    logging::warn(SOURCE, "智能调度未完成，将在下一轮重新评估。");
-                }
-            }
-        });
+        let mut evaluation = state.evaluation.try_lock().ok()?;
+        if !evaluation.request() { return None; }
+        Some(Self { app: app.clone(), failed: true, retry_lifecycle: false })
     }
+}
+
+impl Drop for SwitchRun {
+    fn drop(&mut self) {
+        let state = self.app.state::<ScheduleState>();
+        let mut evaluation = state.evaluation.lock().unwrap_or_else(|error| error.into_inner());
+        if self.retry_lifecycle { evaluation.lifecycle_requested = true; }
+        evaluation.finish(self.failed);
+    }
+}
+
+/// 账号生命周期操作只标记下一次公共巡检，不能触发健康账号之间的抢占。
+pub(crate) fn request_lifecycle_evaluation(app: tauri::AppHandle) {
+    let state = app.state::<ScheduleState>();
+    if let Ok(mut evaluation) = state.evaluation.lock() { evaluation.lifecycle_requested = true; };
+}
+
+/// 巡检先查本地缓存；健康账号不会触发候选 HTTP 查询或按到期时间抢占。
+pub(crate) fn dispatch_patrol(app: &tauri::AppHandle) {
+    let Some(run) = SwitchRun::begin(app) else { return };
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut run = run;
+        let result = tauri::async_runtime::block_on(async {
+            let store = read_store(&app.state::<AppState>())?;
+            let lifecycle = {
+                let state = app.state::<ScheduleState>();
+                let mut evaluation = state.evaluation.lock().map_err(|error| error.to_string())?;
+                std::mem::take(&mut evaluation.lifecycle_requested)
+            };
+            run.retry_lifecycle = lifecycle;
+            let trigger = if let Some(current) = current_exhausted(&store, Utc::now().timestamp()) {
+                Some(SwitchTrigger::Exhausted(current.id.clone()))
+            } else if lifecycle && SwitchTrigger::Lifecycle.allows(&store, Utc::now().timestamp()) {
+                Some(SwitchTrigger::Lifecycle)
+            } else {
+                None
+            };
+            let Some(trigger) = trigger else { return Ok::<(), String>(()) };
+            let plan = evaluate_candidates_for_trigger(&store, &HashSet::new(), Utc::now().timestamp(), &trigger);
+            log_exhaustion(&app, &plan.status);
+            // 没有候选时只检查缓存，不每三十秒反复请求当前账号。
+            if plan.decision.target_id().is_none() { return Ok(()); }
+            execute_switch(&app, &trigger).await.map(|_| ())
+        });
+        let result = result.and_then(|()| {
+            if run.retry_lifecycle {
+                // 正常返回也可能是候选全部失败；在持有评估锁之前确认生命周期已恢复。
+                let store = read_store(&app.state::<AppState>())?;
+                run.retry_lifecycle = SwitchTrigger::Lifecycle.allows(&store, Utc::now().timestamp());
+            }
+            Ok(())
+        });
+        run.failed = result.is_err();
+        if run.failed { logging::warn(SOURCE, "智能调度未完成，一分钟后由巡检重试。"); }
+    });
 }
 
 fn read_store(state: &AppState) -> Result<AccountStore, String> {
@@ -298,10 +371,21 @@ pub(super) fn evaluate_candidates(store: &AccountStore, excluded: &HashSet<Strin
     evaluate_schedule(&accounts, store.active_account_id.as_deref(), now)
 }
 
+/// 从初次筛选到最终数据库提交，始终带上原始业务触发约束。
+pub(super) fn evaluate_candidates_for_trigger(
+    store: &AccountStore, excluded: &HashSet<String>, now: i64, trigger: &SwitchTrigger,
+) -> Schedule {
+    let mut plan = evaluate_candidates(store, excluded, now);
+    if !trigger.allows(store, now) { plan.decision = Decision::Keep; }
+    plan
+}
+
 fn mark_failure(app: &tauri::AppHandle, id: &str) {
     let state = app.state::<ScheduleState>();
     if let Ok(mut evaluation) = state.evaluation.lock() {
-        evaluation.failures.insert(id.to_string(), Instant::now());
+        let now = Instant::now();
+        evaluation.failures.insert(id.to_string(), now);
+        evaluation.next_attempt = Some(now + FAILURE_COOLDOWN);
     };
 }
 
@@ -325,38 +409,45 @@ fn log_exhaustion(app: &tauri::AppHandle, status: &ScheduleStatus) {
 }
 
 async fn refresh_for_evaluation(app: &tauri::AppHandle, state: &AppState, id: &str) -> Result<bool, String> {
-    // 函数返回时 guard 已释放，switch_active_account_locked 可以重新登记同一账号。
-    let Ok(_guard) = begin_account_refresh(state, id, Some(app.clone())) else { return Ok(false) };
+    let _guard = begin_account_refresh(state, id, Some(app.clone()))?;
     if fetch_and_persist_account_usage(app, state, id).await.is_err() {
         mark_failure(app, id);
-        logging::warn(SOURCE, "账号额度查询失败，五分钟内不再选择该候选账号。");
+        logging::warn(SOURCE, "账号额度查询失败，一分钟内不再选择该候选账号。");
         return Ok(false);
     }
     Ok(true)
 }
 
-async fn evaluate_and_switch(app: &tauri::AppHandle) -> Result<(), String> {
-    let schedule = app.state::<ScheduleState>();
-    let _run = schedule.run.lock().await;
-    evaluate_accounts(app, HashSet::new()).await
+pub(crate) async fn switch_on_demand(app: &tauri::AppHandle) -> Result<SwitchResult, String> {
+    let Some(run) = SwitchRun::begin(app) else {
+        return Err("智能切换正在执行或等待重试，请稍候。".into());
+    };
+    logging::info("mcp", "收到 MCP 切换请求，正在核对当前账号额度。");
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut run = run;
+        let result = tauri::async_runtime::block_on(execute_switch(&app, &SwitchTrigger::OnDemand));
+        run.failed = result.is_err();
+        result
+    }).await.map_err(|_| "智能切换任务失败，一分钟后可重试。".to_string())?
 }
 
-pub(crate) async fn switch_on_demand(app: &tauri::AppHandle) -> Result<SwitchResult, String> {
-    logging::info("mcp", "收到 MCP 切换请求，正在核对当前账号额度。");
-    let schedule = app.state::<ScheduleState>();
-    let _run = schedule.run.lock().await;
+/// MCP 和巡检共用唯一执行流程；自动触发在当前账号恢复后立即终止。
+async fn execute_switch(app: &tauri::AppHandle, trigger: &SwitchTrigger) -> Result<SwitchResult, String> {
     let state = app.state::<AppState>();
     let store = read_store(&state)?;
-    let before = store.active_account_id;
+    let before = store.active_account_id.clone();
     let mut verified = HashSet::new();
-    if let Some(current) = store.accounts.iter()
-        .find(|account| Some(&account.id) == before.as_ref()).filter(|account| eligible(account)) {
-        if !refresh_for_evaluation(app, &state, &current.id).await? {
-            return Err("当前账号额度查询失败，未执行切换。".into());
+    if trigger.allows(&store, Utc::now().timestamp()) {
+        if let Some(current) = store.accounts.iter()
+            .find(|account| Some(&account.id) == before.as_ref()).filter(|account| eligible(account)) {
+            if !refresh_for_evaluation(app, &state, &current.id).await? {
+                return Err("当前账号额度查询失败，未执行切换。".into());
+            }
+            verified.insert(current.id.clone());
         }
-        verified.insert(current.id.clone());
+        evaluate_accounts(app, verified, trigger).await?;
     }
-    evaluate_accounts(app, verified).await?;
     let store = read_store(&state)?;
     Ok(SwitchResult {
         switched: before != store.active_account_id,
@@ -364,7 +455,9 @@ pub(crate) async fn switch_on_demand(app: &tauri::AppHandle) -> Result<SwitchRes
     })
 }
 
-async fn evaluate_accounts(app: &tauri::AppHandle, mut verified: HashSet<String>) -> Result<(), String> {
+async fn evaluate_accounts(
+    app: &tauri::AppHandle, mut verified: HashSet<String>, trigger: &SwitchTrigger,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut excluded: HashSet<String> = {
         let schedule = app.state::<ScheduleState>();
@@ -375,7 +468,7 @@ async fn evaluate_accounts(app: &tauri::AppHandle, mut verified: HashSet<String>
     let store = read_store(&state)?;
     let now = Utc::now().timestamp();
     log_exhaustion(app, &evaluate_schedule(&store.accounts, store.active_account_id.as_deref(), now).status);
-    if evaluate_candidates(&store, &excluded, now).decision.target_id().is_none() { return Ok(()); }
+    if evaluate_candidates_for_trigger(&store, &excluded, now, trigger).decision.target_id().is_none() { return Ok(()); }
 
     let current = store.accounts.iter().find(|account| Some(&account.id) == store.active_account_id.as_ref());
     let mut to_refresh: Vec<_> = store.accounts.iter().filter(|account| eligible(account))
@@ -384,13 +477,9 @@ async fn evaluate_accounts(app: &tauri::AppHandle, mut verified: HashSet<String>
         .filter(|account| current.is_none_or(|current| !usable(current, now)
             || sort_key(account, now) <= sort_key(current, now)))
         .collect();
-    to_refresh.sort_by(|a, b| {
-        // 先确认当前账号，再校验排在它之前的候选。
-        let a_current = Some(&a.id) == store.active_account_id.as_ref();
-        let b_current = Some(&b.id) == store.active_account_id.as_ref();
-        b_current.cmp(&a_current).then_with(|| sort_key(a, now).cmp(&sort_key(b, now)))
-    });
+    to_refresh.sort_by(|a, b| sort_key(a, now).cmp(&sort_key(b, now)));
     for account in to_refresh {
+        if !trigger.allows(&read_store(&state)?, Utc::now().timestamp()) { return Ok(()); }
         if refresh_for_evaluation(app, &state, &account.id).await? {
             verified.insert(account.id.clone());
         } else {
@@ -402,9 +491,9 @@ async fn evaluate_accounts(app: &tauri::AppHandle, mut verified: HashSet<String>
         let store = read_store(&state)?;
         let now = Utc::now().timestamp();
         log_exhaustion(app, &evaluate_schedule(&store.accounts, store.active_account_id.as_deref(), now).status);
-        let plan = evaluate_candidates(&store, &excluded, now);
+        let plan = evaluate_candidates_for_trigger(&store, &excluded, now, trigger);
         let Some(id) = plan.decision.target_id().map(str::to_string) else { return Ok(()) };
-        // 当前账号刷新后可能变为不可用，新的接替者也必须先通过实时查询。
+        // 同一轮每个候选最多确认一次；不在任务内等待或重试失败候选。
         if !verified.contains(&id) {
             if refresh_for_evaluation(app, &state, &id).await? {
                 verified.insert(id);
@@ -414,10 +503,11 @@ async fn evaluate_accounts(app: &tauri::AppHandle, mut verified: HashSet<String>
             continue;
         }
         let result = {
-            let Ok(_switch_guard) = ACCOUNT_SWITCH_LOCK.try_lock() else { return Ok(()) };
-            let latest = evaluate_candidates(&read_store(&state)?, &excluded, Utc::now().timestamp());
+            let _switch_guard = ACCOUNT_SWITCH_LOCK.try_lock()
+                .map_err(|_| "账号切换被其他操作占用，请稍后重试。".to_string())?;
+            let latest = evaluate_candidates_for_trigger(&read_store(&state)?, &excluded, Utc::now().timestamp(), trigger);
             if latest.decision.target_id() != Some(id.as_str()) { return Ok(()); }
-            switch_active_account_locked(app, &state, &id, &excluded).await
+            switch_active_account_locked(app, &state, &id, &excluded, trigger).await
         };
         match result {
             Ok(true) => {
@@ -438,7 +528,7 @@ async fn evaluate_accounts(app: &tauri::AppHandle, mut verified: HashSet<String>
             Err(_) => {
                 mark_failure(app, &id);
                 excluded.insert(id);
-                logging::warn(SOURCE, "候选账号切换失败，五分钟内跳过，正在评估下一个账号。");
+                logging::warn(SOURCE, "候选账号切换失败，一分钟内跳过，正在评估下一个账号。");
             }
         }
     }
@@ -660,13 +750,11 @@ mod tests {
     }
 
     #[test]
-    fn requests_coalesce_while_an_evaluation_is_running() {
+    fn requests_skip_while_an_evaluation_is_running() {
         let mut state = EvaluationState::default();
         assert!(state.request());
-        assert!(state.take_pending());
         for _ in 0..10 { assert!(!state.request()); }
-        assert!(state.take_pending());
-        assert!(!state.take_pending());
+        state.finish(false);
         assert!(!state.running);
         assert!(state.request());
     }

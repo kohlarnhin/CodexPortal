@@ -1,3 +1,4 @@
+use crate::accounts::{read_accounts, usage::effective_next_refresh_at};
 use crate::state::AppState;
 use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -104,7 +105,7 @@ pub(crate) fn set_quota_quiet_hours(
     Ok(())
 }
 
-/// 仅在有账号到期时调用，免打扰期间统一调整所有账号的下次刷新时间。
+/// 仅推迟已到期的启用订阅账号，不覆盖其他账号的未来窗口或重试计划。
 pub(crate) fn defer_usage_during_quiet_hours(
     app: &tauri::AppHandle,
     state: &AppState,
@@ -115,12 +116,21 @@ pub(crate) fn defer_usage_during_quiet_hours(
     let Some(resume_at) = settings.resume_at(now)? else {
         return Ok(false);
     };
-    db.execute(
-        "UPDATE accounts SET next_refresh_at = ?1",
-        params![resume_at.to_rfc3339()],
-    )
-    .map_err(|error| error.to_string())?;
+    let store = read_accounts(&db)?;
+    let mut changed = 0;
+    for account in store.accounts.iter().filter(|account| account.enabled && account.can_refresh_usage) {
+        let due_at = effective_next_refresh_at(account.usage.as_ref(), account.next_refresh_at.as_deref())
+            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        if due_at <= now {
+            changed += db.execute(
+                "UPDATE accounts SET next_refresh_at = ?1 WHERE id = ?2",
+                params![resume_at.to_rfc3339(), account.id],
+            ).map_err(|error| error.to_string())?;
+        }
+    }
     drop(db);
-    let _ = app.emit("accounts-updated", ());
+    if changed > 0 {
+        let _ = app.emit("accounts-updated", ());
+    }
     Ok(true)
 }

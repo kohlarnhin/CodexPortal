@@ -226,7 +226,7 @@ pub(crate) fn set_account_enabled(
     }
     drop(_switch_guard);
     let _ = app.emit("accounts-updated", ());
-    scheduling::request_evaluation(app);
+    scheduling::request_lifecycle_evaluation(app);
     crate::logging::info("accounts", if enabled { "账号已启用。" } else { "账号已禁用。" });
     Ok(())
 }
@@ -392,7 +392,7 @@ pub(crate) async fn save_rt_account(
     )
     .await?;
     let _ = app.emit("accounts-updated", ());
-    scheduling::request_evaluation(app);
+    scheduling::request_lifecycle_evaluation(app);
     Ok(account)
 }
 
@@ -537,7 +537,7 @@ pub(crate) async fn add_account(
 ) -> Result<Account, String> {
     let account = insert_pat_account(&state, token, notes).await?;
     let _ = app.emit("accounts-updated", ());
-    scheduling::request_evaluation(app);
+    scheduling::request_lifecycle_evaluation(app);
     Ok(account)
 }
 
@@ -801,7 +801,7 @@ pub(crate) async fn delete_account(
         crate::logging::info("accounts", "账号已删除。");
     }
     drop(_switch_guard);
-    scheduling::request_evaluation(app);
+    scheduling::request_lifecycle_evaluation(app);
     Ok(())
 }
 
@@ -811,10 +811,11 @@ async fn switch_active_account_locked(
     state: &AppState,
     id: &str,
     excluded: &HashSet<String>,
+    trigger: &scheduling::SwitchTrigger,
 ) -> Result<bool, String> {
     {
         let db = state.db.lock().map_err(|error| error.to_string())?;
-        let plan = scheduling::evaluate_candidates(&read_accounts(&db)?, excluded, Utc::now().timestamp());
+        let plan = scheduling::evaluate_candidates_for_trigger(&read_accounts(&db)?, excluded, Utc::now().timestamp(), trigger);
         if plan.decision.target_id() != Some(id) {
             return Ok(false);
         }
@@ -863,7 +864,7 @@ async fn switch_active_account_locked(
         let mut db = state.db.lock().map_err(|e| e.to_string())?;
         sync_active_oauth_account(&db)?;
         // 认证续期期间额度可能已改变；在同一个数据库临界区中重新决策后才提交。
-        let plan = scheduling::evaluate_candidates(&read_accounts(&db)?, excluded, Utc::now().timestamp());
+        let plan = scheduling::evaluate_candidates_for_trigger(&read_accounts(&db)?, excluded, Utc::now().timestamp(), trigger);
         if plan.decision.target_id() != Some(id) {
             return Ok(false);
         }
@@ -966,7 +967,7 @@ pub(crate) async fn import_account_from_auth_json(
         }
     };
     let _ = app.emit("accounts-updated", ());
-    scheduling::request_evaluation(app);
+    scheduling::request_lifecycle_evaluation(app);
     crate::logging::info("auth-import", "已自动导入本机账号。");
     Ok(Some(account))
 }

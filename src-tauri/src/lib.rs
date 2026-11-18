@@ -5,6 +5,7 @@ mod db;
 mod http;
 mod logging;
 mod mcp;
+mod patrol;
 mod process;
 mod sessions;
 mod skills;
@@ -18,9 +19,7 @@ mod windows;
 mod test_support;
 
 use crate::accounts::periods::ensure_account_period_on_startup;
-use crate::accounts::scheduler::start_usage_scheduler;
 use crate::db::init_db;
-use crate::sessions::sync::start_session_sync_scheduler;
 use crate::state::{AppState, OAuthSession};
 use crate::windows::show_main_window;
 use rusqlite::Connection;
@@ -74,8 +73,8 @@ pub fn run() {
             mcp::start(app.handle());
 
             tray::start(app.handle().clone())?;
-            start_usage_scheduler(app.handle().clone());
-            start_session_sync_scheduler(app.handle().clone());
+            accounts::scheduler::start_bootstrap(app.handle().clone());
+            patrol::start(app.handle().clone());
 
             // 账号库为空时，后台自动从 ~/.codex/auth.json 导入账号（异步，失败静默）。
             {

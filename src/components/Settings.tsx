@@ -28,6 +28,8 @@ type PendingSave =
   | { kind: 'structured'; value: CodexConfig; base: CodexConfig };
 
 const BUILTIN_MODELS = [
+  'gpt-6.2-astra',
+  'gpt-6.2-sol',
   'gpt-6-astra',
   'gpt-6.1-sol',
   'gpt-6-sol',

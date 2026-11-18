@@ -1,4 +1,14 @@
 {
+  "gpt-6.2-astra": {
+    "inputPer1M": 8.0,
+    "cachedInputPer1M": 0.4,
+    "outputPer1M": 40.0
+  },
+  "gpt-6.2-sol": {
+    "inputPer1M": 2.0,
+    "cachedInputPer1M": 0.1,
+    "outputPer1M": 10.0
+  },
   "gpt-6-astra": {
     "inputPer1M": 10.0,
     "cachedInputPer1M": 1.0,

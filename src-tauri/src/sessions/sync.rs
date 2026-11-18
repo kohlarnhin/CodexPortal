@@ -19,8 +19,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::OnceLock;
-use std::thread;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tauri::Manager;
@@ -56,21 +55,6 @@ fn session_sync_due(next_sync_at: Option<&str>, now: DateTime<Utc>) -> bool {
     match DateTime::parse_from_rfc3339(ts) {
         Ok(time) => time.with_timezone(&Utc) <= now,
         Err(_) => true,
-    }
-}
-
-/// 距下一次同步的睡眠秒数：未到期 → 睡到那一刻（最多 5 分钟醒一次检查，避免长睡漏掉变化）；
-/// 已到期/无记录 → 30 秒后重查。
-fn session_sync_sleep_secs(next_sync_at: Option<&str>, now: DateTime<Utc>) -> u64 {
-    let Some(ts) = next_sync_at else {
-        return 30;
-    };
-    match DateTime::parse_from_rfc3339(ts) {
-        Ok(time) if time.with_timezone(&Utc) > now => {
-            let secs = (time.with_timezone(&Utc) - now).num_seconds();
-            secs.clamp(1, SESSION_SYNC_INTERVAL_SECONDS) as u64
-        }
-        _ => 30,
     }
 }
 
@@ -178,16 +162,8 @@ fn sync_sessions_inner(
     app: &tauri::AppHandle,
     force_full: bool,
     reset: bool,
+    mut run: SessionRun,
 ) -> Result<SessionSyncResult, String> {
-    {
-        let state = app.state::<AppState>();
-        let mut syncing = state.syncing_sessions.lock().map_err(|e| e.to_string())?;
-        if *syncing {
-            return Err("会话正在同步中，请稍候".to_string());
-        }
-        *syncing = true;
-    }
-
     crate::logging::info("session-sync", if reset {
         "开始清空并重新同步会话。"
     } else if force_full {
@@ -570,8 +546,8 @@ fn sync_sessions_inner(
 
         // 记录本次同步时间、下次同步时间与当前入库规则版本。
         // 手动同步与自动同步统一在这里刷新，调度器据此决定重启后是否需要同步。
-        let next_sync_at =
-            (Utc::now() + chrono::Duration::seconds(SESSION_SYNC_INTERVAL_SECONDS)).to_rfc3339();
+        let delay = if failed == 0 { SESSION_SYNC_INTERVAL_SECONDS } else { 60 };
+        let next_sync_at = (Utc::now() + chrono::Duration::seconds(delay)).to_rfc3339();
         if failed == 0 {
             db.execute(
                 "INSERT INTO configs (key, content) VALUES ('sessions_last_synced_at', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
@@ -579,10 +555,10 @@ fn sync_sessions_inner(
             ).map_err(|e| e.to_string())?;
         }
         set_config_value(&db, "sessions_last_sync_failed", &failed.to_string());
-        let _ = db.execute(
+        db.execute(
             "INSERT INTO configs (key, content) VALUES ('sessions_next_sync_at', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
             params![next_sync_at],
-        );
+        ).map_err(|e| e.to_string())?;
         if failed == 0 {
             db.execute(
                 "INSERT INTO configs (key, content) VALUES ('sessions_schema_version', ?1) ON CONFLICT(key) DO UPDATE SET content = ?1",
@@ -626,14 +602,11 @@ fn sync_sessions_inner(
         let state = app.state::<AppState>();
         if let Ok(db) = state.db.lock() {
             set_config_value(&db, "sessions_last_sync_failed", "1");
+            set_config_value(&db, "sessions_next_sync_at", &(Utc::now() + chrono::Duration::seconds(60)).to_rfc3339());
         };
     }
-    {
-        let state = app.state::<AppState>();
-        if let Ok(mut syncing) = state.syncing_sessions.lock() {
-            *syncing = false;
-        };
-    }
+    run.failed = result.as_ref().map_or(true, |summary| summary.failed > 0);
+    drop(run);
     if let Err(error) = &result {
         crate::logging::error("session-sync", "会话同步失败，请在会话管理中查看错误详情并重试。");
         let _ = app.emit("session-sync-failed", error);
@@ -652,72 +625,97 @@ fn sync_sessions_inner(
     result
 }
 
-/// 自动同步调度器：同步时间与下次同步时间持久化在数据库中。
-/// - 重启后：下次同步时间在未来 → 跳过同步，睡到那个时间点（最多 5 分钟醒一次检查）；
-/// - 从未同步 / 已到下次同步时间 → 同步（首次全量入库或增量），完成后刷新两个时间。
-/// 入库规则升级时自动做一次全量重解析以完成迁移；其余时间始终纯增量。
 static SESSION_SYNC_REQUESTED: AtomicBool = AtomicBool::new(false);
+static SESSION_SYNC_CHECKING: AtomicBool = AtomicBool::new(false);
+static SESSION_SYNC_RETRY_AT: Mutex<Option<Instant>> = Mutex::new(None);
 
-static SESSION_SYNC_THREAD: OnceLock<thread::Thread> = OnceLock::new();
+struct SessionRun {
+    app: tauri::AppHandle,
+    requested: bool,
+    failed: bool,
+}
 
-pub(crate) fn request_session_sync() {
-    SESSION_SYNC_REQUESTED.store(true, Ordering::Release);
-    if let Some(worker) = SESSION_SYNC_THREAD.get() {
-        worker.unpark();
+impl SessionRun {
+    fn begin(app: &tauri::AppHandle, automatic: bool) -> Result<Self, String> {
+        // 与完成/失败排期采用同一锁顺序，自动检查不能穿过刚完成的失败退避。
+        let retry = SESSION_SYNC_RETRY_AT.lock().map_err(|error| error.to_string())?;
+        if automatic && retry.is_some_and(|at| at > Instant::now()) {
+            return Err("会话同步等待重试".into());
+        }
+        let state = app.state::<AppState>();
+        let mut syncing = state.syncing_sessions.lock().map_err(|error| error.to_string())?;
+        if *syncing { return Err("会话正在同步中，请稍候".into()); }
+        let requested = SESSION_SYNC_REQUESTED.swap(false, Ordering::AcqRel);
+        *syncing = true;
+        Ok(Self { app: app.clone(), requested, failed: true })
     }
 }
 
-pub(crate) fn start_session_sync_scheduler(app: tauri::AppHandle) {
-    thread::spawn(move || {
-        let _ = SESSION_SYNC_THREAD.set(thread::current());
-        loop {
-            let requested = SESSION_SYNC_REQUESTED.swap(false, Ordering::AcqRel);
-            let (due, sleep_secs, force_full) = {
-                let state = app.state::<AppState>();
-                let locked = state.db.lock();
-                match locked {
-                    Ok(db) => {
-                        let next_sync_at: Option<String> = db
-                            .query_row(
-                                "SELECT content FROM configs WHERE key = 'sessions_next_sync_at'",
-                                [],
-                                |row| row.get(0),
-                            )
-                            .ok();
-                        let now = Utc::now();
-                        let force_full = sessions_schema_needs_reparse(&db);
-                        (
-                            requested
-                                || force_full
-                                || session_sync_due(next_sync_at.as_deref(), now),
-                            session_sync_sleep_secs(next_sync_at.as_deref(), now),
-                            force_full,
-                        )
-                    }
-                    Err(_) => (false, 30, false),
-                }
-            };
-
-            if due {
-                match sync_sessions_inner(&app, force_full, false) {
-                    Ok(result) => {
-                        let _ = app.emit("session-sync-completed", result);
-                    }
-                    Err(error) => {
-                        if requested && error == "会话正在同步中，请稍候" {
-                            thread::park_timeout(Duration::from_secs(1));
-                            SESSION_SYNC_REQUESTED.store(true, Ordering::Release);
-                        }
-                    }
-                }
-            } else {
-                crate::logging::info("session-sync", format!("未到下次同步时间，{sleep_secs}s 后检查。"));
-            }
-
-            if !SESSION_SYNC_REQUESTED.load(Ordering::Acquire) {
-                thread::park_timeout(Duration::from_secs(sleep_secs));
-            }
+impl Drop for SessionRun {
+    fn drop(&mut self) {
+        let mut retry = SESSION_SYNC_RETRY_AT.lock().unwrap_or_else(|error| error.into_inner());
+        *retry = self.failed.then(|| Instant::now() + Duration::from_secs(60));
+        if self.failed && self.requested {
+            SESSION_SYNC_REQUESTED.store(true, Ordering::Release);
         }
+        let state = self.app.state::<AppState>();
+        *state.syncing_sessions.lock().unwrap_or_else(|error| error.into_inner()) = false;
+    }
+}
+
+struct SyncCheckRun { failed: bool }
+
+impl Drop for SyncCheckRun {
+    fn drop(&mut self) {
+        if self.failed {
+            *SESSION_SYNC_RETRY_AT.lock().unwrap_or_else(|error| error.into_inner()) =
+                Some(Instant::now() + Duration::from_secs(60));
+        }
+        SESSION_SYNC_CHECKING.store(false, Ordering::Release);
+    }
+}
+
+pub(crate) fn request_session_sync() {
+    SESSION_SYNC_REQUESTED.store(true, Ordering::Release);
+}
+
+/// 公共巡检只派发一次检查，不等待数据库、扫描或解析；手动同步仍共用 SessionRun。
+pub(crate) fn dispatch_sync(app: &tauri::AppHandle) {
+    let Ok(retry) = SESSION_SYNC_RETRY_AT.try_lock() else { return };
+    if retry.is_some_and(|at| at > Instant::now()) { return; }
+    if SESSION_SYNC_CHECKING.swap(true, Ordering::AcqRel) { return; }
+    drop(retry);
+    let app = app.clone();
+    let check = SyncCheckRun { failed: true };
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut check = check;
+        let result = (|| -> Result<Option<SessionSyncResult>, String> {
+            let mut run = match SessionRun::begin(&app, true) {
+                Ok(run) => { check.failed = false; run },
+                // 不消费请求，不把“已有任务/等待退避”误算成一次新失败。
+                Err(error) if error == "会话正在同步中，请稍候" || error == "会话同步等待重试" => {
+                    check.failed = false;
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
+            let state = app.state::<AppState>();
+            let (due, force_full) = {
+                let db = state.db.lock().map_err(|error| error.to_string())?;
+                let next: Option<String> = db.query_row(
+                    "SELECT content FROM configs WHERE key = 'sessions_next_sync_at'", [], |row| row.get(0),
+                ).optional().map_err(|error| error.to_string())?;
+                let force_full = sessions_schema_needs_reparse(&db);
+                (run.requested || force_full
+                    || session_sync_due(next.as_deref(), Utc::now()), force_full)
+            };
+            if !due {
+                run.failed = false;
+                return Ok(None);
+            }
+            sync_sessions_inner(&app, force_full, false, run).map(Some)
+        })();
+        if let Ok(Some(result)) = result { let _ = app.emit("session-sync-completed", result); }
     });
 }
 
@@ -727,12 +725,13 @@ pub(crate) fn start_session_sync_scheduler(app: tauri::AppHandle) {
 pub(crate) async fn sync_sessions(app: tauri::AppHandle) -> Result<SessionSyncResult, String> {
     let thread_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let run = SessionRun::begin(&thread_app, false)?;
         let force_full = {
             let state = thread_app.state::<AppState>();
             let db = state.db.lock().map_err(|e| e.to_string())?;
             sessions_schema_needs_reparse(&db)
         };
-        sync_sessions_inner(&thread_app, force_full, false)
+        sync_sessions_inner(&thread_app, force_full, false, run)
     })
     .await
     .map_err(|e| format!("会话同步任务失败：{e}"))??;
@@ -745,7 +744,8 @@ pub(crate) async fn sync_sessions(app: tauri::AppHandle) -> Result<SessionSyncRe
 pub(crate) async fn reset_sessions(app: tauri::AppHandle) -> Result<SessionSyncResult, String> {
     let thread_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        sync_sessions_inner(&thread_app, false, true)
+        let run = SessionRun::begin(&thread_app, false)?;
+        sync_sessions_inner(&thread_app, false, true, run)
     })
     .await
     .map_err(|e| format!("会话重置任务失败：{e}"))??;
@@ -831,27 +831,6 @@ mod tests {
         assert!(session_sync_due(Some("2026-08-12T09:59:00Z"), now));
         // 记录无效 → 视为需要同步。
         assert!(session_sync_due(Some("not-a-time"), now));
-    }
-
-    #[test]
-    fn session_sync_sleep_waits_until_next_time() {
-        let now = utc_ts("2026-08-12T10:00:00Z");
-        // 距离下次同步 100 秒 → 睡 100 秒（精确触发）。
-        assert_eq!(
-            session_sync_sleep_secs(Some("2026-08-12T10:01:40Z"), now),
-            100
-        );
-        // 距离超过 5 分钟 → 最多 5 分钟醒一次检查。
-        assert_eq!(
-            session_sync_sleep_secs(Some("2026-08-12T10:30:00Z"), now),
-            300
-        );
-        // 已到期 / 无记录 → 30 秒后重查。
-        assert_eq!(
-            session_sync_sleep_secs(Some("2026-08-12T09:59:00Z"), now),
-            30
-        );
-        assert_eq!(session_sync_sleep_secs(None, now), 30);
     }
 
     #[test]

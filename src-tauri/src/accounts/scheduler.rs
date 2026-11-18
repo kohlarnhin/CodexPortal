@@ -1,217 +1,199 @@
 use crate::accounts::{ensure_account_enabled, read_accounts};
-use crate::accounts::messages::send_test_message;
+use crate::accounts::messages::activate_due_account;
 use crate::accounts::quiet_hours::defer_usage_during_quiet_hours;
-use crate::accounts::scheduling::request_evaluation;
 use crate::accounts::usage::{
-    begin_account_refresh, save_fallback_reset, persist_rotated_access_token,
+    begin_account_refresh, effective_next_refresh_at, persist_rotated_access_token,
+    report_account_request_error, schedule_account_usage_retry,
 };
 use crate::auth::{exchange_rt_for_at, extract_personal_access_token, resolve_token_metadata};
 use crate::codex::version::sync_codex_version;
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use rusqlite::params;
-use std::thread;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::Manager;
 
-/// 自动请求逐账号执行，相邻请求至少间隔一分钟。
-const USAGE_REFRESH_BATCH_SLEEP_SECONDS: i64 = 60;
-const ACCESS_TOKEN_CHECK_INTERVAL_SECONDS: i64 = 300;
-const USAGE_CHECK_INTERVAL_SECONDS: u64 = 30;
+const RETRY_DELAY: Duration = Duration::from_secs(60);
+const ACCESS_TOKEN_CHECK_INTERVAL: Duration = Duration::from_secs(300);
 
-/// 启动时回填历史账号的 whoami 元数据（订阅类型、账号 ID、FedRAMP）。
-/// 针对 `chatgpt_plan_type` 缺失的账号，用其 PAT 调 whoami 并更新。
-fn backfill_account_metadata(app: &tauri::AppHandle, state: &AppState) {
-    let targets: Vec<(String, String)> = {
-        let Ok(db) = state.db.lock() else {
-            return;
-        };
-        let Ok(mut stmt) = db
-            .prepare("SELECT id, auth_json_content FROM accounts WHERE chatgpt_plan_type IS NULL AND is_disabled = 0")
-        else {
-            return;
-        };
-        let Ok(rows) = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }) else {
-            return;
-        };
-        let mut targets = Vec::new();
-        for row in rows.flatten() {
-            let (id, auth_json_content) = row;
-            if let Some(token) = extract_personal_access_token(&auth_json_content) {
-                targets.push((id, token));
+struct MaintenanceJob {
+    running: bool,
+    next_attempt: Option<Instant>,
+    finished: bool,
+}
+
+impl MaintenanceJob {
+    const fn new() -> Self {
+        Self { running: false, next_attempt: None, finished: false }
+    }
+}
+
+static ACTIVATION_JOB: Mutex<MaintenanceJob> = Mutex::new(MaintenanceJob::new());
+static CREDENTIAL_JOB: Mutex<MaintenanceJob> = Mutex::new(MaintenanceJob::new());
+static METADATA_JOB: Mutex<MaintenanceJob> = Mutex::new(MaintenanceJob::new());
+
+struct MaintenanceRun {
+    job: &'static Mutex<MaintenanceJob>,
+    delay: Option<Duration>,
+    finished: bool,
+}
+
+impl MaintenanceRun {
+    fn begin(job: &'static Mutex<MaintenanceJob>) -> Option<Self> {
+        let mut state = job.try_lock().ok()?;
+        if state.running || state.finished || state.next_attempt.is_some_and(|at| at > Instant::now()) {
+            return None;
+        }
+        state.running = true;
+        Some(Self { job, delay: Some(RETRY_DELAY), finished: false })
+    }
+}
+
+impl Drop for MaintenanceRun {
+    fn drop(&mut self) {
+        let mut state = self.job.lock().unwrap_or_else(|error| error.into_inner());
+        state.next_attempt = self.delay.map(|delay| Instant::now() + delay);
+        state.finished = self.finished;
+        state.running = false;
+    }
+}
+
+/// 版本探测只启动一次；不与额度激活或凭证维护互相等待。
+pub(crate) fn start_bootstrap(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn_blocking(move || sync_codex_version(&app.state::<AppState>()));
+}
+
+/// 只有公共巡检调用本入口；所有数据库/网络工作都在有界的独立任务中执行。
+pub(crate) fn dispatch(app: &tauri::AppHandle) {
+    if let Some(run) = MaintenanceRun::begin(&ACTIVATION_JOB) {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut run = run;
+            match activate_next_due_account(&app) {
+                Ok(false) => run.delay = None,
+                // 自动请求结束后至少间隔一分钟；失败同样由下一次到期巡检重试。
+                Ok(true) | Err(_) => run.delay = Some(RETRY_DELAY),
             }
+        });
+    }
+    if let Some(run) = MaintenanceRun::begin(&CREDENTIAL_JOB) {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut run = run;
+            if let Ok(false) = refresh_due_access_tokens(&app, &app.state::<AppState>()) {
+                run.delay = Some(ACCESS_TOKEN_CHECK_INTERVAL);
+            }
+        });
+    }
+    if let Some(run) = MaintenanceRun::begin(&METADATA_JOB) {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut run = run;
+            if let Ok(false) = backfill_account_metadata(&app, &app.state::<AppState>()) {
+                run.finished = true;
+            }
+        });
+    }
+}
+
+fn activate_next_due_account(app: &tauri::AppHandle) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    let store = {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        read_accounts(&db)?
+    };
+    let refreshing = state.refreshing.lock().map_err(|error| error.to_string())?.clone();
+    let now = Utc::now();
+    let target = store.accounts.iter().filter_map(|account| {
+        let due_at = effective_next_refresh_at(account.usage.as_ref(), account.next_refresh_at.as_deref())
+            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        (account.enabled && account.can_refresh_usage && !refreshing.contains(&account.id) && due_at <= now)
+            .then_some((due_at, account))
+    }).min_by_key(|(due_at, _)| *due_at).map(|(_, account)| account);
+    let Some(account) = target else { return Ok(false) };
+    match defer_usage_during_quiet_hours(app, &state, now) {
+        Ok(true) => return Ok(false),
+        Ok(false) => {}
+        Err(error) => {
+            schedule_account_usage_retry(app, &state, &account.id, "免打扰设置处理失败", &error);
+            return Err(error);
+        }
+    }
+    tauri::async_runtime::block_on(activate_due_account(app, &state, &account.id))
+}
+
+/// 启动回填只处理缺失元数据的 PAT；失败/暂被占用的账号一分钟后再试。
+fn backfill_account_metadata(app: &tauri::AppHandle, state: &AppState) -> Result<bool, String> {
+    let targets = {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
+        let mut stmt = db.prepare(
+            "SELECT id, auth_json_content FROM accounts WHERE chatgpt_plan_type IS NULL AND is_disabled = 0",
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|error| error.to_string())?;
+        let mut targets = Vec::new();
+        for row in rows {
+            let (id, content) = row.map_err(|error| error.to_string())?;
+            if let Some(token) = extract_personal_access_token(&content) { targets.push((id, token)); }
         }
         targets
     };
-
+    let mut retry = false;
     for (id, token) in targets {
-        let Ok(_guard) = begin_account_refresh(state, &id, None) else { continue };
-        let enabled = state.db.lock().ok()
-            .is_some_and(|db| ensure_account_enabled(&db, &id).is_ok());
-        if !enabled { continue; }
+        let Ok(_guard) = begin_account_refresh(state, &id, None) else { retry = true; continue };
+        {
+            let db = state.db.lock().map_err(|error| error.to_string())?;
+            if ensure_account_enabled(&db, &id).is_err() { continue; }
+        }
         match resolve_token_metadata(&token) {
             Ok(meta) => {
-                let Ok(db) = state.db.lock() else {
-                    continue;
-                };
-                let _ = db.execute(
+                let db = state.db.lock().map_err(|error| error.to_string())?;
+                db.execute(
                     "UPDATE accounts SET chatgpt_plan_type = ?1, chatgpt_account_id = ?2, chatgpt_account_is_fedramp = ?3 WHERE id = ?4",
                     params![meta.chatgpt_plan_type, meta.chatgpt_account_id, meta.chatgpt_account_is_fedramp as i32, id],
-                );
+                ).map_err(|error| error.to_string())?;
             }
             Err(error) => {
-                save_fallback_reset(app, state, &id, "账号信息获取失败", &error);
+                retry = true;
+                report_account_request_error(app, state, &id, "账号信息获取失败", &error);
             }
         }
     }
+    Ok(retry)
 }
 
-/// 刷新所有 at 临近过期的 rt 账号的 access token（rt 一次性使用，保存新 rt）。
-fn refresh_due_access_tokens(app: &tauri::AppHandle, state: &AppState) {
-    let targets: Vec<(String, String)> = {
-        let Ok(db) = state.db.lock() else {
-            return;
-        };
+/// 凭证任务自己的重试不改写窗口计划，避免认证故障反复推迟已到期激活。
+fn refresh_due_access_tokens(app: &tauri::AppHandle, state: &AppState) -> Result<bool, String> {
+    let targets = {
+        let db = state.db.lock().map_err(|error| error.to_string())?;
         let cutoff = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
-        let Ok(mut stmt) = db.prepare(
+        let mut stmt = db.prepare(
             "SELECT id, refresh_token FROM accounts WHERE is_disabled = 0 AND refresh_token IS NOT NULL AND at_expires_at IS NOT NULL AND at_expires_at <= ?1",
-        ) else {
-            return;
-        };
-        let Ok(rows) = stmt.query_map(params![cutoff], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }) else {
-            return;
-        };
-        rows.flatten().collect()
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map(params![cutoff], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?
     };
-
+    let mut retry = false;
     for (id, rt) in targets {
-        let Ok(_guard) = begin_account_refresh(state, &id, None) else {
-            continue;
+        let Ok(_guard) = begin_account_refresh(state, &id, None) else { retry = true; continue };
+        let still_current = {
+            let db = state.db.lock().map_err(|error| error.to_string())?;
+            db.query_row(
+                "SELECT refresh_token = ?1 FROM accounts WHERE id = ?2 AND is_disabled = 0",
+                params![rt, id], |row| row.get::<_, bool>(0),
+            ).unwrap_or(false)
         };
-        // 等待互斥期间凭证可能已更新，丢弃旧候选。
-        let still_current = state
-            .db
-            .lock()
-            .ok()
-            .and_then(|db| {
-                db.query_row(
-                    "SELECT refresh_token = ?1 FROM accounts WHERE id = ?2 AND is_disabled = 0",
-                    params![rt, id],
-                    |row| row.get::<_, bool>(0),
-                )
-                .ok()
-            })
-            .unwrap_or(false);
-        if !still_current {
-            continue;
-        }
-        match exchange_rt_for_at(&rt) {
-            Ok(info) => {
-                let saved = state
-                    .db
-                    .lock()
-                    .map_err(|e| e.to_string())
-                    .and_then(|db| persist_rotated_access_token(&db, &id, &rt, &info, true));
-                if let Err(error) = saved {
-                    save_fallback_reset(app, state, &id, "账号认证续期失败", &error);
-                    continue;
-                }
-            }
-            Err(error) => {
-                save_fallback_reset(app, state, &id, "账号认证续期失败", &error);
-            }
+        if !still_current { continue; }
+        let result = exchange_rt_for_at(&rt).and_then(|info| {
+            let db = state.db.lock().map_err(|error| error.to_string())?;
+            persist_rotated_access_token(&db, &id, &rt, &info, true)
+        });
+        if let Err(error) = result {
+            retry = true;
+            report_account_request_error(app, state, &id, "账号认证续期失败", &error);
         }
     }
-}
-
-/// 每次到期只执行一轮，按已保存的下次刷新时间调度。
-pub(crate) fn start_usage_scheduler(app: tauri::AppHandle) {
-    // 独立计时，额度激活、凭证续期和启动回填的网络请求不会推迟三十秒评估。
-    let evaluation_app = app.clone();
-    thread::spawn(move || loop {
-        request_evaluation(evaluation_app.clone());
-        thread::sleep(Duration::from_secs(USAGE_CHECK_INTERVAL_SECONDS));
-    });
-    thread::spawn(move || {
-        {
-            let state = app.state::<AppState>();
-            sync_codex_version(&*state);
-            backfill_account_metadata(&app, &state);
-        }
-
-        let mut next_usage_request_at = Utc::now();
-        let mut next_access_check_at = Utc::now();
-
-        loop {
-            let now = Utc::now();
-            if now >= next_access_check_at {
-                refresh_due_access_tokens(&app, &app.state::<AppState>());
-                next_access_check_at =
-                    Utc::now() + chrono::Duration::seconds(ACCESS_TOKEN_CHECK_INTERVAL_SECONDS);
-            }
-
-            let now = Utc::now();
-            if now >= next_usage_request_at {
-                let store = {
-                    let state = app.state::<AppState>();
-                    let result = state
-                        .db
-                        .lock()
-                        .map_err(|error| error.to_string())
-                        .and_then(|db| read_accounts(&db));
-                    result
-                };
-                if let Ok(store) = store {
-                    let state = app.state::<AppState>();
-                    let refreshing = state
-                        .refreshing
-                        .lock()
-                        .map(|ids| ids.clone())
-                        .unwrap_or_default();
-                    let target = store.accounts.iter()
-                        .filter_map(|account| {
-                            let due_at = account
-                                .next_refresh_at
-                                .as_deref()
-                                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                                .map(|time| time.with_timezone(&Utc))
-                                .unwrap_or(DateTime::<Utc>::MIN_UTC);
-                            (account.enabled && account.can_refresh_usage
-                                && !refreshing.contains(&account.id)
-                                && due_at <= now)
-                                .then_some((due_at, account))
-                        })
-                        .min_by_key(|(due_at, _)| *due_at)
-                        .map(|(_, account)| account);
-
-                    if let Some(account) = target {
-                        let should_refresh = match defer_usage_during_quiet_hours(&app, &state, Utc::now()) {
-                            Ok(deferred) => !deferred,
-                            Err(error) => {
-                                save_fallback_reset(&app, &state, &account.id, "免打扰设置处理失败", &error);
-                                false
-                            }
-                        };
-                        if should_refresh {
-                            // 所有启用的订阅账号（包括当前账号）自动续上窗口。
-                            let _ = tauri::async_runtime::block_on(send_test_message(
-                                app.clone(),
-                                app.state::<AppState>(),
-                                account.id.clone(),
-                                None,
-                            ));
-                            next_usage_request_at = Utc::now()
-                                + chrono::Duration::seconds(USAGE_REFRESH_BATCH_SLEEP_SECONDS);
-                        }
-                    }
-                }
-            }
-
-            thread::sleep(Duration::from_secs(USAGE_CHECK_INTERVAL_SECONDS));
-        }
-    });
+    Ok(retry)
 }

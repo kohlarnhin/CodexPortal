@@ -5,8 +5,9 @@ use crate::state::AppState;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use view::{Snapshot, TrayMenu};
@@ -36,7 +37,7 @@ pub(crate) struct TrayIconPixels {
 }
 
 enum Command {
-    Refresh,
+    Refresh(RefreshRun),
     EmailMasking(bool),
     GetSettings(Sender<TraySettings>),
     SetEnabled(bool, Sender<TraySettings>),
@@ -47,6 +48,36 @@ enum Command {
 pub(crate) struct TrayState {
     sender: Sender<Command>,
     enabled: AtomicBool,
+    refresh_pending: AtomicBool,
+    next_refresh: Mutex<Option<Instant>>,
+}
+
+struct RefreshRun {
+    app: AppHandle,
+    failed: bool,
+    owns_slot: bool,
+    preserve_retry: bool,
+}
+
+impl Drop for RefreshRun {
+    fn drop(&mut self) {
+        let state = self.app.state::<TrayState>();
+        let mut next = state.next_refresh.lock().unwrap_or_else(|error| error.into_inner());
+        if !self.preserve_retry { *next = self.failed.then(|| Instant::now() + Duration::from_secs(60)); }
+        if self.owns_slot { state.refresh_pending.store(false, Ordering::Release); }
+    }
+}
+
+/// 巡检与真实变更共用一个刷新槽位，慢刷新期间不积压命令。
+pub(crate) fn request_refresh(app: &AppHandle) {
+    let Some(state) = app.try_state::<TrayState>() else { return };
+    let Ok(next) = state.next_refresh.try_lock() else { return };
+    if next.is_some_and(|at| at > Instant::now()) { return; }
+    if state.refresh_pending.swap(true, Ordering::AcqRel) { return; }
+    drop(next);
+    let _ = state.sender.send(Command::Refresh(RefreshRun {
+        app: app.clone(), failed: true, owns_slot: true, preserve_retry: false,
+    }));
 }
 
 pub(crate) fn is_enabled(app: &AppHandle) -> bool {
@@ -55,7 +86,10 @@ pub(crate) fn is_enabled(app: &AppHandle) -> bool {
 
 pub(crate) fn start(app: AppHandle) -> Result<(), std::io::Error> {
     let (sender, receiver) = mpsc::channel();
-    app.manage(TrayState { sender: sender.clone(), enabled: AtomicBool::new(false) });
+    app.manage(TrayState {
+        sender, enabled: AtomicBool::new(false), refresh_pending: AtomicBool::new(false),
+        next_refresh: Mutex::new(None),
+    });
     // 只注册一次菜单监听，反复开关托盘不会累积页面导航回调。
     app.on_menu_event(|app, event| {
         match event.id().as_ref() {
@@ -72,12 +106,13 @@ pub(crate) fn start(app: AppHandle) -> Result<(), std::io::Error> {
         }
     });
     for event in ["usage-updated", "accounts-updated", "session-sync-completed"] {
-        let sender = sender.clone();
-        app.listen(event, move |_| { let _ = sender.send(Command::Refresh); });
+        let event_app = app.clone();
+        app.listen(event, move |_| request_refresh(&event_app));
     }
+    let worker_app = app.clone();
     std::thread::Builder::new().name("portal-tray".into()).spawn(move || {
         Worker {
-            app,
+            app: worker_app,
             enabled: false,
             masking: true,
             error: None,
@@ -85,8 +120,10 @@ pub(crate) fn start(app: AppHandle) -> Result<(), std::io::Error> {
             menu: None,
             snapshot: None,
             icon_revision: 0,
+            initialized: false,
         }.run(receiver);
     })?;
+    request_refresh(&app);
     Ok(())
 }
 
@@ -99,21 +136,13 @@ struct Worker {
     menu: Option<TrayMenu>,
     snapshot: Option<Snapshot>,
     icon_revision: u64,
+    initialized: bool,
 }
 
 impl Worker {
     fn run(&mut self, receiver: Receiver<Command>) {
-        match self.read_preference().and_then(|enabled| self.apply_enabled(enabled)) {
-            Ok(()) => {}
-            Err(_) => self.error = Some("托盘初始化失败，请重新开启托盘。".into()),
-        }
-        loop {
-            // 只读取本地缓存；补获账号新增/编辑，不额外请求额度接口或改变免打扰调度。
-            let command = match receiver.recv_timeout(Duration::from_secs(5)) {
-                Ok(command) => command,
-                Err(RecvTimeoutError::Timeout) => Command::Refresh,
-                Err(RecvTimeoutError::Disconnected) => break,
-            };
+        // 仅消费事件/命令，周期刷新由公共巡检请求；不再维护独立时钟。
+        while let Ok(command) = receiver.recv() {
             match command {
                 Command::GetIconState(reply) => { let _ = reply.send(self.icon_state()); }
                 Command::SetIcon(pixels) => {
@@ -128,23 +157,52 @@ impl Worker {
                 }
                 Command::GetSettings(reply) => { let _ = reply.send(self.settings()); }
                 Command::SetEnabled(enabled, reply) => {
+                    let mut run = RefreshRun {
+                        app: self.app.clone(), failed: true, owns_slot: false, preserve_retry: false,
+                    };
                     let previous = self.enabled;
                     let result = self.apply_enabled(enabled).and_then(|()| self.save_preference(enabled));
+                    run.failed = result.is_err();
                     if result.is_err() {
                         let _ = self.apply_enabled(previous);
                         self.error = Some("托盘设置保存失败，请重试。".into());
                     } else {
                         self.error = None;
+                        self.initialized = true;
                     }
                     let _ = reply.send(self.settings());
                 }
                 Command::EmailMasking(masking) => {
                     self.masking = masking;
-                    self.refresh_if_enabled();
+                    let mut run = RefreshRun {
+                        app: self.app.clone(), failed: true, owns_slot: false, preserve_retry: false,
+                    };
+                    run.failed = self.refresh_if_enabled().is_err();
                 }
-                Command::Refresh => self.refresh_if_enabled(),
+                Command::Refresh(mut run) => {
+                    let deferred = self.app.state::<TrayState>().next_refresh.lock()
+                        .unwrap_or_else(|error| error.into_inner()).is_some_and(|at| at > Instant::now());
+                    if deferred {
+                        // 排队期间设置操作可能刚失败；保留它的固定重试期限。
+                        run.preserve_retry = true;
+                        continue;
+                    }
+                    let result = if self.initialized { self.refresh_if_enabled() } else { self.initialize() };
+                    run.failed = result.is_err();
+                }
             }
         }
+    }
+
+    fn initialize(&mut self) -> Result<(), String> {
+        let result = self.read_preference().and_then(|enabled| self.apply_enabled(enabled));
+        if result.is_err() {
+            self.error = Some("托盘初始化失败，请重新开启托盘。".into());
+        } else {
+            self.initialized = true;
+            self.error = None;
+        }
+        result
     }
 
     fn settings(&self) -> TraySettings {
@@ -194,10 +252,14 @@ impl Worker {
         Ok(())
     }
 
-    fn refresh_if_enabled(&mut self) {
-        if self.enabled && self.refresh().is_err() {
-            self.error = Some("托盘更新失败，请关闭后重新开启托盘。".into());
+    fn refresh_if_enabled(&mut self) -> Result<(), String> {
+        if self.enabled {
+            if let Err(error) = self.refresh() {
+                self.error = Some("托盘更新失败，请关闭后重新开启托盘。".into());
+                return Err(error);
+            }
         }
+        Ok(())
     }
 
     fn refresh(&mut self) -> Result<(), String> {

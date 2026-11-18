@@ -28,6 +28,7 @@ export function useScheduleStatus() {
     void Promise.allSettled([
       listen('accounts-updated', () => { void refresh(); }),
       listen('usage-updated', () => { void refresh(); }),
+      listen('patrol-tick', () => { void refresh(); }),
     ]).then((results) => {
       for (const result of results) {
         if (result.status === 'fulfilled') {
@@ -38,10 +39,8 @@ export function useScheduleStatus() {
       // 补读注册监听期间发生的变更。
       if (!disposed) void refresh();
     });
-    const timer = window.setInterval(() => { void refresh(); }, 60_000);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, []);

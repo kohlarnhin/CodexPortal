@@ -154,15 +154,20 @@ pub(crate) fn save_codex_live_usage(
     let observed_at = crate::time::rfc3339_timestamp_millis(&usage.synced_at)
         .filter(|time| *time <= chrono::Utc::now().timestamp_millis() + 1000)
         .ok_or("额度快照时间无效")?;
-    let previous: Option<String> = db.query_row(
-        "SELECT usage_updated_at FROM accounts WHERE id = ?1", [&account_id], |row| row.get(0),
+    let (previous, previous_usage, existing_next_refresh_at): (Option<String>, Option<String>, Option<String>) = db.query_row(
+        "SELECT usage_updated_at, usage_json, next_refresh_at FROM accounts WHERE id = ?1", [&account_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).map_err(|_| "账号额度缓存不可用")?;
     if previous.as_deref().and_then(crate::time::rfc3339_timestamp_millis)
         .is_some_and(|previous| previous >= observed_at) { return Ok(()); }
     usage.request_started_at = None;
     usage.plan_type = None;
+    let previous_usage = crate::accounts::usage::parse_cached_usage(previous_usage);
+    let next = crate::accounts::usage::reconcile_usage_observation(
+        &mut usage, previous_usage.as_ref(), existing_next_refresh_at.as_deref(), chrono::Utc::now(),
+        crate::accounts::usage::UsageObservation::Query,
+    ).to_rfc3339();
     let json = serde_json::to_string(&usage).map_err(|_| "额度缓存保存失败")?;
-    let next = crate::accounts::usage::compute_next_refresh_at(&usage, chrono::Utc::now()).to_rfc3339();
     let plan = crate::accounts::usage::derive_plan_type_from_usage(&usage);
     let changed = db.execute(
         "UPDATE accounts SET usage_json = ?1, usage_updated_at = ?2, next_refresh_at = ?4, plan_type = COALESCE(?5, plan_type) WHERE id = ?3 AND is_active = 1",
