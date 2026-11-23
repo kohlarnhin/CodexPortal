@@ -20,6 +20,14 @@ import { Copy, Globe, PenLine, Plus, Terminal, Trash2, X } from 'lucide-react';
 import { errorMessage, toast } from './ui/toast';
 import PageHeader from './ui/page-header';
 
+const isServerEnabled = (server: MCPServer) => server.enabled !== false;
+
+const FIELDS_REJECTED_BY_STDIO = [
+  'url', 'bearer_token', 'bearer_token_env_var', 'http_headers', 'env_http_headers',
+  'http_headers_helper', 'oauth', 'oauth_resource', 'auth',
+];
+const FIELDS_REJECTED_BY_HTTP = ['command', 'args', 'env', 'env_vars', 'cwd', 'bearer_token'];
+
 export default function MCPManager() {
   const { config, saveConfig, isLoading, error, refresh } = useConfig();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -35,7 +43,7 @@ export default function MCPManager() {
 
   // Form State
   const [formName, setFormName] = useState('');
-  const [formType, setFormType] = useState<'stdio' | 'sse'>('stdio');
+  const [formType, setFormType] = useState<'stdio' | 'http'>('stdio');
   const [formCommand, setFormCommand] = useState('');
   const [formArgs, setFormArgs] = useState('');
   const [formUrl, setFormUrl] = useState('');
@@ -47,7 +55,11 @@ export default function MCPManager() {
   const nameExists = serverName !== editingKey && Object.prototype.hasOwnProperty.call(servers, serverName);
 
   const activeCount = useMemo(
-    () => serverKeys.filter((k) => !servers[k]?.disabled).length,
+    () => serverKeys.filter((k) => servers[k] && isServerEnabled(servers[k])).length,
+    [serverKeys, servers]
+  );
+  const legacyDisabledKeys = useMemo(
+    () => serverKeys.filter((k) => servers[k]?.disabled === true && isServerEnabled(servers[k])),
     [serverKeys, servers]
   );
 
@@ -105,19 +117,36 @@ export default function MCPManager() {
   const handleToggle = (key: string) => {
     if (!config) return;
     const currentServer = servers[key];
-    const newConfig = { ...config, mcp_servers: { ...config.mcp_servers } };
-    newConfig.mcp_servers[key] = {
-      ...currentServer,
-      disabled: !currentServer.disabled,
-    };
+    const enabled = isServerEnabled(currentServer);
+    const nextServer: MCPServer = { ...currentServer };
+    delete nextServer.disabled;
+    if (enabled) nextServer.enabled = false;
+    else delete nextServer.enabled;
+    const newConfig = { ...config, mcp_servers: { ...config.mcp_servers, [key]: nextServer } };
 
-    setPendingDiffs([
-      {
-        key: `mcp_servers.${key}.disabled`,
-        oldVal: !!currentServer.disabled,
-        newVal: !currentServer.disabled,
-      },
-    ]);
+    const diffs: DiffItem[] = [{ key: `mcp_servers.${key}.enabled`, oldVal: enabled, newVal: !enabled }];
+    if (currentServer.disabled !== undefined) {
+      diffs.push({ key: `mcp_servers.${key}.disabled`, oldVal: currentServer.disabled, newVal: undefined });
+    }
+    setPendingDiffs(diffs);
+    setPendingConfig(newConfig);
+    setShowDiffModal(true);
+  };
+
+  const applyLegacyDisabled = () => {
+    if (!config) return;
+    const newConfig = { ...config, mcp_servers: { ...config.mcp_servers } };
+    const diffs: DiffItem[] = [];
+    for (const key of legacyDisabledKeys) {
+      const nextServer: MCPServer = { ...servers[key], enabled: false };
+      delete nextServer.disabled;
+      newConfig.mcp_servers[key] = nextServer;
+      diffs.push(
+        { key: `mcp_servers.${key}.enabled`, oldVal: true, newVal: false },
+        { key: `mcp_servers.${key}.disabled`, oldVal: true, newVal: undefined },
+      );
+    }
+    setPendingDiffs(diffs);
     setPendingConfig(newConfig);
     setShowDiffModal(true);
   };
@@ -164,7 +193,7 @@ export default function MCPManager() {
     }
     setFormName(name);
     if (server.url) {
-      setFormType('sse');
+      setFormType('http');
       setFormUrl(server.url);
       setFormCommand('');
       setFormArgs('');
@@ -189,15 +218,13 @@ export default function MCPManager() {
     const sourceKey = editingKey ?? copyingKey;
     const sourceServer = sourceKey !== null ? servers[sourceKey] : undefined;
     const newServer: MCPServer = { ...sourceServer };
-    if (formType === 'sse') {
+    if (formType === 'http') {
       if (!formUrl.trim()) return;
+      FIELDS_REJECTED_BY_HTTP.forEach((field) => delete newServer[field]);
       newServer.url = formUrl.trim();
-      delete newServer.command;
-      delete newServer.args;
-      delete newServer.env;
     } else {
       if (!formCommand.trim()) return;
-      delete newServer.url;
+      FIELDS_REJECTED_BY_STDIO.forEach((field) => delete newServer[field]);
       newServer.command = formCommand.trim();
       // 未改动参数时沿用原数组，保留空参数、首尾空格和参数中的换行。
       if (!sourceServer || formArgs !== (sourceServer.args?.join('\n') ?? '')) {
@@ -290,6 +317,17 @@ export default function MCPManager() {
 
       {/* 服务器列表 */}
       <div className="page-scroll">
+        {legacyDisabledKeys.length > 0 && (
+          <div role="status" className="mb-3 flex items-center justify-between gap-4 rounded-xl border border-warning/20 bg-warning/10 px-4 py-3">
+            <p className="min-w-0 text-label leading-relaxed text-foreground">
+              <span className="font-mono">{legacyDisabledKeys.join('、')}</span>
+              {' '}由旧版本以 disabled 标记停用，Codex 不识别该字段，这些服务实际仍在运行。
+            </p>
+            <Button variant="outline" size="sm" className="shrink-0" onClick={applyLegacyDisabled}>
+              应用停用
+            </Button>
+          </div>
+        )}
         {serverKeys.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-xl">
             <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center mb-4 text-muted-foreground">
@@ -316,9 +354,9 @@ export default function MCPManager() {
             {filteredKeys.map((key) => {
               const server = servers[key];
               if (!server) return null;
-              const isActive = !server.disabled;
-              const isSSE = !!server.url;
-              const commandDisplay = isSSE
+              const isActive = isServerEnabled(server);
+              const isHttp = !!server.url;
+              const commandDisplay = isHttp
                 ? server.url
                 : [server.command, ...(server.args || [])].filter(Boolean).join(' ');
               const envCount = server.env ? Object.keys(server.env).length : 0;
@@ -343,7 +381,7 @@ export default function MCPManager() {
                           : 'bg-muted text-muted-foreground'
                       )}
                     >
-                      {isSSE ? (
+                      {isHttp ? (
                         <Globe size={18} />
                       ) : (
                         <Terminal size={18} />
@@ -359,9 +397,9 @@ export default function MCPManager() {
                         >
                           {key}
                         </h3>
-                        {isSSE ? (
+                        {isHttp ? (
                           <span className="shrink-0 px-1.5 py-px bg-background text-muted-foreground border text-caption font-mono font-medium rounded-sm uppercase">
-                            SSE
+                            HTTP
                           </span>
                         ) : (
                           <span className="shrink-0 px-1.5 py-px bg-background text-muted-foreground border text-caption font-mono font-medium rounded-sm uppercase">
@@ -513,23 +551,23 @@ export default function MCPManager() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFormType('sse')}
+                  onClick={() => setFormType('http')}
                   className={cn(
                     'flex-1 py-1.5 text-label font-medium rounded-md transition-all cursor-pointer',
-                    formType === 'sse'
+                    formType === 'http'
                       ? 'bg-background text-foreground shadow-xs'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  SSE (HTTP URL)
+                  HTTP (远程 URL)
                 </button>
               </div>
             </div>
 
-            {formType === 'sse' ? (
+            {formType === 'http' ? (
               <div>
                 <label className="block text-label font-medium text-foreground mb-1.5">
-                  SSE URL <span className="text-destructive">*</span>
+                  服务 URL <span className="text-destructive">*</span>
                 </label>
                 <Input
                   type="text"
@@ -660,7 +698,7 @@ export default function MCPManager() {
               onClick={handleSaveModal}
               disabled={
                 !serverName || nameExists ||
-                (formType === 'sse' ? !formUrl.trim() : !formCommand.trim())
+                (formType === 'http' ? !formUrl.trim() : !formCommand.trim())
               }
               className="min-w-[80px]"
             >

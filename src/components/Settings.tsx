@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useConfig, parseConfig, CodexConfig, ConfigParseError } from '../hooks/useConfig';
 import { stringify } from 'smol-toml';
-import Select from './Select';
+import Select, { type Option } from './Select';
 import ModelSelect from './ModelSelect';
 import ToggleSwitch from './ToggleSwitch';
 import TomlEditor from './config/TomlEditor';
@@ -65,18 +65,19 @@ const SANDBOX_OPTIONS = [
 ];
 
 const APPROVAL_OPTIONS = [
-  { value: 'untrusted', label: 'Untrusted（仅不可信操作需审批）' },
   { value: 'on-request', label: 'On Request（模型请求时询问）' },
   { value: 'never', label: 'Never（从不审批直接执行）' },
 ];
 
 const PERSONALITY_OPTIONS = [
-  { value: '', label: '使用系统默认风格' },
-  { value: 'pragmatic', label: 'Pragmatic（务实精炼，聚焦代码）' },
-  { value: 'concise', label: 'Concise（极简扼要，少说多做）' },
-  { value: 'friendly', label: 'Friendly（友好详尽，亲切耐心）' },
-  { value: 'formal', label: 'Formal（严谨规范，结构完备）' },
+  { value: '', label: '使用 Codex 默认设置' },
+  { value: 'none', label: 'None（不加入内置风格说明）' },
 ];
+const DEPRECATED_PERSONALITY_VALUES = ['friendly', 'pragmatic'];
+
+function withCurrentValue(options: Option[], value: string, label: string): Option[] {
+  return value && !options.some(option => option.value === value) ? [...options, { value, label }] : options;
+}
 
 interface SettingRowProps {
   label: string;
@@ -345,11 +346,21 @@ export default function Settings() {
   const sandboxWarning = localConfig?.sandbox_mode === 'danger-full-access'
     ? 'Codex 可读写任意文件并访问网络，请仅在可信环境中使用'
     : null;
-  const approvalWarning = localConfig?.approval_policy === 'never'
-    ? localConfig.sandbox_mode === 'danger-full-access'
-      ? '与完整主机访问同时使用时，所有操作都不经确认直接执行'
-      : '命令与写入不再弹出确认，失败时也不会请求授权'
-    : null;
+  const approvalPolicy = typeof localConfig?.approval_policy === 'string' ? localConfig.approval_policy : '';
+  const approvalWarning = approvalPolicy === 'untrusted'
+    ? 'Codex 已不再支持 untrusted，保留该值会导致 Codex 无法加载配置'
+    : approvalPolicy === 'never'
+      ? localConfig?.sandbox_mode === 'danger-full-access'
+        ? '与完整主机访问同时使用时，所有操作都不经确认直接执行'
+        : '命令与写入不再弹出确认，失败时也不会请求授权'
+      : null;
+  const personality = typeof localConfig?.personality === 'string' ? localConfig.personality : '';
+  const personalityDeprecated = DEPRECATED_PERSONALITY_VALUES.includes(personality);
+  const personalityWarning = !personality || personality === 'none'
+    ? null
+    : personalityDeprecated
+      ? 'Codex 已废弃风格选择，该取值不再生效'
+      : 'Codex 不支持该取值，保留会导致 Codex 无法加载配置';
 
   return (
     <div className="page-layout pt-4">
@@ -473,26 +484,28 @@ export default function Settings() {
                   disabled={editingDisabled}
                   className="w-64"
                   align="right"
-                  options={[
+                  options={withCurrentValue([
                     { value: '', label: '使用 Codex 默认设置' },
                     ...(approvalIsCustom ? [{ value: '__custom__', label: '自定义细粒度审批' }] : []),
                     ...APPROVAL_OPTIONS,
-                  ]}
+                  ], approvalPolicy, approvalPolicy === 'untrusted' ? 'Untrusted（Codex 已不支持）' : `${approvalPolicy}（当前值）`)}
                 />
               </SettingRow>
 
               <SettingRow
                 label="回复风格"
                 configKey="personality"
-                description="Codex AI 回复交互时的语气习惯与沟通倾向"
+                description="Codex 已废弃风格切换，仅 None 仍生效：不在模型指令中加入内置风格说明"
+                warning={personalityWarning}
               >
                 <Select
-                  value={localConfig.personality || ''}
+                  value={personality}
                   onChange={value => updateSetting('personality', value)}
                   disabled={editingDisabled}
                   className="w-64"
                   align="right"
-                  options={PERSONALITY_OPTIONS}
+                  options={withCurrentValue(PERSONALITY_OPTIONS, personality,
+                    personalityDeprecated ? `${personality}（已废弃，不再生效）` : `${personality}（Codex 不支持）`)}
                 />
               </SettingRow>
 

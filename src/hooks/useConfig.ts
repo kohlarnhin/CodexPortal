@@ -8,6 +8,7 @@ export interface MCPServer {
   args?: string[];
   env?: Record<string, string>;
   url?: string;
+  enabled?: boolean;
   disabled?: boolean;
   [key: string]: unknown;
 }
