@@ -28,8 +28,8 @@ const MiniMeter = ({ window, kind }: { window: AccountUsageWindow; kind: 'primar
   const label = formatUsageWindowLabel(window, kind);
   return (
     <div>
-      <div className="flex items-center justify-between gap-2 text-caption">
-        <span className="truncate text-muted-foreground">{label}</span>
+      <div className="flex items-center justify-between gap-2 text-[11.5px] leading-4">
+        <span className="truncate text-[var(--label)]">{label}</span>
         <span className="shrink-0 font-medium tabular-nums text-foreground">
           {remaining === null ? '—' : `${Math.round(remaining)}%`}
         </span>
@@ -40,7 +40,7 @@ const MiniMeter = ({ window, kind }: { window: AccountUsageWindow; kind: 'primar
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={remaining ?? undefined}
-        className="mt-1 h-1 overflow-hidden rounded-full bg-primary/10"
+        className="mt-1 h-[3.5px] overflow-hidden rounded-full bg-[var(--button-fill)]"
       >
         <div
           className={cn('h-full rounded-full transition-all duration-500', USAGE_TONE_FILL[getUsageTone(remaining)])}
@@ -51,7 +51,7 @@ const MiniMeter = ({ window, kind }: { window: AccountUsageWindow; kind: 'primar
   );
 };
 
-/** 侧边栏底部：当前账号与额度速览，任意页面都能看到剩余额度。 */
+/** 侧边栏底部：当前账号与额度速览（Bento 卡片样式）。 */
 const SidebarAccountStatus: React.FC<SidebarAccountStatusProps> = ({
   isEmailMaskingEnabled,
   usageRevision,
@@ -66,7 +66,7 @@ const SidebarAccountStatus: React.FC<SidebarAccountStatusProps> = ({
   }, [refresh, usageRevision]);
 
   if (isLoading) {
-    return <div className="h-[92px] animate-pulse rounded-lg bg-muted/60" />;
+    return <div className="h-[88px] animate-pulse rounded-[12px] bg-[var(--button-fill)]/70" />;
   }
 
   const account = accounts.find(item => item.id === activeAccountId);
@@ -74,10 +74,11 @@ const SidebarAccountStatus: React.FC<SidebarAccountStatusProps> = ({
     return (
       <button
         type="button"
+        data-no-press
         onClick={onOpenAccounts}
-        className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg border border-dashed px-3 py-2.5 text-left text-label text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+        className="flex w-full cursor-pointer items-center gap-2.5 rounded-[12px] border border-dashed border-[var(--hairline-control)] px-3 py-2.5 text-left text-label text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
       >
-        <UserPlus size={15} className="shrink-0" />
+        <UserPlus size={14} className="shrink-0" />
         未设置当前账号
       </button>
     );
@@ -88,26 +89,27 @@ const SidebarAccountStatus: React.FC<SidebarAccountStatusProps> = ({
   return (
     <button
       type="button"
+      data-no-press
       onClick={onOpenDashboard}
       aria-label="查看当前账号"
-      className="w-full cursor-pointer rounded-lg border bg-card px-3 py-2.5 text-left shadow-xs outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className="bento-card w-full cursor-pointer rounded-[13px] px-3.5 py-3 text-left outline-none transition-colors hover:bg-[var(--hover)] focus-visible:ring-2 focus-visible:ring-ring/25"
     >
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-label font-medium text-foreground">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="bento-status-dot" data-tone="running" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground">
           {getDisplayedEmail(account.name, isEmailMaskingEnabled)}
         </span>
         <PlanBadge planType={account.chatgptPlanType} accountType={account.accountType} />
       </div>
       {isApiKeyAccount(account) ? (
-        <p className="mt-1.5 text-caption text-muted-foreground">官方 API · 按量计费</p>
+        <p className="mt-1.5 text-[11.5px] text-[var(--label)]">官方 API · 按量计费</p>
       ) : usage?.primary || usage?.secondary ? (
-        <div className="mt-2 space-y-1.5">
+        <div className="mt-2.5 space-y-2">
           {usage.primary && <MiniMeter window={usage.primary} kind="primary" />}
           {usage.secondary && <MiniMeter window={usage.secondary} kind="secondary" />}
         </div>
       ) : (
-        <p className="mt-1.5 text-caption text-muted-foreground">等待额度同步</p>
+        <p className="mt-1.5 text-[11.5px] text-[var(--label)]">等待额度同步</p>
       )}
     </button>
   );

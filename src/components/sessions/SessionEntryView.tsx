@@ -44,7 +44,7 @@ const SessionEntryView = memo(function SessionEntryView({
   }, [activeMatchIndex, keyword, matches, revealMatch, isExpanded, showRaw]);
 
   const timestamp = entry.timestamp && (
-    <time dateTime={entry.timestamp} title={entry.timestamp} className="shrink-0 text-caption font-normal tabular-nums text-muted-foreground/70">
+    <time dateTime={entry.timestamp} title={entry.timestamp} className="shrink-0 text-caption font-normal text-[var(--label)] tabular-nums">
       {formatDateTime(entry.timestamp)}
     </time>
   );
@@ -52,38 +52,45 @@ const SessionEntryView = memo(function SessionEntryView({
   return (
     <article
       ref={articleRef}
-      className={`min-w-0 border-b border-border last:border-b-0 ${entry.defaultCollapsed ? 'py-2' : 'py-5'}`}
+      className={`min-w-0 border-b border-[var(--hairline-divider)] last:border-b-0 ${entry.defaultCollapsed ? 'py-2' : 'py-5'}`}
       style={revealMatch ? undefined : { contentVisibility: 'auto', containIntrinsicSize: 'auto 64px' }}
     >
       {entry.defaultCollapsed ? (
         <button
           type="button"
+          data-no-press
           aria-expanded={isExpanded}
           aria-controls={bodyId}
           onClick={() => {
             setExpanded(!isExpanded);
             setDismissedMatch(isExpanded ? matchKey : null);
           }}
-          className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-caption text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+          className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-caption text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
         >
           <ChevronRight aria-hidden="true" size={12} className={`shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
           <span className="min-w-0 flex-1 truncate font-medium" title={entry.title}>{entry.title}</span>
-          {matches.length > 0 && <span className="shrink-0 text-caption text-foreground">{matches.length} 处匹配</span>}
+          {matches.length > 0 && <span className="shrink-0 font-medium text-foreground">{matches.length} 处匹配</span>}
           {timestamp}
-          <span className="shrink-0 text-caption text-muted-foreground/70">{isExpanded ? '收起' : '展开'}</span>
+          <span className="shrink-0 text-[var(--label)]">{isExpanded ? '收起' : '展开'}</span>
         </button>
       ) : (
         <div className="mb-2 flex min-w-0 items-center justify-between gap-3">
-          <p className={`text-caption font-semibold ${entry.role === 'user' ? 'text-foreground' : 'text-muted-foreground'}`}>{entry.title}</p>
+          <p className={`text-caption font-semibold ${entry.role === 'user' ? 'text-foreground' : 'text-[var(--label)]'}`}>
+            {entry.title}
+          </p>
           {timestamp}
         </div>
       )}
 
       {isExpanded && (
         <div id={bodyId} className={entry.defaultCollapsed ? 'px-2 pb-2 pt-1' : undefined}>
-          <div className={entry.defaultCollapsed
-            ? 'overflow-x-auto rounded-md border border-border bg-card px-3 py-2.5 font-mono text-label leading-relaxed text-muted-foreground whitespace-pre-wrap break-words'
-            : 'text-body text-muted-foreground leading-relaxed whitespace-pre-wrap break-words'}>
+          <div
+            className={
+              entry.defaultCollapsed
+                ? 'overflow-x-auto rounded-[10px] bg-muted/65 px-3.5 py-2.5 font-mono text-label leading-relaxed text-muted-foreground whitespace-pre-wrap break-words select-text dark:bg-white/[0.04]'
+                : 'text-body leading-relaxed text-foreground/90 whitespace-pre-wrap break-words select-text'
+            }
+          >
             <HighlightedText
               text={entry.text}
               matches={matchSource === 'text' ? matches : []}
@@ -103,13 +110,16 @@ const SessionEntryView = memo(function SessionEntryView({
                   setDismissedMatch(matchKey);
                 }
               }}
-              className="mt-2 rounded-md px-1 py-0.5 text-caption text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+              className="bento-tag mt-2 text-[var(--label)] hover:text-foreground"
             >
               {showRaw ? '收起原始记录' : '查看完整原始记录'}
             </button>
           )}
           {showRaw && (
-            <pre id={rawId} className="mt-2 overflow-x-auto rounded-md border border-border bg-card p-3 font-mono text-caption leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">
+            <pre
+              id={rawId}
+              className="mt-2 overflow-x-auto rounded-[10px] border border-[var(--console-border)] bg-[var(--console-surface)] p-3 font-mono text-caption leading-relaxed text-[var(--console-foreground)] whitespace-pre-wrap break-all select-text"
+            >
               <HighlightedText
                 text={entry.raw}
                 matches={matchSource === 'raw' ? matches : []}

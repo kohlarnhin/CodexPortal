@@ -40,15 +40,14 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
   const keyword = useDeferredValue(search.trim());
   const isSearching = keyword !== search.trim();
   const visibleMessages = useMemo(
-    () => showAll ? messages : messages.filter(message => !message.defaultCollapsed),
+    () => (showAll ? messages : messages.filter(message => !message.defaultCollapsed)),
     [messages, showAll],
   );
   const searchResults = useMemo(() => {
     let count = 0;
     const items = visibleMessages.map(message => {
       const textMatches = findTextMatches(message.text, keyword);
-      // 原文字段也可搜索；正文已命中时不重复计算同一记录的原文副本。
-      const matchSource = textMatches.length > 0 || !showAll ? 'text' as const : 'raw' as const;
+      const matchSource = textMatches.length > 0 || !showAll ? ('text' as const) : ('raw' as const);
       const matches = matchSource === 'text' ? textMatches : findTextMatches(message.raw, keyword);
       const firstMatchIndex = count;
       count += matches.length;
@@ -141,23 +140,29 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
           }
         }
       }}
-      className="@container/session-detail absolute inset-0 z-20 flex min-h-0 min-w-0 flex-col overflow-hidden bg-muted/50 outline-none"
+      className="@container/session-detail absolute inset-0 z-20 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--surface)] outline-none"
     >
-      <header className="shrink-0 border-b border-border px-5 @min-[640px]/session-detail:px-8">
-        <div data-tauri-drag-region className="flex h-12 min-w-0 items-center gap-2">
+      <header className="shrink-0 border-b border-[var(--hairline-divider)] px-[var(--workspace-inset-inline)] pt-[var(--workspace-inset-top)] pb-3">
+        <div data-tauri-drag-region className="flex min-h-9 min-w-0 items-center gap-2.5">
           <button
+            type="button"
             onClick={onClose}
             aria-label="返回会话列表"
             title="返回会话列表（Esc）"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
+            className="button-neutral grid size-7 shrink-0 cursor-pointer place-items-center rounded-full text-foreground"
           >
-            <ChevronLeft aria-hidden="true" size={16} />
+            <ChevronLeft aria-hidden="true" size={15} />
           </button>
-          <h3 id="session-detail-title" data-tauri-drag-region title={session.title} className="min-w-0 flex-1 truncate text-subtitle font-semibold tracking-tight text-foreground">
+          <h3
+            id="session-detail-title"
+            data-tauri-drag-region
+            title={session.title}
+            className="min-w-0 flex-1 truncate text-title font-semibold tracking-[-0.015em] text-foreground"
+          >
             {session.title}
           </h3>
-          <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-            <div className="mr-2 flex items-center gap-2" title="开启后显示工具调用、执行结果、指令等全部记录">
+          <div className="no-drag flex shrink-0 items-center gap-1.5">
+            <div className="mr-1.5 flex items-center gap-2" title="开启后显示工具调用、执行结果、指令等全部记录">
               <span className="text-caption text-muted-foreground">全量展示</span>
               <ToggleSwitch
                 checked={showAll}
@@ -170,6 +175,7 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               />
             </div>
             <button
+              type="button"
               onClick={() => {
                 setShowInfo(value => !value);
                 if (!showInfo) contentRef.current?.scrollTo({ top: 0 });
@@ -177,24 +183,32 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               aria-expanded={showInfo}
               aria-controls="session-detail-info"
               title={showInfo ? '收起会话信息' : '查看会话信息'}
-              className={`flex h-7 items-center gap-1.5 rounded px-2 text-label hover:bg-accent hover:text-foreground ${showInfo ? 'text-foreground' : 'text-muted-foreground'}`}
+              className={`flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-caption font-medium transition-colors ${
+                showInfo
+                  ? 'bg-[var(--button-fill)] text-foreground'
+                  : 'text-muted-foreground hover:bg-[var(--hover)] hover:text-foreground'
+              }`}
             >
-              <Info aria-hidden="true" size={14} />
+              <Info aria-hidden="true" size={13} />
               信息
             </button>
             <button
+              type="button"
               onClick={() => onRevealInFinder(session)}
               aria-label="在 Finder 中显示"
               title="在 Finder 中显示"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
             >
-              <FolderOpen aria-hidden="true" size={15} />
+              <FolderOpen aria-hidden="true" size={14} />
             </button>
             <SessionCopyMenu session={session} />
           </div>
         </div>
 
-        <div className="flex min-w-0 items-center gap-2 pb-2.5" title="⌘/Ctrl+F 搜索 · Enter 下一处 · Shift+Enter 上一处 · Esc 清除或返回">
+        <div
+          className="mt-2.5 flex min-w-0 items-center gap-2"
+          title="⌘/Ctrl+F 搜索 · Enter 下一处 · Shift+Enter 上一处 · Esc 清除或返回"
+        >
           <div className="flex min-w-0 max-w-md flex-1">
             <SearchInput
               ref={searchInputRef}
@@ -210,80 +224,103 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
               }}
             />
           </div>
-          <span role="status" className="min-w-16 shrink-0 text-center text-caption tabular-nums text-muted-foreground">
-            {isLoading ? '读取中…' : isRefreshing ? '更新中…' : loadError ? '读取失败' : isSearching ? '查找中…' : !keyword ? `${visibleMessages.length} 条${showAll ? '记录' : '消息'}` : searchResults.count === 0 ? '无匹配' : `${activeMatchIndex + 1} / ${searchResults.count}`}
+          <span role="status" className="min-w-16 shrink-0 text-center text-caption text-[var(--label)] tabular-nums">
+            {isLoading
+              ? '读取中…'
+              : isRefreshing
+                ? '更新中…'
+                : loadError
+                  ? '读取失败'
+                  : isSearching
+                    ? '查找中…'
+                    : !keyword
+                      ? `${visibleMessages.length} 条${showAll ? '记录' : '消息'}`
+                      : searchResults.count === 0
+                        ? '无匹配'
+                        : `${activeMatchIndex + 1} / ${searchResults.count}`}
           </span>
-          <div className="flex shrink-0 items-center">
+          <div className="flex shrink-0 items-center gap-0.5">
             <button
+              type="button"
               onClick={() => moveMatch(-1)}
               disabled={searchResults.count === 0 || isSearching || isLoading}
               aria-label="上一处匹配"
               title="上一处匹配（Shift+Enter）"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent disabled:opacity-35 disabled:cursor-not-allowed"
+              className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             >
               <ChevronUp aria-hidden="true" size={13} />
             </button>
             <button
+              type="button"
               onClick={() => moveMatch(1)}
               disabled={searchResults.count === 0 || isSearching || isLoading}
               aria-label="下一处匹配"
               title="下一处匹配（Enter）"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent disabled:opacity-35 disabled:cursor-not-allowed"
+              className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             >
               <ChevronDown aria-hidden="true" size={13} />
             </button>
           </div>
-          <span className="ml-auto hidden min-w-0 truncate text-caption text-muted-foreground/70 @min-[800px]/session-detail:block">
+          <span className="ml-auto hidden min-w-0 truncate text-caption text-[var(--label)] @min-[760px]/session-detail:block">
             {[session.model, session.totalTokens > 0 ? `${formatTokens(session.totalTokens)} tokens` : null].filter(Boolean).join(' · ')}
           </span>
         </div>
       </header>
 
-      <div ref={contentRef} tabIndex={0} aria-label={showAll ? '完整会话记录' : '对话记录'} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 outline-none @min-[640px]/session-detail:px-8">
-        <section id="session-detail-info" hidden={!showInfo} aria-label="会话信息" className="border-b border-border py-4">
-          <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-4 gap-y-2 text-caption leading-relaxed">
-            <dt className="text-muted-foreground/70">标题</dt>
-            <dd className="min-w-0 break-words text-muted-foreground">{session.title}</dd>
-            <dt className="text-muted-foreground/70">会话 ID</dt>
-            <dd className="min-w-0 break-all font-mono text-muted-foreground">{session.id}</dd>
-            <dt className="text-muted-foreground/70">项目</dt>
-            <dd className="min-w-0 break-all font-mono text-muted-foreground">{session.projectPath}</dd>
-            <dt className="text-muted-foreground/70">文件</dt>
-            <dd className="min-w-0 break-all font-mono text-muted-foreground">{session.filePath}</dd>
-            <dt className="text-muted-foreground/70">时间</dt>
-            <dd className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-              <span>开始 {formatDateTime(session.startedAt)}</span>
-              <span>最近活跃 {formatRelativeTime(session.lastActivityAt)}</span>
-            </dd>
-            <dt className="text-muted-foreground/70">详情</dt>
-            <dd className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-              <span>{session.messageCount} 条消息记录</span>
-              <span>{formatFileSize(session.fileSize)}</span>
-              {session.model && <span>{session.model}</span>}
-              {session.cliVersion && <span>CLI v{session.cliVersion}</span>}
-            </dd>
-            {session.totalTokens > 0 && (
-              <>
-                <dt className="text-muted-foreground/70">Token</dt>
-                <dd className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-                  <span className="font-medium text-foreground">合计 {formatTokens(session.totalTokens)}</span>
-                  <span>输入 {formatTokens(session.inputTokens)}</span>
-                  {session.cachedInputTokens > 0 && <span>缓存命中 {formatTokens(session.cachedInputTokens)}</span>}
-                  <span>输出 {formatTokens(session.outputTokens)}</span>
-                  {session.reasoningTokens > 0 && <span>推理 {formatTokens(session.reasoningTokens)}</span>}
-                </dd>
-              </>
-            )}
-          </dl>
+      <div
+        ref={contentRef}
+        tabIndex={0}
+        aria-label={showAll ? '完整会话记录' : '对话记录'}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-[var(--workspace-inset-inline)] pb-6 outline-none"
+      >
+        <section id="session-detail-info" hidden={!showInfo} aria-label="会话信息" className="my-4">
+          <div className="bento-group px-4 py-3.5">
+            <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-4 gap-y-2 text-caption leading-relaxed">
+              <dt className="text-[var(--label)]">标题</dt>
+              <dd className="min-w-0 break-words text-foreground">{session.title}</dd>
+              <dt className="text-[var(--label)]">会话 ID</dt>
+              <dd className="min-w-0 break-all font-mono text-muted-foreground select-text">{session.id}</dd>
+              <dt className="text-[var(--label)]">项目</dt>
+              <dd className="min-w-0 break-all font-mono text-muted-foreground select-text">{session.projectPath}</dd>
+              <dt className="text-[var(--label)]">文件</dt>
+              <dd className="min-w-0 break-all font-mono text-muted-foreground select-text">{session.filePath}</dd>
+              <dt className="text-[var(--label)]">时间</dt>
+              <dd className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+                <span>开始 {formatDateTime(session.startedAt)}</span>
+                <span>最近活跃 {formatRelativeTime(session.lastActivityAt)}</span>
+              </dd>
+              <dt className="text-[var(--label)]">详情</dt>
+              <dd className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+                <span>{session.messageCount} 条消息记录</span>
+                <span>{formatFileSize(session.fileSize)}</span>
+                {session.model && <span>{session.model}</span>}
+                {session.cliVersion && <span>CLI v{session.cliVersion}</span>}
+              </dd>
+              {session.totalTokens > 0 && (
+                <>
+                  <dt className="text-[var(--label)]">Token</dt>
+                  <dd className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground tabular-nums">
+                    <span className="font-semibold text-foreground">合计 {formatTokens(session.totalTokens)}</span>
+                    <span>输入 {formatTokens(session.inputTokens)}</span>
+                    {session.cachedInputTokens > 0 && <span>缓存命中 {formatTokens(session.cachedInputTokens)}</span>}
+                    <span>输出 {formatTokens(session.outputTokens)}</span>
+                    {session.reasoningTokens > 0 && <span>推理 {formatTokens(session.reasoningTokens)}</span>}
+                  </dd>
+                </>
+              )}
+            </dl>
+          </div>
         </section>
 
         {loadError && loadedSessionRef.current === session.id && (
-          <p role="status" className="py-3 text-label text-destructive">更新失败，暂时显示上次读取的内容：{loadError}</p>
+          <p role="status" className="py-3 text-label text-destructive">
+            更新失败，暂时显示上次读取的内容：{loadError}
+          </p>
         )}
 
         {isLoading ? (
           <div className="flex items-center justify-center py-12 text-body text-muted-foreground">
-            <LoaderCircle className="animate-spin mr-2" size={14} strokeWidth={2.5} />
+            <LoaderCircle className="mr-2 animate-spin" size={14} strokeWidth={2.5} />
             正在读取会话内容…
           </div>
         ) : loadError && loadedSessionRef.current !== session.id ? (
@@ -291,8 +328,12 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
             <p className="text-body text-destructive">{loadError}</p>
           </div>
         ) : visibleMessages.length === 0 ? (
-          <div className="py-12 text-center text-body text-muted-foreground/70">
-            {showAll ? '该会话暂无日志记录' : messages.length > 0 ? '暂无对话消息，开启「全量展示」可查看其他记录' : '该会话暂无对话消息'}
+          <div className="py-12 text-center text-body text-[var(--label)]">
+            {showAll
+              ? '该会话暂无日志记录'
+              : messages.length > 0
+                ? '暂无对话消息，开启「全量展示」可查看其他记录'
+                : '该会话暂无对话消息'}
           </div>
         ) : (
           <div>
@@ -305,7 +346,11 @@ const SessionDetailPanel: React.FC<SessionDetailPanelProps> = ({
                 keyword={keyword}
                 matches={matches}
                 firstMatchIndex={firstMatchIndex}
-                activeMatchIndex={!isSearching && activeMatchIndex >= firstMatchIndex && activeMatchIndex < firstMatchIndex + matches.length ? activeMatchIndex : undefined}
+                activeMatchIndex={
+                  !isSearching && activeMatchIndex >= firstMatchIndex && activeMatchIndex < firstMatchIndex + matches.length
+                    ? activeMatchIndex
+                    : undefined
+                }
               />
             ))}
           </div>

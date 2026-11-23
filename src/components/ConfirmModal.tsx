@@ -25,27 +25,18 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
 }) => {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onCancel(); }}>
-      <DialogContent className="max-w-sm p-6 gap-4" showCloseButton={false}>
+      <DialogContent className="max-w-sm gap-4 p-6" showCloseButton={false}>
         <DialogHeader className="pr-0">
-          <DialogTitle className="text-title font-semibold text-foreground">{title}</DialogTitle>
-          <DialogDescription className="text-body text-muted-foreground leading-relaxed pt-1">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="pt-0.5">
             {message}
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter className="gap-2.5 pt-2">
-          <Button 
-            variant="outline"
-            size="sm"
-            onClick={onCancel}
-          >
+        <DialogFooter className="gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={onCancel}>
             取消
           </Button>
-          <Button 
-            variant="destructive"
-            size="sm"
-            onClick={onConfirm}
-            disabled={confirmDisabled}
-          >
+          <Button variant="destructive" size="sm" onClick={onConfirm} disabled={confirmDisabled}>
             {confirmLabel}
           </Button>
         </DialogFooter>
@@ -55,4 +46,3 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
 };
 
 export default ConfirmModal;
-

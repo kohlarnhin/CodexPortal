@@ -1,13 +1,5 @@
 import React from 'react';
 
-/**
- * 轻量安全的 Markdown 渲染器。
- *
- * 覆盖本项目发布说明用到的语法：标题、无序/有序列表、粗体、斜体、
- * 行内代码、代码块、链接、水平线与段落。始终构建 React 元素，
- * 不使用 dangerouslySetInnerHTML，避免注入风险。
- */
-
 type InlineNode =
   | { type: 'text'; text: string }
   | { type: 'strong'; children: InlineNode[] }
@@ -100,7 +92,7 @@ function renderInline(nodes: InlineNode[]): React.ReactNode {
         return (
           <code
             key={index}
-            className="rounded-sm bg-muted px-1 py-0.5 font-mono text-label text-foreground"
+            className="rounded-[5px] bg-[var(--button-fill)] px-1.5 py-0.5 font-mono text-[12px] text-foreground"
           >
             {node.text}
           </code>
@@ -112,7 +104,7 @@ function renderInline(nodes: InlineNode[]): React.ReactNode {
             href={node.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-info hover:underline"
+            className="text-foreground underline decoration-muted-foreground underline-offset-3 hover:decoration-foreground"
           >
             {renderInline(node.children)}
           </a>
@@ -151,7 +143,7 @@ function renderBlocks(body: string): React.ReactNode {
       nodes.push(
         <pre
           key={key++}
-          className="my-3 overflow-x-auto rounded-lg bg-[#1E1E1E] px-3.5 py-3 font-mono text-label leading-relaxed text-[#D4D4D4]"
+          className="my-3 overflow-x-auto rounded-[10px] border border-[var(--console-border)] bg-[var(--console-surface)] px-3.5 py-3 font-mono text-[12px] leading-relaxed text-[var(--console-foreground)]"
         >
           {codeLines.join('\n')}
         </pre>,
@@ -181,7 +173,7 @@ function renderBlocks(body: string): React.ReactNode {
     }
 
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      nodes.push(<hr key={key++} className="my-4 border-border" />);
+      nodes.push(<hr key={key++} className="my-4 border-[var(--hairline-divider)]" />);
       i += 1;
       continue;
     }

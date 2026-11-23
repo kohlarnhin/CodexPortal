@@ -4,29 +4,29 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/utils';
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 select-none cursor-pointer [&_svg]:shrink-0",
+  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium transition-[color,background-color,box-shadow,opacity,scale] duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-45 select-none cursor-pointer [&_svg]:shrink-0',
   {
     variants: {
       variant: {
         default:
-          'bg-primary text-primary-foreground shadow-xs hover:bg-primary/90',
+          'bg-primary text-primary-foreground hover:bg-[var(--primary-hover)]',
         destructive:
-          'bg-destructive text-white shadow-xs hover:bg-destructive/90',
+          'bg-destructive text-white hover:opacity-90',
         outline:
-          'border border-input bg-background text-foreground shadow-xs hover:bg-accent hover:text-accent-foreground',
+          'button-neutral',
         secondary:
-          'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+          'button-neutral',
         ghost:
-          'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+          'text-muted-foreground hover:bg-[var(--hover)] hover:text-foreground',
         link:
-          'text-foreground underline-offset-4 hover:underline',
+          'rounded-md text-foreground underline-offset-4 hover:underline',
       },
       size: {
-        default: 'h-9 px-4 text-body',
-        sm: 'h-8 px-3 text-body',
-        lg: 'h-10 px-6 text-subtitle',
-        icon: 'h-8 w-8 p-0',
-        'icon-sm': 'h-7 w-7 p-0',
+        default: 'h-9 px-4 text-[13px]',
+        sm: 'h-8 px-3.5 text-[12.5px]',
+        lg: 'h-10 px-5 text-[13.5px]',
+        icon: 'size-8 p-0',
+        'icon-sm': 'size-7 p-0',
       },
     },
     defaultVariants: {

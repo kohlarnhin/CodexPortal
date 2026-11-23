@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { cn } from '../lib/utils';
 
 export interface SegmentedOption<T extends string> {
@@ -13,6 +13,7 @@ interface SegmentedControlProps<T extends string> {
   className?: string;
   size?: 'sm' | 'md';
   disabled?: boolean;
+  label?: string;
 }
 
 export default function SegmentedControl<T extends string>({
@@ -22,6 +23,7 @@ export default function SegmentedControl<T extends string>({
   className,
   size = 'md',
   disabled,
+  label,
 }: SegmentedControlProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRefs = useRef<Map<T, HTMLButtonElement>>(new Map());
@@ -46,12 +48,11 @@ export default function SegmentedControl<T extends string>({
     }
   }, [value]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     updateIndicator();
   }, [updateIndicator, options]);
 
-  // 监听容器尺寸变化（如字体加载或窗口变化），保证指示条对齐
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
@@ -61,28 +62,46 @@ export default function SegmentedControl<T extends string>({
     return () => observer.disconnect();
   }, [updateIndicator]);
 
+  const selectedIndex = options.findIndex(opt => opt.id === value);
+
   return (
     <div
       ref={containerRef}
-      className={cn(
-        'relative inline-flex items-center rounded-lg bg-muted p-[3px] text-muted-foreground select-none shrink-0',
-        className
-      )}
+      role="radiogroup"
+      aria-label={label}
+      className={cn('segmented-control shrink-0', className)}
+      onKeyDown={event => {
+        const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'];
+        if (disabled || !keys.includes(event.key)) return;
+        event.preventDefault();
+        const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+        const next =
+          event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? options.length - 1
+              : selectedIndex < 0
+                ? step > 0
+                  ? 0
+                  : options.length - 1
+                : (selectedIndex + step + options.length) % options.length;
+        const nextOpt = options[next];
+        if (nextOpt) {
+          onChange(nextOpt.id);
+          buttonRefs.current.get(nextOpt.id)?.focus();
+        }
+      }}
     >
-      {/* 滑动白色胶囊高亮条 */}
       <span
         aria-hidden="true"
-        className={cn(
-          'absolute top-[3px] bottom-[3px] left-0 rounded-md border border-border/60 bg-background shadow-xs pointer-events-none transition-all duration-200 ease-out',
-          indicator.visible ? 'opacity-100' : 'opacity-0'
-        )}
+        className={cn('segmented-indicator', indicator.visible ? 'opacity-100' : 'opacity-0')}
         style={{
           transform: `translateX(${indicator.left}px)`,
           width: `${indicator.width}px`,
         }}
       />
 
-      {options.map(opt => {
+      {options.map((opt, index) => {
         const isActive = value === opt.id;
         return (
           <button
@@ -92,12 +111,14 @@ export default function SegmentedControl<T extends string>({
               else buttonRefs.current.delete(opt.id);
             }}
             type="button"
+            role="radio"
+            aria-checked={isActive}
+            tabIndex={index === Math.max(0, selectedIndex) ? 0 : -1}
             onClick={() => onChange(opt.id)}
             disabled={disabled}
             className={cn(
-              'relative z-10 rounded-md font-medium transition-colors cursor-pointer select-none whitespace-nowrap',
-              size === 'sm' ? 'h-6 px-2.5 text-label' : 'h-7 px-3 text-body',
-              isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              'segmented-option outline-none focus-visible:ring-2 focus-visible:ring-ring/25',
+              size === 'sm' ? 'h-[26px] px-3 text-[12px]' : 'h-[29px] px-3.5 text-[12.5px]',
               disabled && 'opacity-50 cursor-not-allowed'
             )}
           >

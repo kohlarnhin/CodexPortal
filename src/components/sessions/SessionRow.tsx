@@ -24,6 +24,7 @@ const SessionRow: React.FC<SessionRowProps> = ({
 }) => {
   return (
     <div
+      data-no-press
       onClick={() => onOpenDetail(session)}
       role="button"
       tabIndex={0}
@@ -33,78 +34,84 @@ const SessionRow: React.FC<SessionRowProps> = ({
           onOpenDetail(session);
         }
       }}
-      className="group min-w-0 bg-card rounded-xl border shadow-xs hover:bg-accent/40 transition-colors p-4 flex flex-col @min-[720px]/page:flex-row items-start gap-4 cursor-pointer"
+      className="bento-card group flex min-h-[104px] min-w-0 cursor-pointer flex-col items-start justify-between gap-3.5 px-5 py-4.5 transition-colors hover:bg-[var(--hover)] @min-[700px]/page:flex-row"
     >
-      <div className="flex-1 min-w-0 w-full">
-        <p className="break-words text-subtitle font-medium text-foreground leading-snug line-clamp-2">{session.title}</p>
-        <p className="mt-1.5 break-all text-caption font-mono text-muted-foreground">
+      <div className="w-full min-w-0 flex-1">
+        <p className="line-clamp-2 break-words text-[14.5px] font-semibold leading-snug tracking-[-0.01em] text-foreground">
+          {session.title}
+        </p>
+        <p className="mt-1.5 break-all font-mono text-caption text-[var(--label)]">
           ID: <HighlightedText text={session.id} matches={findTextMatches(session.id, search)} />
         </p>
         {showProject && (
-          <p className="mt-1 text-caption text-muted-foreground truncate" title={session.projectPath}>
+          <p className="mt-1 truncate text-label text-muted-foreground" title={session.projectPath}>
             项目：{session.projectPath || '未知项目'}
           </p>
         )}
-        <div className="mt-2 flex items-center gap-2 text-caption text-muted-foreground flex-wrap">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-label text-muted-foreground tabular-nums">
           <span>开始于 {formatDateTime(session.startedAt)}</span>
           {session.lastActivityAt && (
             <>
-              <span className="text-muted-foreground/50">·</span>
+              <span className="text-[var(--label)]">·</span>
               <span>最近活跃 {formatRelativeTime(session.lastActivityAt)}</span>
             </>
           )}
-          <span className="text-muted-foreground/50">·</span>
+          <span className="text-[var(--label)]">·</span>
           <span>{session.messageCount} 条消息</span>
-          <span className="text-muted-foreground/50">·</span>
+          <span className="text-[var(--label)]">·</span>
           <span>{formatFileSize(session.fileSize)}</span>
           {session.totalTokens > 0 && (
             <>
-              <span className="text-muted-foreground/50">·</span>
+              <span className="text-[var(--label)]">·</span>
               <span>{formatTokens(session.totalTokens)} tokens</span>
             </>
           )}
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 shrink-0 max-w-full">
+      <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5 pt-0.5">
         {session.isSubagent && (
-          <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-caption text-muted-foreground">
+          <span className="rounded-full bg-[var(--button-fill)] px-2.5 py-0.5 text-caption font-medium text-muted-foreground">
             子会话
           </span>
         )}
         {session.model && (
           <span
-            className="max-w-48 truncate rounded-md bg-muted border border-border px-2 py-0.5 text-caption font-mono text-muted-foreground"
+            className="max-w-44 truncate rounded-full bg-[var(--button-fill)] px-2.5 py-0.5 font-mono text-caption text-muted-foreground"
             title={session.modelProvider || undefined}
           >
             {session.model}
           </span>
         )}
         {session.cliVersion && (
-          <span className="rounded-md bg-muted border border-border px-2 py-0.5 text-caption font-mono text-muted-foreground">
+          <span className="rounded-full bg-[var(--button-fill)] px-2.5 py-0.5 font-mono text-caption text-muted-foreground">
             v{session.cliVersion}
           </span>
         )}
 
         <SessionCopyMenu session={session} />
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+        <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
           <button
+            type="button"
             onClick={e => {
               e.stopPropagation();
               onOpenDetail(session);
             }}
             title="查看会话内容"
-            className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            aria-label="查看会话内容"
+            className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
           >
             <Eye size={14} />
           </button>
           <button
+            type="button"
             onClick={e => {
               e.stopPropagation();
               onRevealInFinder(session);
             }}
             title="在 Finder 中显示"
-            className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            aria-label="在 Finder 中显示"
+            className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
           >
             <Folder size={14} />
           </button>

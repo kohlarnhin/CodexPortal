@@ -18,7 +18,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'dialog-overlay fixed inset-0 z-50 bg-black/50',
+      'dialog-overlay fixed inset-0 z-50 bg-[var(--dialog-overlay)]',
       className
     )}
     {...props}
@@ -40,8 +40,8 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'dialog-content fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] max-w-lg translate-x-[-50%] translate-y-[-50%]',
-        'gap-4 rounded-lg border bg-background p-6 shadow-lg outline-none',
+        'dialog-content bento-dialog fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-3rem)] max-w-lg -translate-x-1/2 -translate-y-1/2',
+        'gap-4 p-6 outline-none',
         className
       )}
       {...props}
@@ -51,12 +51,10 @@ const DialogContent = React.forwardRef<
         <DialogPrimitive.Close asChild>
           <button
             type="button"
-            className="absolute right-4 top-4 rounded-sm p-0.5 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="button-neutral absolute right-4 top-4 grid size-7 cursor-pointer place-items-center rounded-full text-foreground transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:pointer-events-none"
             aria-label="关闭"
           >
-            <span className="flex items-center justify-center w-5 h-5">
-              <X size={16} />
-            </span>
+            <X size={15} />
           </button>
         </DialogPrimitive.Close>
       )}
@@ -71,7 +69,7 @@ const DialogHeader = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      'flex flex-col gap-2 text-left pr-8',
+      'flex flex-col gap-1.5 text-left pr-9',
       className
     )}
     {...props}
@@ -100,7 +98,7 @@ const DialogTitle = React.forwardRef<
   <DialogPrimitive.Title
     ref={ref}
     className={cn(
-      'text-title leading-none font-semibold text-foreground',
+      'text-[18px] leading-snug font-semibold tracking-[-0.015em] text-foreground',
       className
     )}
     {...props}

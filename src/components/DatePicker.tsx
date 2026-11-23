@@ -21,8 +21,6 @@ function parseValue(value: string): Date {
   return new Date(`${value}T00:00:00`);
 }
 
-/** 统一单边框日期范围选择器：拒绝嵌套边框，单一体化卡片 */
-/** 日期文本占位：按 "0000-00-00" 预留宽度，切换「全部」等较短文案时容器不缩放，避免周围控件抖动。 */
 const DateSlot = ({ children }: { children: React.ReactNode }) => (
   <>
     <span aria-hidden="true" className="invisible col-start-1 row-start-1">0000-00-00</span>
@@ -92,40 +90,37 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   const currentValue = activePicker === 'start' ? startDate : endDate;
 
   return (
-    <div className={cn("relative inline-flex items-center", className)}>
-      {/* 单一一体化容器：无嵌套边框，单边框轻量卡片 */}
+    <div className={cn('relative inline-flex items-center', className)}>
       <div
-        className={cn(
-          "inline-flex h-8 items-center rounded-md border border-input bg-background px-2.5 shadow-xs transition-[color,box-shadow]",
-          activePicker && "border-foreground/60"
-        )}
+        data-open={activePicker ? 'true' : undefined}
+        className="bento-field inline-flex h-8 items-center rounded-full px-3"
       >
-        <Calendar size={13} className="text-muted-foreground mr-1.5 shrink-0" />
+        <Calendar size={12.5} className="mr-1.5 shrink-0 text-[var(--label)]" />
 
         <button
           type="button"
           onClick={() => openPicker('start')}
           className={cn(
-            "inline-grid text-body tabular-nums text-center rounded-sm px-1.5 py-0.5 transition-colors cursor-pointer select-none",
+            'inline-grid cursor-pointer rounded-full px-1.5 py-0.5 text-center text-[12px] tabular-nums transition-colors select-none',
             activePicker === 'start'
-              ? "bg-accent text-foreground font-medium"
-              : "text-foreground hover:bg-accent"
+              ? 'bg-[var(--button-fill)] font-semibold text-foreground'
+              : 'text-foreground hover:bg-[var(--hover)]',
           )}
           title="选择起始日期"
         >
           <DateSlot>{allDates ? '不限起始' : startDate}</DateSlot>
         </button>
 
-        <span className="text-muted-foreground/50 text-caption select-none font-medium px-1">—</span>
+        <span className="px-1 text-caption font-medium text-[var(--label)] select-none">—</span>
 
         <button
           type="button"
           onClick={() => openPicker('end')}
           className={cn(
-            "inline-grid text-body tabular-nums text-center rounded-sm px-1.5 py-0.5 transition-colors cursor-pointer select-none",
+            'inline-grid cursor-pointer rounded-full px-1.5 py-0.5 text-center text-[12px] tabular-nums transition-colors select-none',
             activePicker === 'end'
-              ? "bg-accent text-foreground font-medium"
-              : "text-foreground hover:bg-accent"
+              ? 'bg-[var(--button-fill)] font-semibold text-foreground'
+              : 'text-foreground hover:bg-[var(--hover)]',
           )}
           title="选择结束日期"
         >
@@ -138,15 +133,15 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           <div className="fixed inset-0 z-[90]" onClick={() => setActivePicker(null)} />
           <div
             className={cn(
-              "absolute z-[95] top-full mt-1.5 bg-popover text-popover-foreground rounded-md border shadow-md p-3 w-[248px] animate-fade-in select-none",
-              activePicker === 'end' ? "right-0" : "left-0"
+              'bento-popup animate-fade-in absolute top-full z-[95] mt-1.5 w-[248px] p-3 select-none',
+              activePicker === 'end' ? 'right-0' : 'left-0',
             )}
           >
-            <div className="flex items-center justify-between mb-2 px-1">
+            <div className="mb-2 flex items-center justify-between px-1">
               <button
                 type="button"
                 onClick={goPrevMonth}
-                className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
               >
                 <ChevronLeft size={14} strokeWidth={2.5} />
               </button>
@@ -156,15 +151,15 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
               <button
                 type="button"
                 onClick={goNextMonth}
-                className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
               >
                 <ChevronRight size={14} strokeWidth={2.5} />
               </button>
             </div>
 
-            <div className="grid grid-cols-7 gap-0.5 mb-1">
+            <div className="mb-1 grid grid-cols-7 gap-0.5">
               {WEEKDAYS.map(day => (
-                <span key={day} className="text-center text-caption text-muted-foreground py-0.5">
+                <span key={day} className="py-0.5 text-center text-caption text-[var(--label)]">
                   {day}
                 </span>
               ))}
@@ -195,14 +190,14 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                       setActivePicker(null);
                     }}
                     className={cn(
-                      "h-7 text-label rounded-md transition-colors cursor-pointer select-none",
+                      'h-7 cursor-pointer rounded-full text-label tabular-nums transition-colors select-none',
                       isSelected
-                        ? "bg-primary text-primary-foreground font-medium"
+                        ? 'bg-primary font-semibold text-primary-foreground'
                         : disabled
-                          ? "text-muted-foreground/40 cursor-not-allowed"
+                          ? 'cursor-not-allowed text-[var(--label)]/35'
                           : inRange
-                            ? "bg-accent text-accent-foreground"
-                            : "text-foreground hover:bg-accent"
+                            ? 'bg-[var(--button-fill)] text-foreground'
+                            : 'text-foreground hover:bg-[var(--hover)]',
                     )}
                   >
                     {Number(dateStr.slice(8))}
@@ -278,25 +273,30 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     (min !== undefined && dateStr < min) || (max !== undefined && dateStr > max);
 
   return (
-    <div className={cn("relative inline-flex items-center", className)}>
+    <div className={cn('relative inline-flex items-center', className)}>
       <button
         type="button"
         onClick={open}
-        className="flex h-8 items-center gap-1.5 px-2.5 text-body tabular-nums bg-background border border-input rounded-md hover:bg-accent transition-colors shadow-xs cursor-pointer"
+        className="bento-field flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-3 text-body tabular-nums transition-colors hover:bg-[var(--hover)]"
       >
-        <Calendar size={13} className="text-muted-foreground" />
+        <Calendar size={12.5} className="text-[var(--label)]" />
         {value}
       </button>
 
       {isOpen && (
         <>
           <div className="fixed inset-0 z-[90]" onClick={() => setIsOpen(false)} />
-          <div className={cn("absolute z-[95] top-full mt-1.5 bg-popover text-popover-foreground rounded-md border shadow-md p-3 w-[248px] animate-fade-in select-none", align === 'end' ? 'right-0' : 'left-0')}>
-            <div className="flex items-center justify-between mb-2 px-1">
+          <div
+            className={cn(
+              'bento-popup animate-fade-in absolute top-full z-[95] mt-1.5 w-[248px] p-3 select-none',
+              align === 'end' ? 'right-0' : 'left-0',
+            )}
+          >
+            <div className="mb-2 flex items-center justify-between px-1">
               <button
                 type="button"
                 onClick={goPrevMonth}
-                className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
               >
                 <ChevronLeft size={14} strokeWidth={2.5} />
               </button>
@@ -306,15 +306,15 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               <button
                 type="button"
                 onClick={goNextMonth}
-                className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                className="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
               >
                 <ChevronRight size={14} strokeWidth={2.5} />
               </button>
             </div>
 
-            <div className="grid grid-cols-7 gap-0.5 mb-1">
+            <div className="mb-1 grid grid-cols-7 gap-0.5">
               {WEEKDAYS.map(day => (
-                <span key={day} className="text-center text-caption text-muted-foreground py-0.5">
+                <span key={day} className="py-0.5 text-center text-caption text-[var(--label)]">
                   {day}
                 </span>
               ))}
@@ -334,12 +334,12 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                       setIsOpen(false);
                     }}
                     className={cn(
-                      "h-7 text-label rounded-md transition-colors cursor-pointer select-none",
+                      'h-7 cursor-pointer rounded-full text-label tabular-nums transition-colors select-none',
                       dateStr === value
-                        ? 'bg-primary text-primary-foreground font-medium'
+                        ? 'bg-primary font-semibold text-primary-foreground'
                         : isDisabled(dateStr)
-                          ? 'text-muted-foreground/40 cursor-not-allowed'
-                          : 'text-foreground hover:bg-accent'
+                          ? 'cursor-not-allowed text-[var(--label)]/35'
+                          : 'text-foreground hover:bg-[var(--hover)]',
                     )}
                   >
                     {Number(dateStr.slice(8))}

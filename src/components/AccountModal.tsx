@@ -48,8 +48,7 @@ type Step = 'form' | 'oauth' | 'confirm';
 function oauthDetails(account: Account) {
   try {
     const tokens = JSON.parse(account.authJsonContent).tokens;
-    const maskedToken = (token: unknown) => typeof token === 'string' && token
-      ? `•••• ${token.slice(-4)}` : '未保存';
+    const maskedToken = (token: unknown) => (typeof token === 'string' && token ? `•••• ${token.slice(-4)}` : '未保存');
     return {
       accountId: typeof tokens?.account_id === 'string' ? tokens.account_id : '未保存',
       accessToken: maskedToken(tokens?.access_token),
@@ -67,7 +66,7 @@ function getOauthReauthError(account: Account, info: RtTokenInfo | null, isEmail
     const accountId = JSON.parse(account.authJsonContent).tokens?.account_id;
     if (typeof accountId === 'string') storedAccountId = accountId;
   } catch {
-    // 旧凭证缺少账号 ID 时仍校验邮箱，最终身份校验由后端执行。
+    // ignore
   }
   const accountIdMismatch = storedAccountId !== null && info.chatgptAccountId != null
     && storedAccountId !== info.chatgptAccountId;
@@ -153,7 +152,6 @@ const AccountModal: React.FC<AccountModalProps> = ({
     }
   }, [isOpen, editingAccount]);
 
-  // OAuth 回调轮询：本机浏览器登录成功后自动捕获。
   useEffect(() => {
     if (!isOpen || step !== 'oauth' || !oauthInfo) return;
     let disposed = false;
@@ -171,14 +169,12 @@ const AccountModal: React.FC<AccountModalProps> = ({
           return;
         }
       } catch (err: any) {
-        // 授权码只能兑换一次，失败后回到表单提示，由用户重新发起登录。
         if (!disposed) {
           setError(err?.toString() || 'OAuth 登录失败，请重新登录');
           setStep('form');
         }
         return;
       }
-      // 等本次请求完成再继续，避免授权码兑换较慢时产生重叠请求。
       if (!disposed) timer = window.setTimeout(() => void poll(), 1500);
     };
 
@@ -337,13 +333,14 @@ const AccountModal: React.FC<AccountModalProps> = ({
   const confirmPlanRaw = confirmRt?.chatgptPlanType || personalInfo?.chatgptPlanType || '';
   const confirmPlanLabel = PLAN_LABELS[confirmPlanRaw.toLowerCase()] || confirmPlanRaw || '未知';
   const reauthIdentityError = isEditingOauth && editingAccount
-    ? getOauthReauthError(editingAccount, confirmRt, isEmailMaskingEnabled) : null;
+    ? getOauthReauthError(editingAccount, confirmRt, isEmailMaskingEnabled)
+    : null;
   const visibleError = step === 'confirm' ? reauthIdentityError || error : error;
 
   const renderError = () =>
     visibleError ? (
-      <div className="flex items-start gap-1.5 px-3 py-2 bg-destructive/5 border border-destructive/20 text-destructive text-label rounded-md">
-        <CircleAlert size={14} className="shrink-0 mt-0.5" />
+      <div className="flex items-start gap-2 rounded-[10px] bg-destructive/10 px-3 py-2 text-label text-destructive">
+        <CircleAlert size={14} className="mt-0.5 shrink-0" />
         <span className="break-all">{visibleError}</span>
       </div>
     ) : null;
@@ -356,16 +353,10 @@ const AccountModal: React.FC<AccountModalProps> = ({
     secondaryLabel: string,
     onSecondary: () => void,
   ) => (
-    <div className="flex flex-col gap-3 pt-2">
+    <div className="flex flex-col gap-3 border-t border-[var(--hairline-divider)] pt-3">
       {renderError()}
       <DialogFooter className="pt-0">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onSecondary}
-          disabled={primaryBusy}
-        >
+        <Button type="button" variant="outline" size="sm" onClick={onSecondary} disabled={primaryBusy}>
           {secondaryLabel}
         </Button>
         <Button
@@ -376,7 +367,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
           disabled={primaryBusy || disabledPrimary}
           className="min-w-[90px]"
         >
-          {primaryBusy ? '处理中...' : primaryLabel}
+          {primaryBusy ? '处理中…' : primaryLabel}
         </Button>
       </DialogFooter>
     </div>
@@ -384,90 +375,126 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open && !(isEditingOauth && isSubmitting)) onClose(); }}>
-      <DialogContent className={`max-w-[490px] p-6 sm:p-7 gap-5 ${isEditingOauth ? 'max-h-[90vh] overflow-y-auto' : ''}`}>
+      <DialogContent className={`max-w-[490px] gap-5 p-6 ${isEditingOauth ? 'max-h-[90vh] overflow-y-auto' : ''}`}>
         <DialogHeader>
           <DialogTitle>
             {editingAccount ? '编辑账号配置' : '新增账号配置'}
           </DialogTitle>
           <DialogDescription>
             {editingAccount
-              ? isEditingOauth ? '查看登录信息、修改备注或重新登录更新凭证。' : '修改该账号的认证 Token 或备注信息。'
+              ? isEditingOauth
+                ? '查看登录信息、修改备注或重新登录更新凭证。'
+                : '修改该账号的认证 Token 或备注信息。'
               : '支持 OpenAI 官方 API Key、PAT、Refresh Token 及 OAuth 登录。'}
           </DialogDescription>
         </DialogHeader>
 
         {step === 'form' && isEditingOauth && editingAccount ? (
           <div className="flex flex-col gap-5">
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2.5 rounded-lg border bg-muted/40 p-4 text-label">
-              <dt className="text-muted-foreground">账号邮箱</dt>
-              <dd className="min-w-0 break-all text-right font-medium select-text">{getDisplayedEmail(editingAccount.name, isEmailMaskingEnabled)}</dd>
-              <dt className="text-muted-foreground">订阅</dt>
-              <dd className="flex justify-end">{editingAccount.chatgptPlanType
-                ? <PlanBadge planType={editingAccount.chatgptPlanType} accountType={editingAccount.accountType} /> : '未知'}</dd>
-              <dt className="text-muted-foreground">认证方式</dt>
+            <dl className="bento-group grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2.5 p-4 text-label">
+              <dt className="text-[var(--label)]">账号邮箱</dt>
+              <dd className="min-w-0 break-all text-right font-medium select-text">
+                {getDisplayedEmail(editingAccount.name, isEmailMaskingEnabled)}
+              </dd>
+              <dt className="text-[var(--label)]">订阅</dt>
+              <dd className="flex justify-end">
+                {editingAccount.chatgptPlanType
+                  ? <PlanBadge planType={editingAccount.chatgptPlanType} accountType={editingAccount.accountType} />
+                  : '未知'}
+              </dd>
+              <dt className="text-[var(--label)]">认证方式</dt>
               <dd className="text-right">OAuth / Refresh Token</dd>
-              <dt className="text-muted-foreground">ChatGPT 账号 ID</dt>
+              <dt className="text-[var(--label)]">ChatGPT 账号 ID</dt>
               <dd className="min-w-0 break-all text-right font-mono text-caption select-text">{details?.accountId}</dd>
-              <dt className="text-muted-foreground">Access Token 过期时间</dt>
+              <dt className="text-[var(--label)]">Access Token 过期时间</dt>
               <dd className="text-right tabular-nums">{formatTokenExpiry(editingAccount.atExpiresAt)}</dd>
-              <dt className="text-muted-foreground">凭证状态</dt>
+              <dt className="text-[var(--label)]">凭证状态</dt>
               <dd className={`text-right font-medium ${editingAccount.canActivate ? 'text-success' : 'text-warning'}`}>
                 {editingAccount.canActivate ? '完整' : '需重新登录'}
               </dd>
-              <dt className="text-muted-foreground">Access Token</dt>
+              <dt className="text-[var(--label)]">Access Token</dt>
               <dd className="text-right font-mono text-caption">{details?.accessToken}</dd>
-              <dt className="text-muted-foreground">Refresh Token</dt>
+              <dt className="text-[var(--label)]">Refresh Token</dt>
               <dd className="text-right font-mono text-caption">{details?.refreshToken}</dd>
             </dl>
 
             <div>
               <label htmlFor="oauthNotes" className="mb-1.5 block text-label font-medium">备注 (可选)</label>
               <div className="flex items-center gap-2">
-                <Input id="oauthNotes" value={notes} onChange={event => setNotes(event.target.value)}
-                  placeholder="为账号添加备注…" className="min-w-0 text-body" disabled={isSubmitting} />
-                <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" disabled={isSubmitting || isValidating}
-                  onClick={() => void handleSaveNotes()}>保存</Button>
+                <Input
+                  id="oauthNotes"
+                  value={notes}
+                  onChange={event => setNotes(event.target.value)}
+                  placeholder="为账号添加备注…"
+                  className="min-w-0 text-body"
+                  disabled={isSubmitting}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 shrink-0"
+                  disabled={isSubmitting || isValidating}
+                  onClick={() => void handleSaveNotes()}
+                >
+                  保存
+                </Button>
               </div>
             </div>
 
-            <div className="space-y-3 border-t pt-4">
+            <div className="space-y-3 border-t border-[var(--hairline-divider)] pt-4">
               <div>
                 <h3 className="text-body font-semibold">重新登录</h3>
-                <p className="mt-1 text-caption text-muted-foreground">请登录同一账号，确认后替换此账号的登录凭证。</p>
+                <p className="mt-1 text-caption text-[var(--label)]">请登录同一账号，确认后替换此账号的登录凭证。</p>
               </div>
-              <Select value={authMethod} disabled={isValidating || isSubmitting} onChange={value => {
-                setAuthMethod(value as 'oauth' | 'refresh');
-                setInput('');
-                setRtInfo(null);
-                setOauthInfo(null);
-                setOauthRtInfo(null);
-                setManualUrl('');
-                setError(null);
-              }} options={[
-                { value: 'oauth', label: 'OAuth 登录' },
-                { value: 'refresh', label: 'Refresh Token' },
-              ]} />
+              <Select
+                value={authMethod}
+                disabled={isValidating || isSubmitting}
+                onChange={value => {
+                  setAuthMethod(value as 'oauth' | 'refresh');
+                  setInput('');
+                  setRtInfo(null);
+                  setOauthInfo(null);
+                  setOauthRtInfo(null);
+                  setManualUrl('');
+                  setError(null);
+                }}
+                options={[
+                  { value: 'oauth', label: 'OAuth 登录' },
+                  { value: 'refresh', label: 'Refresh Token' },
+                ]}
+              />
               {isRt && (
                 <div>
                   <label htmlFor="reauthRefreshToken" className="mb-1.5 block text-label font-medium">Refresh Token</label>
-                  <Input id="reauthRefreshToken" type="password" autoComplete="off" spellCheck={false}
-                    value={input} onChange={event => { setInput(event.target.value); setError(null); }}
-                    placeholder="粘贴新的 Refresh Token 或登录 JSON" className="font-mono text-body" />
-                  <p className="mt-1.5 text-caption text-muted-foreground">Refresh Token 一次性使用，兑换后旧凭证失效。</p>
+                  <Input
+                    id="reauthRefreshToken"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={input}
+                    onChange={event => { setInput(event.target.value); setError(null); }}
+                    placeholder="粘贴新的 Refresh Token 或登录 JSON"
+                    className="font-mono text-body"
+                  />
+                  <p className="mt-1.5 text-caption text-[var(--label)]">Refresh Token 一次性使用，兑换后旧凭证失效。</p>
                 </div>
               )}
             </div>
             {renderFooterButtons(
-              isRt ? '验证并继续' : '开始 OAuth 登录', isValidating || isSubmitting,
+              isRt ? '验证并继续' : '开始 OAuth 登录',
+              isValidating || isSubmitting,
               () => { if (isRt) void handleValidate(); else void handleStartOauth(); },
-              isRt && !input.trim(), '关闭', onClose,
+              isRt && !input.trim(),
+              '关闭',
+              onClose,
             )}
           </div>
         ) : step === 'form' ? (
           <div className="flex flex-col gap-5">
             <div className="space-y-4">
               <div>
-                <label className="block text-label font-medium text-foreground mb-1.5">
+                <label className="mb-1.5 block text-label font-medium text-foreground">
                   认证方式 <span className="text-destructive">*</span>
                 </label>
                 <Select
@@ -489,16 +516,16 @@ const AccountModal: React.FC<AccountModalProps> = ({
                     { value: 'apiKey', label: 'OpenAI API Key（官方）' },
                     { value: 'personal', label: 'Personal Access Token' },
                     { value: 'refresh', label: 'Refresh Token' },
-                    { value: 'oauth', label: 'OAuth 登录' }
+                    { value: 'oauth', label: 'OAuth 登录' },
                   ]}
                 />
                 {isRt && (
-                  <p className="text-caption text-muted-foreground mt-1.5">
+                  <p className="mt-1.5 text-caption text-[var(--label)]">
                     Refresh Token 一次性使用，兑换后旧 rt 失效；Team 账号同样支持。
                   </p>
                 )}
                 {isOauth && (
-                  <p className="text-caption text-muted-foreground mt-1.5">
+                  <p className="mt-1.5 text-caption text-[var(--label)]">
                     支持个人与 Team 账号。生成 Codex 登录链接，浏览器登录后自动回跳本机完成认证。
                   </p>
                 )}
@@ -506,18 +533,24 @@ const AccountModal: React.FC<AccountModalProps> = ({
 
               {isApiKey && (
                 <div>
-                  <label htmlFor="apiAccountName" className="block text-label font-medium text-foreground mb-1.5">
+                  <label htmlFor="apiAccountName" className="mb-1.5 block text-label font-medium text-foreground">
                     账号名称 (可选)
                   </label>
-                  <Input id="apiAccountName" value={name} onChange={(event) => setName(event.target.value)}
-                    placeholder="例如：我的 OpenAI API" className="text-body" />
+                  <Input
+                    id="apiAccountName"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="例如：我的 OpenAI API"
+                    className="text-body"
+                  />
                 </div>
               )}
 
               {!isOauth && (
                 <div>
-                  <label htmlFor="tokenInput" className="block text-label font-medium text-foreground mb-1.5">
-                    {isApiKey ? 'OpenAI API Key' : isRt ? 'Refresh Token' : 'Personal Access Token'} <span className="text-destructive">*</span>
+                  <label htmlFor="tokenInput" className="mb-1.5 block text-label font-medium text-foreground">
+                    {isApiKey ? 'OpenAI API Key' : isRt ? 'Refresh Token' : 'Personal Access Token'}{' '}
+                    <span className="text-destructive">*</span>
                   </label>
                   <Input
                     type={isApiKey ? 'password' : 'text'}
@@ -526,7 +559,13 @@ const AccountModal: React.FC<AccountModalProps> = ({
                     id="tokenInput"
                     value={input}
                     onChange={(e) => { setInput(e.target.value); setError(null); }}
-                    placeholder={isApiKey ? 'sk-... 或 API Key 登录的 auth.json 内容' : isRt ? '可粘贴 JSON（自动提取 refresh_token）或直接粘贴 rt...' : '在此输入或粘贴 Token...'}
+                    placeholder={
+                      isApiKey
+                        ? 'sk-... 或 API Key 登录的 auth.json 内容'
+                        : isRt
+                          ? '可粘贴 JSON（自动提取 refresh_token）或直接粘贴 rt...'
+                          : '在此输入或粘贴 Token...'
+                    }
                     className="font-mono text-body"
                   />
                   {!isApiKey && !isRt && isTokenUnchanged && (
@@ -538,7 +577,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
               )}
 
               <div>
-                <label htmlFor="notes" className="block text-label font-medium text-foreground mb-1.5">
+                <label htmlFor="notes" className="mb-1.5 block text-label font-medium text-foreground">
                   备注 (可选)
                 </label>
                 <Input
@@ -546,21 +585,21 @@ const AccountModal: React.FC<AccountModalProps> = ({
                   id="notes"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="例如：这是用于测试环境的临时账号..."
+                  placeholder="例如：这是用于测试环境的临时账号…"
                   className="text-body"
                 />
               </div>
 
-              <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 text-label text-muted-foreground leading-relaxed">
-                <Info size={14} className="shrink-0 mt-0.5 text-muted-foreground" />
+              <div className="flex items-start gap-2.5 rounded-[10px] bg-muted/65 p-3 text-label leading-relaxed text-muted-foreground dark:bg-white/[0.04]">
+                <Info size={14} className="mt-0.5 shrink-0 text-[var(--label)]" />
                 <span>
                   {isApiKey
                     ? '使用 OpenAI 官方 API 额度，按量计费。保存后可手动发送测试消息。'
                     : isOauth
-                    ? '登录成功后邮箱与订阅自动解析；限额类型在额度刷新后自动判断。'
-                    : isRt
-                      ? '邮箱与订阅将从兑换的 Access Token 自动解析；额度将在刷新后自动获取。'
-                      : '邮箱与订阅信息将自动从 Token 解析；限额类型（周限/月限）将在额度刷新后自动判断。'}
+                      ? '登录成功后邮箱与订阅自动解析；限额类型在额度刷新后自动判断。'
+                      : isRt
+                        ? '邮箱与订阅将从兑换的 Access Token 自动解析；额度将在刷新后自动获取。'
+                        : '邮箱与订阅信息将自动从 Token 解析；限额类型（周限/月限）将在额度刷新后自动判断。'}
                 </span>
               </div>
             </div>
@@ -569,15 +608,10 @@ const AccountModal: React.FC<AccountModalProps> = ({
               isApiKey ? '保存' : isOauth ? '开始 OAuth 登录' : isTokenUnchanged && !isRt ? '保存' : '验证并继续',
               isApiKey ? isSubmitting : isOauth ? isValidating : isTokenUnchanged && !isRt ? isSubmitting : isValidating,
               () => {
-                if (isApiKey) {
-                  void handleConfirmSave();
-                } else if (isOauth) {
-                  void handleStartOauth();
-                } else if (isTokenUnchanged && !isRt) {
-                  void handleConfirmSave();
-                } else {
-                  void handleValidate();
-                }
+                if (isApiKey) void handleConfirmSave();
+                else if (isOauth) void handleStartOauth();
+                else if (isTokenUnchanged && !isRt) void handleConfirmSave();
+                else void handleValidate();
               },
               !isOauth && !input.trim(),
               '取消',
@@ -589,7 +623,7 @@ const AccountModal: React.FC<AccountModalProps> = ({
             <div className="space-y-4">
               <div className="flex items-center gap-2.5 text-body text-muted-foreground">
                 <LoaderCircle size={14} strokeWidth={2.5} className="animate-spin text-foreground" />
-                等待登录回调...（在本机浏览器登录成功后自动完成）
+                等待登录回调…（在本机浏览器登录成功后自动完成）
               </div>
 
               <div className="flex flex-col gap-2">
@@ -599,33 +633,21 @@ const AccountModal: React.FC<AccountModalProps> = ({
                     type="text"
                     readOnly
                     value={oauthInfo?.url || ''}
-                    className="text-caption text-muted-foreground font-mono bg-muted/50"
+                    className="font-mono text-caption text-muted-foreground"
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleCopyUrl()}
-                    className="shrink-0"
-                  >
+                  <Button type="button" variant="outline" size="sm" onClick={() => void handleCopyUrl()} className="shrink-0">
                     {copied ? '已复制' : '复制'}
                   </Button>
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    onClick={() => void handleOpenBrowser()}
-                    className="shrink-0"
-                  >
+                  <Button type="button" variant="default" size="sm" onClick={() => void handleOpenBrowser()} className="shrink-0">
                     打开浏览器
                   </Button>
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-border" />
-                <span className="text-caption text-muted-foreground/70">或</span>
-                <div className="h-px flex-1 bg-border" />
+                <div className="h-px flex-1 bg-[var(--hairline-divider)]" />
+                <span className="text-caption text-[var(--label)]">或</span>
+                <div className="h-px flex-1 bg-[var(--hairline-divider)]" />
               </div>
 
               <div className="flex flex-col gap-2">
@@ -647,20 +669,15 @@ const AccountModal: React.FC<AccountModalProps> = ({
                   disabled={isValidating}
                   className="self-end"
                 >
-                  {isValidating ? '处理中...' : '完成认证'}
+                  {isValidating ? '处理中…' : '完成认证'}
                 </Button>
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 pt-2">
+            <div className="flex flex-col gap-3 border-t border-[var(--hairline-divider)] pt-3">
               {renderError()}
               <DialogFooter className="pt-0">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setStep('form')}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={() => setStep('form')}>
                   返回
                 </Button>
               </DialogFooter>
@@ -668,33 +685,42 @@ const AccountModal: React.FC<AccountModalProps> = ({
           </div>
         ) : (
           <div className="flex flex-col gap-5">
-            <div className="space-y-4">
-              <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-label text-muted-foreground shrink-0">账号邮箱</span>
-                  <span className="text-subtitle font-medium text-foreground select-text break-all text-right">{getDisplayedEmail(confirmEmail, isEmailMaskingEnabled)}</span>
+            <div className="space-y-3.5">
+              <div className="bento-group overflow-hidden">
+                <div className="bento-list-row">
+                  <span className="text-label text-[var(--label)]">账号邮箱</span>
+                  <span className="break-all text-right text-subtitle font-medium text-foreground select-text">
+                    {getDisplayedEmail(confirmEmail, isEmailMaskingEnabled)}
+                  </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-label text-muted-foreground shrink-0">订阅方式</span>
+                <div className="bento-list-row">
+                  <span className="text-label text-[var(--label)]">订阅方式</span>
                   <span className="text-subtitle font-medium text-foreground">{confirmPlanLabel}</span>
                 </div>
               </div>
 
-              <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 text-label text-muted-foreground leading-relaxed">
-                <Info size={14} className="shrink-0 mt-0.5 text-muted-foreground" />
+              <div className="flex items-start gap-2.5 rounded-[10px] bg-muted/65 p-3 text-label leading-relaxed text-muted-foreground dark:bg-white/[0.04]">
+                <Info size={14} className="mt-0.5 shrink-0 text-[var(--label)]" />
                 <span>
                   {isEditingOauth
                     ? '确认后将替换此账号的登录凭证，请确认登录的是同一账号。'
                     : isOauth
-                    ? '确认后保存账号；登录已成功，Refresh Token 将用于后续自动刷新。'
-                    : isRt
-                      ? '确认后保存账号；Refresh Token 已一次性消耗，无法重复兑换。'
-                      : '确认后保存账号；限额类型（周限/月限）将在额度刷新后根据接口返回自动判断。'}
+                      ? '确认后保存账号；登录已成功，Refresh Token 将用于后续自动刷新。'
+                      : isRt
+                        ? '确认后保存账号；Refresh Token 已一次性消耗，无法重复兑换。'
+                        : '确认后保存账号；限额类型（周限/月限）将在额度刷新后根据接口返回自动判断。'}
                 </span>
               </div>
             </div>
 
-            {renderFooterButtons(isEditingOauth ? '确认替换凭证' : '确认保存', isSubmitting, () => void handleConfirmSave(), !!reauthIdentityError, '返回修改', () => setStep(isOauth ? 'oauth' : 'form'))}
+            {renderFooterButtons(
+              isEditingOauth ? '确认替换凭证' : '确认保存',
+              isSubmitting,
+              () => void handleConfirmSave(),
+              !!reauthIdentityError,
+              '返回修改',
+              () => setStep(isOauth ? 'oauth' : 'form'),
+            )}
           </div>
         )}
       </DialogContent>

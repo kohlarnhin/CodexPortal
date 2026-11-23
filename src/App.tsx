@@ -37,6 +37,7 @@ import { useAccountUsageScheduler } from './hooks/useAccountUsageScheduler';
 import { useAutostart } from './hooks/useAutostart';
 import { useSystemTray } from './hooks/useSystemTray';
 import { useCodexRateLimitListener } from './hooks/useCodexRateLimitListener';
+import { useAppearance } from './hooks/useAppearance';
 
 type TabId =
   | 'dashboard'
@@ -89,6 +90,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [detailContainer, setDetailContainer] = useState<HTMLDivElement | null>(null);
+  const { appearance, setAppearance } = useAppearance();
   const updater = useUpdater();
   const { isEmailMaskingEnabled, toggleEmailMasking } = useEmailMasking();
   const usageScheduler = useAccountUsageScheduler(isEmailMaskingEnabled);
@@ -148,6 +150,8 @@ function App() {
       case 'app-settings':
         return (
           <AppSettings
+            appearance={appearance}
+            onChangeAppearance={setAppearance}
             isEmailMaskingEnabled={isEmailMaskingEnabled}
             onToggleEmailMasking={toggleEmailMasking}
             isAutoLaunchEnabled={autostart.isEnabled}
@@ -166,41 +170,57 @@ function App() {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="relative flex h-screen cursor-default overflow-hidden bg-background font-sans text-foreground">
-        {/* Sidebar */}
-        <aside className="flex w-[240px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-          {/* Sidebar Drag Header (Traffic Lights area) */}
-          <div data-tauri-drag-region className="h-10 w-full shrink-0" />
-          <div className="flex items-center gap-2.5 px-5 pb-6">
-            <Logo className="h-8 w-8 shrink-0 rounded-lg" />
-            <div className="min-w-0 flex-1 leading-tight">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <h1 className="truncate text-title font-semibold tracking-tight select-none">Codex Portal</h1>
-                {appVersion && (
-                  <ActionTooltip label={availableUpdate ? `发现新版本 v${availableUpdate}，点击查看` : '查看版本信息'}>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('about')}
-                      className="relative inline-flex h-[18px] shrink-0 cursor-pointer items-center rounded-full border bg-background px-1.5 font-mono text-caption leading-none text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      v{appVersion}
-                      {availableUpdate && (
-                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-sidebar" aria-label="有新版本" />
-                      )}
-                    </button>
-                  </ActionTooltip>
-                )}
-              </div>
-              <p className="mt-0.5 truncate text-label text-muted-foreground select-none">账号与配置管理</p>
-            </div>
-          </div>
+      <div className="bento-window cursor-default select-none font-sans text-foreground">
+        {/* 左侧侧边栏 */}
+        <aside className="bento-sidebar-panel text-sidebar-foreground" aria-label="主导航侧边栏">
+          {/* 顶部红绿灯拖拽区 + 品牌标题 */}
+          <header data-tauri-drag-region className="sidebar-titlebar">
+            <div data-tauri-drag-region className="sidebar-chrome" />
 
-          <nav className="flex-1 space-y-6 overflow-y-auto px-3 pb-4" aria-label="主导航">
+            <div data-tauri-drag-region className="mt-2.5 flex items-center gap-3 px-1">
+              <Logo className="size-8 shrink-0 rounded-[9px]" />
+              <div data-tauri-drag-region className="min-w-0 flex-1 leading-tight">
+                <div data-tauri-drag-region className="flex items-center gap-1.5">
+                  <h1
+                    data-tauri-drag-region
+                    className="truncate text-[15px] font-semibold tracking-[-0.015em] text-foreground select-none"
+                  >
+                    Codex Portal
+                  </h1>
+                  {appVersion && (
+                    <ActionTooltip
+                      side="bottom"
+                      label={availableUpdate ? `发现新版本 v${availableUpdate}，点击查看` : '查看版本与更新'}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('about')}
+                        className="button-neutral relative inline-flex h-[19px] shrink-0 cursor-pointer items-center gap-1 rounded-full px-1.5 font-mono text-[10.5px] leading-none text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        v{appVersion}
+                        {availableUpdate && (
+                          <span
+                            className="bento-status-dot"
+                            data-tone="error"
+                            aria-label="有新版本"
+                          />
+                        )}
+                      </button>
+                    </ActionTooltip>
+                  )}
+                </div>
+                <p data-tauri-drag-region className="mt-0.5 truncate text-[11.5px] text-[var(--label)] select-none">
+                  账号与配置管理
+                </p>
+              </div>
+            </div>
+          </header>
+
+          {/* 分组导航 */}
+          <nav className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 pt-1 pb-2.5" aria-label="主导航">
             {NAV_GROUPS.map(group => (
               <div key={group.label}>
-                <div className="px-3 pb-2 text-caption font-medium tracking-wide text-muted-foreground/70 select-none">
-                  {group.label}
-                </div>
+                <div className="sidebar-group-heading">{group.label}</div>
                 <ul className="space-y-0.5">
                   {group.items.map(item => {
                     const isActive = activeTab === item.id;
@@ -208,16 +228,18 @@ function App() {
                       <li key={item.id}>
                         <button
                           type="button"
+                          data-no-press
                           onClick={() => setActiveTab(item.id)}
                           aria-current={isActive ? 'page' : undefined}
+                          data-selected={isActive || undefined}
                           className={cn(
-                            'flex h-[34px] w-full items-center gap-2.5 rounded-md px-3 text-subtitle whitespace-nowrap outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 cursor-pointer',
-                            isActive
-                              ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-                              : 'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                            'sidebar-nav-surface flex h-[38px] w-full cursor-pointer items-center gap-3 px-2.5 text-[14px] whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring/25',
+                            isActive ? 'text-foreground' : 'text-foreground/80 hover:text-foreground',
                           )}
                         >
-                          <item.icon size={16} className="shrink-0" aria-hidden="true" />
+                          <span className="sidebar-nav-icon" aria-hidden="true">
+                            <item.icon size={15} strokeWidth={1.9} />
+                          </span>
                           <span className="truncate">{item.label}</span>
                         </button>
                       </li>
@@ -228,7 +250,8 @@ function App() {
             ))}
           </nav>
 
-          <div className="shrink-0 border-t border-sidebar-border px-3 pt-3 pb-3">
+          {/* 底部当前账号速览 */}
+          <div className="shrink-0 px-4 pb-3.5 pt-2">
             <SidebarAccountStatus
               isEmailMaskingEnabled={isEmailMaskingEnabled}
               usageRevision={usageScheduler.usageRevision}
@@ -239,11 +262,9 @@ function App() {
           </div>
         </aside>
 
-        {/* Content Area */}
-        <main className="flex min-w-0 flex-1 flex-col bg-background">
-          {/* Main Content Drag Header */}
-          <div data-tauri-drag-region className="h-10 w-full shrink-0" />
-          <div ref={setDetailContainer} className="relative flex flex-1 flex-col overflow-hidden px-8 pb-6">
+        {/* 右侧主工作区 */}
+        <main className="bento-main">
+          <div ref={setDetailContainer} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col">{renderPage()}</div>
           </div>
         </main>

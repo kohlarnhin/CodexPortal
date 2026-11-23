@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { SessionListPage, SessionRecord } from '../../types/session';
 import SearchInput from './SearchInput';
 import SessionRow from './SessionRow';
+import Button from '../ui/button';
 
 const PAGE_SIZE = 50;
 
@@ -55,24 +56,27 @@ const SessionListView: React.FC<SessionListViewProps> = ({
     };
   }, [keyword, page, includeSubagents, requestKey]);
 
-  // 输入或同步变化后立即隐藏旧结果，迟到的请求也不会覆盖当前查询。
   const isLoading = result?.key !== requestKey;
   const data = isLoading ? null : result?.data;
   const error = isLoading ? null : result?.error;
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
 
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+    <div className="flex flex-1 flex-col">
+      <div className="mb-3.5 flex shrink-0 flex-wrap items-center gap-3">
         <div className="min-w-0">
           <p className="text-body font-medium text-foreground">全部项目的{includeSubagents ? '会话' : '主会话'}</p>
-          <p className="mt-1 text-caption text-muted-foreground">按开始时间倒序排列，支持输入完整或部分会话 ID</p>
+          <p className="mt-0.5 text-caption text-[var(--label)]">按开始时间倒序排列，支持输入完整或部分会话 ID</p>
         </div>
         <div className="ml-auto flex w-full items-center gap-3 @min-[640px]/page:w-auto">
-          <span role="status" className="shrink-0 text-caption text-muted-foreground">
-            {isLoading ? '正在查找…' : error ? '加载失败' : `${data?.total ?? 0} 个${keyword ? '匹配' : ''}${includeSubagents ? '会话' : '主会话'}`}
+          <span role="status" className="shrink-0 text-caption text-[var(--label)] tabular-nums">
+            {isLoading
+              ? '正在查找…'
+              : error
+                ? '加载失败'
+                : `${data?.total ?? 0} 个${keyword ? '匹配' : ''}${includeSubagents ? '会话' : '主会话'}`}
           </span>
-          <div className="flex min-w-0 flex-1 @min-[640px]/page:w-72">
+          <div className="flex min-w-0 flex-1 @min-[640px]/page:w-64">
             <SearchInput
               value={search}
               onChange={value => setQuery({ search: value, page: 0 })}
@@ -85,18 +89,26 @@ const SessionListView: React.FC<SessionListViewProps> = ({
 
       {isLoading ? (
         <div className="space-y-3" aria-label="正在加载会话列表" aria-busy="true">
-          {[1, 2, 3].map(index => <div key={index} className="h-28 bg-muted/50 rounded-xl animate-pulse" />)}
+          {[1, 2, 3].map(index => (
+            <div key={index} className="h-28 rounded-[14px] bg-[var(--button-fill)]/70 animate-pulse" />
+          ))}
         </div>
       ) : error ? (
-        <div role="alert" className="rounded-xl border border-destructive/20 bg-destructive/5 px-5 py-8 text-center">
+        <div role="alert" className="bento-card px-5 py-8 text-center">
           <p className="text-body text-destructive">{error}</p>
-          <button onClick={() => setRetry(value => value + 1)} className="mt-3 text-body font-medium text-foreground underline underline-offset-4">重新加载</button>
+          <Button variant="outline" size="sm" onClick={() => setRetry(value => value + 1)} className="mt-3">
+            重新加载
+          </Button>
         </div>
       ) : !data?.sessions.length ? (
-        <div className="rounded-xl border border-dashed py-14 px-8 text-center">
-          <p className="text-subtitle font-medium text-foreground">{keyword ? '没有找到匹配的会话' : '还没有会话数据'}</p>
-          <p className="mt-2 text-label text-muted-foreground">{keyword ? '试试更短的 ID 片段，或清除搜索查看全部会话' : '点击上方“立即同步”，导入本地历史会话'}</p>
-          {!includeSubagents && <p className="mt-2 text-label text-muted-foreground">开启“包含子会话”可查看子会话</p>}
+        <div className="bento-empty flex-1 py-14">
+          <p className="text-subtitle font-medium text-foreground">
+            {keyword ? '没有找到匹配的会话' : '还没有会话数据'}
+          </p>
+          <p className="mt-1.5 text-label text-muted-foreground">
+            {keyword ? '试试更短的 ID 片段，或清除搜索查看全部会话' : '点击上方「立即同步」，导入本地历史会话'}
+          </p>
+          {!includeSubagents && <p className="mt-1.5 text-label text-[var(--label)]">开启“包含子会话”可查看子会话</p>}
         </div>
       ) : (
         <>
@@ -114,19 +126,27 @@ const SessionListView: React.FC<SessionListViewProps> = ({
           </div>
           {totalPages > 1 && (
             <div className="flex flex-wrap items-center justify-between gap-3 py-4 text-label text-muted-foreground">
-              <span>第 {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + data.sessions.length} 条，共 {data.total} 条</span>
-              <div className="flex items-center gap-3">
-                <button
+              <span className="tabular-nums">
+                第 {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + data.sessions.length} 条，共 {data.total} 条
+              </span>
+              <div className="flex items-center gap-2.5">
+                <Button
+                  variant="outline"
+                  size="sm"
                   disabled={page === 0}
                   onClick={() => setQuery(current => ({ ...current, page: current.page - 1 }))}
-                  className="h-8 rounded-md border bg-background px-3 text-body font-medium text-foreground shadow-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                >上一页</button>
-                <span>{page + 1} / {totalPages}</span>
-                <button
+                >
+                  上一页
+                </Button>
+                <span className="text-caption tabular-nums">{page + 1} / {totalPages}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
                   disabled={page + 1 >= totalPages}
                   onClick={() => setQuery(current => ({ ...current, page: current.page + 1 }))}
-                  className="h-8 rounded-md border bg-background px-3 text-body font-medium text-foreground shadow-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                >下一页</button>
+                >
+                  下一页
+                </Button>
               </div>
             </div>
           )}

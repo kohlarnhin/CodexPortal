@@ -18,12 +18,12 @@ function InstallChannel({ name, installation }: {
   const { status, isLoading, isInstalling, canInstall, error, install } = installation;
 
   return (
-    <li className="px-3.5 py-3">
+    <li className="border-t border-[var(--hairline-divider)] px-4 py-3 first:border-t-0">
       <div className="flex min-h-8 items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="text-subtitle font-medium text-foreground">{name}</div>
           {status === 'claudeNotFound' && (
-            <p className="mt-0.5 text-caption text-muted-foreground">请先启动 Claude Code</p>
+            <p className="mt-0.5 text-caption text-[var(--label)]">请先启动 Claude Code</p>
           )}
         </div>
         {isLoading ? (
@@ -70,14 +70,14 @@ export default function McpInstallModal() {
           安装
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-sm gap-4" showCloseButton={!isInstalling}>
+      <DialogContent className="max-w-sm gap-4 p-6" showCloseButton={!isInstalling}>
         <DialogHeader>
           <DialogTitle>安装 MCP 服务</DialogTitle>
           <DialogDescription>
             安装后重新打开对应客户端。调用工具时请保持 Codex Portal 运行。
           </DialogDescription>
         </DialogHeader>
-        <ul aria-label="安装渠道" className="divide-y divide-border rounded-lg border bg-muted/30">
+        <ul aria-label="安装渠道" className="bento-group overflow-hidden">
           <InstallChannel name="Codex" installation={codex} />
           <InstallChannel name="Claude Code" installation={claude} />
         </ul>

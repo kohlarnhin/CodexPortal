@@ -1,6 +1,6 @@
 [package]
 name = "codex-portal"
-version = "0.5.0"
+version = "0.5.1"
 description = "Codex Portal - Account Management"
 edition = "2021"
 
@@ -26,6 +26,12 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 toml_edit = "0.25"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSNotification", "NSString", "block2"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSView", "NSWindow"] }
+block2 = "=0.6.2"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import { Check, ChevronDown } from 'lucide-react';
 
@@ -33,53 +33,55 @@ export default function Select({ value, onChange, options, className, disabled, 
   }, []);
 
   return (
-    <div className={cn("relative", className)} ref={containerRef}>
-      <div 
+    <div className={cn('relative', className)} ref={containerRef}>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
         onClick={() => {
           if (!disabled) setIsOpen(!isOpen);
         }}
         className={cn(
-          "w-full h-9 px-3 pr-8 bg-background border border-input rounded-md text-body cursor-pointer flex items-center justify-between transition-[color,box-shadow] shadow-xs select-none",
-          isOpen && "border-foreground/60",
-          disabled && "opacity-50 pointer-events-none cursor-not-allowed"
+          'bento-field flex h-9 w-full min-w-0 cursor-pointer items-center justify-between gap-2 px-3 text-left text-body select-none disabled:cursor-not-allowed disabled:opacity-45',
         )}
       >
-        <span className="truncate text-foreground leading-normal">{selectedOption?.label || value}</span>
-        <div className="absolute inset-y-0 right-0 flex items-center px-2 text-muted-foreground pointer-events-none">
-          <ChevronDown size={13} className={cn("transition-transform duration-200", isOpen && "rotate-180")} />
-        </div>
-      </div>
+        <span className="min-w-0 flex-1 truncate text-foreground leading-normal">{selectedOption?.label || value}</span>
+        <ChevronDown
+          size={13}
+          aria-hidden="true"
+          className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isOpen && 'rotate-180')}
+        />
+      </button>
 
       {isOpen && !disabled && (
-        <div 
+        <div
+          role="listbox"
           className={cn(
-            "absolute z-50 min-w-full w-max max-w-[320px] mt-1 bg-popover text-popover-foreground border rounded-md shadow-md overflow-y-auto max-h-60 p-1 animate-fade-in",
-            align === 'right' ? "right-0" : "left-0"
+            'bento-popup animate-fade-in absolute z-50 mt-1.5 min-w-full w-max max-w-[320px] max-h-64 overflow-y-auto p-1.5',
+            align === 'right' ? 'right-0' : 'left-0'
           )}
         >
-          {options.map((option) => (
-            <div
-              key={option.value}
-              onClick={() => {
-                onChange(option.value);
-                setIsOpen(false);
-              }}
-              className={cn(
-                "px-2 py-1.5 rounded-sm text-body cursor-pointer flex items-center justify-between gap-2 select-none text-foreground hover:bg-accent hover:text-accent-foreground",
-                value === option.value && "font-medium"
-              )}
-            >
-              <span className="truncate">{option.label}</span>
-              <div className="w-3.5 flex justify-center shrink-0">
-                {value === option.value && (
-                  <Check size={14} />
-                )}
+          {options.map((option) => {
+            const selected = value === option.value;
+            return (
+              <div
+                key={option.value}
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+                className="bento-choice-row justify-between"
+              >
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {selected && <Check size={13} aria-hidden="true" className="shrink-0" />}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
-

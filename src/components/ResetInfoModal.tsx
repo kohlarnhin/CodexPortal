@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Account, ResetCredit, ResetCreditsInfo } from '../types/account';
 import Button from './ui/button';
-import { Dialog, DialogContent } from './ui/dialog';
-import { Check, CircleAlert, LoaderCircle, RotateCcw, X } from 'lucide-react';
+import Input from './ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { Check, CircleAlert, LoaderCircle } from 'lucide-react';
 
 interface ResetInfoModalProps {
   account: Account;
@@ -31,10 +32,10 @@ const STATUS_LABELS: Record<string, string> = {
   expired: '已过期',
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  available: 'bg-success/10 text-success border-success/25',
-  redeemed: 'bg-muted text-muted-foreground border-border',
-  expired: 'bg-destructive/5 text-destructive border-destructive/20',
+const STATUS_TONE: Record<string, string> = {
+  available: 'success',
+  redeemed: 'idle',
+  expired: 'error',
 };
 
 export default function ResetInfoModal({
@@ -46,7 +47,6 @@ export default function ResetInfoModal({
 }: ResetInfoModalProps) {
   const [info, setInfo] = useState<ResetCreditsInfo | null>(null);
   const [needsAt, setNeedsAt] = useState(false);
-  /** 需要输入 Access Token 的原因：未配置 / 已失效。 */
   const [atReason, setAtReason] = useState<'missing' | 'expired'>('missing');
   const [atInput, setAtInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -116,7 +116,6 @@ export default function ResetInfoModal({
     } catch (err: any) {
       const message = err?.toString() || '使用重置卡失败';
       if (message.includes('请重新输入 Access Token')) {
-        // at 已失效：切换到输入区，让用户重新粘贴。
         setConsumeError(null);
         setAtReason('expired');
         setNeedsAt(true);
@@ -130,76 +129,54 @@ export default function ResetInfoModal({
 
   return (
     <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent
-        className="max-w-lg p-0 max-h-[82vh] flex flex-col overflow-hidden gap-0"
-        showCloseButton={false}
-      >
-        <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 shrink-0 rounded-md border bg-muted text-foreground flex items-center justify-center">
-              <RotateCcw size={17} strokeWidth={2.5} />
-            </div>
-            <div className="min-w-0">
-              <h3 id="reset-modal-title" className="font-semibold text-title text-foreground tracking-tight">重置卡</h3>
-              <p className="truncate text-label text-muted-foreground mt-0.5">{account.name}</p>
-            </div>
-          </div>
+      <DialogContent className="flex max-h-[82vh] max-w-lg flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-[var(--hairline-divider)] px-6 py-4 pr-14">
+          <DialogTitle>重置卡</DialogTitle>
+          <DialogDescription className="truncate">{account.name}</DialogDescription>
+        </DialogHeader>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="关闭"
-            className="w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors shrink-0"
-          >
-            <X size={17} strokeWidth={2.5} />
-          </button>
-        </div>
-
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {needsAt ? (
             <div className="flex flex-col gap-4">
-              <div className={`rounded-lg border px-4 py-3 text-label leading-relaxed ${
-                atReason === 'expired'
-                  ? 'border-warning/25 bg-warning/10 text-warning'
-                  : 'border-border bg-muted/50 text-muted-foreground'
-              }`}>
+              <div
+                className={`rounded-[10px] px-4 py-3 text-label leading-relaxed ${
+                  atReason === 'expired'
+                    ? 'bg-warning/12 text-warning'
+                    : 'bg-muted/65 text-muted-foreground dark:bg-white/[0.04]'
+                }`}
+              >
                 {atReason === 'expired'
                   ? 'Access Token 已失效，请粘贴该账号新的 Access Token 后重试。'
                   : 'Team 账号的重置卡需要通过 Access Token（at）获取，Personal Access Token 无法访问。请粘贴该账号的 Access Token 以获取重置卡信息。'}
               </div>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
                 <label htmlFor="atInput" className="text-label font-medium text-foreground">Access Token</label>
-                <input
+                <Input
                   type="text"
                   id="atInput"
                   value={atInput}
                   onChange={(e) => { setAtInput(e.target.value); setError(null); }}
-                  placeholder="粘贴 Access Token..."
-                  className="w-full px-3 py-2 bg-background border border-input rounded-md shadow-xs focus:border-foreground/60 outline-none transition-colors text-foreground placeholder:text-muted-foreground text-body font-mono"
+                  placeholder="粘贴 Access Token…"
+                  className="font-mono text-body"
                 />
               </div>
               {error && (
-                <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3 py-2 text-label text-destructive">
-                  <span>{error}</span>
+                <div className="break-all rounded-[10px] bg-destructive/10 px-3 py-2 text-label text-destructive">
+                  {error}
                 </div>
               )}
             </div>
           ) : isLoading ? (
-            <div className="flex items-center gap-2.5 py-8 justify-center text-body text-muted-foreground">
+            <div className="flex items-center justify-center gap-2.5 py-8 text-body text-muted-foreground">
               <LoaderCircle size={14} strokeWidth={2.5} className="animate-spin" />
-              获取重置卡中...
+              获取重置卡中…
             </div>
           ) : error ? (
-            <div className="flex items-start gap-2 break-all rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-3 text-label text-destructive leading-relaxed">
-              <CircleAlert size={13} strokeWidth={2.5} className="shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 break-all rounded-[12px] bg-destructive/10 px-4 py-3 text-label leading-relaxed text-destructive">
+              <CircleAlert size={14} className="mt-0.5 shrink-0" />
               <div>
                 <p>{error}</p>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => void loadResetCredits(true)}
-                  className="mt-2"
-                >
+                <Button variant="destructive" size="sm" onClick={() => void loadResetCredits(true)} className="mt-2.5">
                   重新获取
                 </Button>
               </div>
@@ -207,36 +184,43 @@ export default function ResetInfoModal({
           ) : info ? (
             <div className="flex flex-col gap-4">
               {consumeSuccess && (
-                <div className="flex items-center gap-2 rounded-md bg-success/10 border border-success/25 px-3.5 py-2.5 text-label text-success">
+                <div className="flex items-center gap-2 rounded-[10px] bg-success/12 px-3.5 py-2.5 text-label text-success">
                   <Check size={13} strokeWidth={2.5} className="shrink-0" />
                   重置成功！额度窗口已重置。
                 </div>
               )}
               {consumeError && (
-                <div className="flex items-start gap-2 rounded-md bg-destructive/5 border border-destructive/20 px-3.5 py-2.5 text-label text-destructive break-all">
-                  <CircleAlert size={13} strokeWidth={2.5} className="shrink-0 mt-0.5" />
+                <div className="flex items-start gap-2 break-all rounded-[10px] bg-destructive/10 px-3.5 py-2.5 text-label text-destructive">
+                  <CircleAlert size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" />
                   <span>{consumeError}</span>
                 </div>
               )}
 
-              <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-4 py-3">
+              <div className="bento-group flex items-center justify-between px-4 py-3">
                 <span className="text-label text-muted-foreground">可用的重置次数</span>
-                <span className="text-stat font-bold font-mono text-foreground leading-none">{info.availableCount}</span>
+                <span className="font-mono text-stat font-semibold leading-none text-foreground tabular-nums">
+                  {info.availableCount}
+                </span>
               </div>
 
               {info.credits.length > 0 ? (
-                <div className="flex flex-col gap-2">
+                <div className="bento-group overflow-hidden">
                   {info.credits.map((credit, index) => {
                     const status = (credit.status || '').toLowerCase();
                     const isAvailable = status === 'available' && !!credit.id;
                     return (
-                      <div key={index} className="rounded-lg border border-border px-3.5 py-3">
-                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div key={index} className="border-t border-[var(--hairline-divider)] px-4 py-3 first:border-t-0">
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
                           <span className="text-body font-medium text-foreground">
                             {credit.resetType || '重置'}
                           </span>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className={`px-2 py-0.5 rounded-full border text-caption font-medium ${STATUS_COLORS[status] || STATUS_COLORS.redeemed}`}>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 text-caption text-muted-foreground">
+                              <span
+                                className="bento-status-dot"
+                                data-tone={STATUS_TONE[status] || 'idle'}
+                                aria-hidden="true"
+                              />
                               {STATUS_LABELS[status] || credit.status || '未知'}
                             </span>
                             {isAvailable && (
@@ -255,7 +239,7 @@ export default function ResetInfoModal({
                             )}
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-caption text-muted-foreground">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-caption text-[var(--label)] tabular-nums">
                           <span>到期：{formatTimestamp(credit.expiresAt)}</span>
                           <span>发放：{formatTimestamp(credit.grantedAt)}</span>
                           <span>兑换：{formatTimestamp(credit.redeemedAt)}</span>
@@ -263,8 +247,8 @@ export default function ResetInfoModal({
                         </div>
 
                         {isAvailable && confirmCredit?.id === credit.id && (
-                          <div className="mt-2 rounded-md bg-warning/10 border border-warning/25 px-3 py-2.5">
-                            <p className="text-caption text-warning mb-2">
+                          <div className="mt-2.5 rounded-[10px] bg-warning/12 px-3 py-2.5">
+                            <p className="mb-2 text-caption text-warning">
                               使用后立即重置当前额度窗口，确认使用这张重置卡？
                             </p>
                             <div className="flex items-center gap-2">
@@ -279,7 +263,7 @@ export default function ResetInfoModal({
                                 {consumingId === credit.id && (
                                   <LoaderCircle size={11} strokeWidth={2.5} className="animate-spin" />
                                 )}
-                                <span>{consumingId === credit.id ? '使用中...' : '确认使用'}</span>
+                                <span>{consumingId === credit.id ? '使用中…' : '确认使用'}</span>
                               </Button>
                               <Button
                                 type="button"
@@ -298,28 +282,22 @@ export default function ResetInfoModal({
                   })}
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-label text-muted-foreground/70">
+                <div className="bento-empty py-6 text-label text-[var(--label)]">
                   暂无重置卡记录
                 </div>
               )}
 
-              <div className="text-caption text-muted-foreground/70">
+              <div className="text-caption text-[var(--label)]">
                 同步于 {info.syncedAt ? new Date(info.syncedAt).toLocaleString() : '—'}
               </div>
             </div>
           ) : null}
         </div>
 
-        <div className="px-6 py-3.5 bg-muted/50 border-t border-border flex items-center justify-end gap-2.5 shrink-0">
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--hairline-divider)] px-6 py-3.5">
           {needsAt ? (
             <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={onClose}
-                disabled={isSavingAt}
-              >
+              <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={isSavingAt}>
                 取消
               </Button>
               <Button
@@ -330,7 +308,7 @@ export default function ResetInfoModal({
                 disabled={isSavingAt}
                 className="min-w-[96px]"
               >
-                {isSavingAt ? '保存中...' : '保存并获取'}
+                {isSavingAt ? '保存中…' : '保存并获取'}
               </Button>
             </>
           ) : (
@@ -346,12 +324,7 @@ export default function ResetInfoModal({
                   重新获取
                 </Button>
               )}
-              <Button
-                type="button"
-                variant="default"
-                size="sm"
-                onClick={onClose}
-              >
+              <Button type="button" variant="default" size="sm" onClick={onClose}>
                 关闭
               </Button>
             </>

@@ -11,6 +11,7 @@ mod sessions;
 mod skills;
 mod state;
 mod time;
+mod traffic_lights;
 mod tray;
 mod updates;
 mod windows;
@@ -97,6 +98,13 @@ pub fn run() {
                 });
             }
 
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = traffic_lights::install(&window) {
+                    logging::warn("window", &format!("安装标题栏按钮布局失败：{error}"));
+                }
+            }
+
             #[cfg(desktop)]
             show_main_window(app.handle());
 
@@ -105,6 +113,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             logging::get_recent_logs,
+            windows::set_window_theme,
             codex::events::get_codex_event_url,
             codex::events::get_codex_event_context,
             codex::events::save_codex_live_usage,

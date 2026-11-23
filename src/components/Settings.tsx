@@ -85,7 +85,6 @@ interface SettingRowProps {
   description: string;
   htmlFor?: string;
   descriptionId?: string;
-  /** 选中高风险取值时的提示 */
   warning?: string | null;
   children: React.ReactNode;
 }
@@ -93,7 +92,7 @@ interface SettingRowProps {
 /** 基础设置的一行：左侧名称 + 配置键 + 说明，右侧控件。 */
 function SettingRow({ label, configKey, description, htmlFor, descriptionId, warning, children }: SettingRowProps) {
   return (
-    <div className="flex items-center justify-between gap-6 px-6 py-3.5 transition-colors hover:bg-muted/40">
+    <div className="bento-list-row transition-colors hover:bg-[var(--hover)]">
       <div className="min-w-0 flex-1">
         <div className="mb-0.5 flex flex-wrap items-center gap-2">
           {htmlFor ? (
@@ -101,7 +100,9 @@ function SettingRow({ label, configKey, description, htmlFor, descriptionId, war
           ) : (
             <span className="text-subtitle font-medium text-foreground">{label}</span>
           )}
-          <code className="rounded-sm bg-muted px-1.5 py-px font-mono text-caption text-muted-foreground">{configKey}</code>
+          <code className="rounded-full bg-[var(--button-fill)] px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
+            {configKey}
+          </code>
         </div>
         <p id={descriptionId} className="text-label leading-normal text-muted-foreground">{description}</p>
         {warning && (
@@ -111,7 +112,7 @@ function SettingRow({ label, configKey, description, htmlFor, descriptionId, war
           </p>
         )}
       </div>
-      <div className="flex w-64 shrink-0 justify-end">{children}</div>
+      <div className="flex w-60 shrink-0 justify-end">{children}</div>
     </div>
   );
 }
@@ -129,11 +130,11 @@ interface SaveBarProps {
 /** 三个页签共用的底部操作条：状态 + 放弃 / 保存。 */
 function SaveBar({ status, hasDraft, isSaving, disabled, canSave, onDiscard, onSave }: SaveBarProps) {
   return (
-    <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-muted/40 px-5 py-2.5">
+    <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--hairline-divider)] px-4 py-2.5">
       <div className="flex min-w-0 items-center gap-2 text-label">
         {hasDraft ? (
           <span className="inline-flex items-center gap-1.5 font-medium text-warning">
-            <span className="h-1.5 w-1.5 rounded-full bg-warning" />
+            <span className="bento-status-dot" data-tone="warning" aria-hidden="true" />
             存在未保存的修改
           </span>
         ) : (
@@ -141,8 +142,8 @@ function SaveBar({ status, hasDraft, isSaving, disabled, canSave, onDiscard, onS
         )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <span className="mr-1 hidden items-center gap-1 text-caption text-muted-foreground @min-[640px]/page:inline-flex">
-          <kbd className="rounded-sm border bg-background px-1 font-mono text-foreground">⌘S</kbd>
+        <span className="mr-1 hidden items-center gap-1 text-caption text-[var(--label)] @min-[640px]/page:inline-flex">
+          <kbd className="rounded-[5px] bg-[var(--button-fill)] px-1.5 py-0.5 font-mono text-[10.5px] text-foreground">⌘S</kbd>
           保存前预览差异
         </span>
         {hasDraft && (
@@ -151,7 +152,7 @@ function SaveBar({ status, hasDraft, isSaving, disabled, canSave, onDiscard, onS
           </Button>
         )}
         <Button size="sm" onClick={onSave} disabled={disabled || !canSave}>
-          {isSaving ? <LoaderCircle size={14} className="animate-spin" /> : <Save size={14} />}
+          {isSaving ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />}
           {isSaving ? '保存中…' : '保存修改'}
         </Button>
       </div>
@@ -287,7 +288,6 @@ export default function Settings() {
     setShowDiffModal(true);
   }, [draft, editingDisabled, rawToml, error]);
 
-  // 全局快捷键 ⌘S / Ctrl+S 保存
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -322,10 +322,12 @@ export default function Settings() {
 
   if (isLoading) {
     return (
-      <div className="page-layout pt-4">
-        <div className="animate-pulse flex flex-col gap-4">
-          <div className="h-8 bg-muted rounded-md w-1/4 mb-4"></div>
-          <div className="h-44 bg-muted/50 rounded-xl w-full"></div>
+      <div className="page-layout">
+        <div className="page-header">
+          <div className="h-6 w-28 rounded-md bg-[var(--button-fill)] animate-pulse" />
+        </div>
+        <div className="page-body">
+          <div className="h-56 w-full rounded-[14px] bg-[var(--button-fill)]/70 animate-pulse" />
         </div>
       </div>
     );
@@ -363,12 +365,26 @@ export default function Settings() {
       : 'Codex 不支持该取值，保留会导致 Codex 无法加载配置';
 
   return (
-    <div className="page-layout pt-4">
+    <div className="page-layout">
       <PageHeader
         className="relative z-10"
         title="配置管理"
-        description={
-          <>仅支持 OpenAI 官方订阅，配置修改后保存到本地 <code className="font-mono text-foreground bg-muted px-1 py-0.5 rounded-sm text-label">config.toml</code>。</>
+        center={
+          <SegmentedControl<'general' | 'features' | 'advanced'>
+            size="sm"
+            label="配置分区"
+            value={activeTab}
+            onChange={tabId => {
+              setActiveTab(tabId);
+              void refresh();
+            }}
+            disabled={isSaving || showDiffModal}
+            options={[
+              { id: 'general', label: '基础设置' },
+              { id: 'features', label: '功能开关' },
+              { id: 'advanced', label: 'TOML 原文' },
+            ]}
+          />
         }
         actions={
           <Button
@@ -384,285 +400,277 @@ export default function Settings() {
         }
       />
 
-      <SegmentedControl<'general' | 'features' | 'advanced'>
-        value={activeTab}
-        onChange={tabId => {
-          setActiveTab(tabId);
-          void refresh();
-        }}
-        disabled={isSaving || showDiffModal}
-        className="mb-3.5 self-start"
-        options={[
-          { id: 'general', label: '基础设置' },
-          { id: 'features', label: '功能开关' },
-          { id: 'advanced', label: '高级配置 (TOML)' },
-        ]}
-      />
-
-      {error && (!draft?.raw || !hasLoadedFile) && (
-        <div role="alert" className="mb-3 flex shrink-0 items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2.5 text-body text-destructive">
-          <CircleAlert size={15} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{error}</span>
-        </div>
-      )}
-
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {activeTab !== 'advanced' && !localConfig && (
-          <div className="rounded-xl border bg-card px-6 py-12 text-center shadow-xs">
-            <p className="mb-4 text-body text-muted-foreground">配置格式有效后即可使用快捷设置。</p>
-            <Button size="sm" onClick={() => setActiveTab('advanced')}>前往高级配置编辑</Button>
+      <div className="page-body gap-3 overflow-hidden">
+        {error && (!draft?.raw || !hasLoadedFile) && (
+          <div role="alert" className="bento-card flex shrink-0 items-start gap-2 px-4 py-2.5 text-body text-destructive">
+            <CircleAlert size={15} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 break-words">{error}</span>
           </div>
         )}
 
-        {/* 基础设置 */}
-        {activeTab === 'general' && localConfig && (
-          <div className="flex-1 min-h-0 flex flex-col rounded-xl border bg-card shadow-xs overflow-hidden">
-            <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-border">
-              <SettingRow
-                label="模型选择"
-                configKey="model"
-                description="可选择预设模型或直接输入模型名，留空使用默认模型"
-                htmlFor="codex-model"
-                descriptionId="codex-model-hint"
-              >
-                <ModelSelect
-                  id="codex-model"
-                  describedBy="codex-model-hint"
-                  value={localConfig.model || ''}
-                  onChange={value => {
-                    const updated = { ...localConfig };
-                    if (value) updated.model = value;
-                    else delete updated.model;
-                    setLocalConfig(updated);
-                  }}
-                  disabled={editingDisabled}
-                  models={BUILTIN_MODELS}
-                  className="w-64"
-                />
-              </SettingRow>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {activeTab !== 'advanced' && !localConfig && (
+            <div className="bento-empty flex-1">
+              <p className="mb-4 text-body text-muted-foreground">配置格式有效后即可使用快捷设置。</p>
+              <Button size="sm" onClick={() => setActiveTab('advanced')}>前往 TOML 原文编辑</Button>
+            </div>
+          )}
 
-              <SettingRow
-                label="思考程度"
-                configKey="model_reasoning_effort"
-                description="针对具备深度思考能力的模型调节推理深度与配额预算"
-              >
-                <Select
-                  value={localConfig.model_reasoning_effort || ''}
-                  onChange={value => updateSetting('model_reasoning_effort', value)}
-                  disabled={editingDisabled}
-                  className="w-64"
-                  align="right"
-                  options={REASONING_OPTIONS}
-                />
-              </SettingRow>
+          {/* 基础设置 */}
+          {activeTab === 'general' && localConfig && (
+            <div className="bento-group flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <SettingRow
+                  label="模型选择"
+                  configKey="model"
+                  description="可选择预设模型或直接输入模型名，留空使用默认模型"
+                  htmlFor="codex-model"
+                  descriptionId="codex-model-hint"
+                >
+                  <ModelSelect
+                    id="codex-model"
+                    describedBy="codex-model-hint"
+                    value={localConfig.model || ''}
+                    onChange={value => {
+                      const updated = { ...localConfig };
+                      if (value) updated.model = value;
+                      else delete updated.model;
+                      setLocalConfig(updated);
+                    }}
+                    disabled={editingDisabled}
+                    models={BUILTIN_MODELS}
+                    className="w-60"
+                  />
+                </SettingRow>
 
-              <SettingRow
-                label="沙盒安全模式"
-                configKey="sandbox_mode"
-                description="控制代码执行环境对宿主机文件系统与网络的隔离级别"
-                warning={sandboxWarning}
-              >
-                <Select
-                  value={localConfig.sandbox_mode || ''}
-                  onChange={value => updateSetting('sandbox_mode', value)}
-                  disabled={editingDisabled}
-                  className="w-64"
-                  align="right"
-                  options={SANDBOX_OPTIONS}
-                />
-              </SettingRow>
+                <SettingRow
+                  label="思考程度"
+                  configKey="model_reasoning_effort"
+                  description="针对具备深度思考能力的模型调节推理深度与配额预算"
+                >
+                  <Select
+                    value={localConfig.model_reasoning_effort || ''}
+                    onChange={value => updateSetting('model_reasoning_effort', value)}
+                    disabled={editingDisabled}
+                    className="w-60"
+                    align="right"
+                    options={REASONING_OPTIONS}
+                  />
+                </SettingRow>
 
-              <SettingRow
-                label="审批策略"
-                configKey="approval_policy"
-                description="Shell 命令执行与文件写入等敏感操作的授权门禁"
-                warning={approvalWarning}
-              >
-                <Select
-                  value={typeof localConfig.approval_policy === 'object' ? '__custom__' : localConfig.approval_policy || ''}
-                  onChange={value => updateSetting('approval_policy', value)}
-                  disabled={editingDisabled}
-                  className="w-64"
-                  align="right"
-                  options={withCurrentValue([
-                    { value: '', label: '使用 Codex 默认设置' },
-                    ...(approvalIsCustom ? [{ value: '__custom__', label: '自定义细粒度审批' }] : []),
-                    ...APPROVAL_OPTIONS,
-                  ], approvalPolicy, approvalPolicy === 'untrusted' ? 'Untrusted（Codex 已不支持）' : `${approvalPolicy}（当前值）`)}
-                />
-              </SettingRow>
+                <SettingRow
+                  label="沙盒安全模式"
+                  configKey="sandbox_mode"
+                  description="控制代码执行环境对宿主机文件系统与网络的隔离级别"
+                  warning={sandboxWarning}
+                >
+                  <Select
+                    value={localConfig.sandbox_mode || ''}
+                    onChange={value => updateSetting('sandbox_mode', value)}
+                    disabled={editingDisabled}
+                    className="w-60"
+                    align="right"
+                    options={SANDBOX_OPTIONS}
+                  />
+                </SettingRow>
 
-              <SettingRow
-                label="回复风格"
-                configKey="personality"
-                description="Codex 已废弃风格切换，仅 None 仍生效：不在模型指令中加入内置风格说明"
-                warning={personalityWarning}
-              >
-                <Select
-                  value={personality}
-                  onChange={value => updateSetting('personality', value)}
-                  disabled={editingDisabled}
-                  className="w-64"
-                  align="right"
-                  options={withCurrentValue(PERSONALITY_OPTIONS, personality,
-                    personalityDeprecated ? `${personality}（已废弃，不再生效）` : `${personality}（Codex 不支持）`)}
-                />
-              </SettingRow>
+                <SettingRow
+                  label="审批策略"
+                  configKey="approval_policy"
+                  description="Shell 命令执行与文件写入等敏感操作的授权门禁"
+                  warning={approvalWarning}
+                >
+                  <Select
+                    value={typeof localConfig.approval_policy === 'object' ? '__custom__' : localConfig.approval_policy || ''}
+                    onChange={value => updateSetting('approval_policy', value)}
+                    disabled={editingDisabled}
+                    className="w-60"
+                    align="right"
+                    options={withCurrentValue([
+                      { value: '', label: '使用 Codex 默认设置' },
+                      ...(approvalIsCustom ? [{ value: '__custom__', label: '自定义细粒度审批' }] : []),
+                      ...APPROVAL_OPTIONS,
+                    ], approvalPolicy, approvalPolicy === 'untrusted' ? 'Untrusted（Codex 已不支持）' : `${approvalPolicy}（当前值）`)}
+                  />
+                </SettingRow>
 
-              <SettingRow
-                label="隐藏实验特性警告"
-                configKey="suppress_unstable_features_warning"
-                description="开启新特性时静默运行，不弹出不稳定功能横幅"
-              >
-                <div className="pr-2">
+                <SettingRow
+                  label="回复风格"
+                  configKey="personality"
+                  description="Codex 已废弃风格切换，仅 None 仍生效：不在模型指令中加入内置风格说明"
+                  warning={personalityWarning}
+                >
+                  <Select
+                    value={personality}
+                    onChange={value => updateSetting('personality', value)}
+                    disabled={editingDisabled}
+                    className="w-60"
+                    align="right"
+                    options={withCurrentValue(
+                      PERSONALITY_OPTIONS,
+                      personality,
+                      personalityDeprecated ? `${personality}（已废弃，不再生效）` : `${personality}（Codex 不支持）`,
+                    )}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="隐藏实验特性警告"
+                  configKey="suppress_unstable_features_warning"
+                  description="开启新特性时静默运行，不弹出不稳定功能横幅"
+                >
                   <ToggleSwitch
                     checked={Boolean(localConfig.suppress_unstable_features_warning)}
                     label="隐藏实验特性警告"
                     disabled={editingDisabled}
                     onToggle={() => setLocalConfig({
                       ...localConfig,
-                      suppress_unstable_features_warning: !localConfig.suppress_unstable_features_warning
+                      suppress_unstable_features_warning: !localConfig.suppress_unstable_features_warning,
                     })}
                   />
-                </div>
-              </SettingRow>
+                </SettingRow>
+              </div>
+
+              <SaveBar
+                {...saveBarProps}
+                canSave={canSaveStructured}
+                status={
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <span className="bento-status-dot" data-tone="running" aria-hidden="true" />
+                    config.toml 已同步
+                  </span>
+                }
+              />
             </div>
+          )}
 
-            <SaveBar
-              {...saveBarProps}
-              canSave={canSaveStructured}
-              status={
-                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                  <span className="h-1.5 w-1.5 rounded-full bg-success/80" />
-                  已是最新配置
-                </span>
-              }
-            />
-          </div>
-        )}
-
-        {/* 功能开关 */}
-        {activeTab === 'features' && localConfig && (
-          <div className="flex-1 min-h-0 flex flex-col rounded-xl border bg-card shadow-xs overflow-hidden">
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5">
-              <div className="grid grid-cols-1 @min-[620px]/page:grid-cols-2 gap-x-6 gap-y-1">
-                {OFFICIAL_FEATURE_KEYS.map((key) => {
-                  const feature = OFFICIAL_FEATURES[key];
-                  const enabled = localConfig.features?.[key] ?? feature.defaultEnabled ?? false;
-                  const toggleFeature = () => {
-                    if (editingDisabled) return;
-                    setLocalConfig({
-                      ...localConfig,
-                      features: {
-                        ...(localConfig.features || {}),
-                        [key]: !enabled
-                      }
-                    });
-                  };
-                  return (
-                    <div
-                      key={key}
-                      onClick={toggleFeature}
-                      title={feature.description ? `${feature.label}：${feature.description}` : feature.label}
-                      className={cn(
-                        "flex items-center justify-between py-2.5 px-3 rounded-md transition-colors cursor-pointer select-none",
-                        enabled ? "bg-muted/50 hover:bg-muted" : "hover:bg-muted/50"
-                      )}
-                    >
-                      <div className="min-w-0 flex-1 pr-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-body font-medium text-foreground truncate">
-                            {feature.label}
-                          </span>
-                          <code className="shrink-0 truncate font-mono text-caption text-muted-foreground/70">{key}</code>
-                          {feature.defaultEnabled && (
-                            <span
-                              title="官方默认开启：未配置时也生效"
-                              className="shrink-0 rounded-sm bg-success/10 text-success border border-success/25 px-1.5 py-px text-caption"
-                            >
-                              默认
+          {/* 功能开关 */}
+          {activeTab === 'features' && localConfig && (
+            <div className="bento-group flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
+                <div className="grid grid-cols-1 @min-[620px]/page:grid-cols-2 gap-x-4 gap-y-1">
+                  {OFFICIAL_FEATURE_KEYS.map((key) => {
+                    const feature = OFFICIAL_FEATURES[key];
+                    const enabled = localConfig.features?.[key] ?? feature.defaultEnabled ?? false;
+                    const toggleFeature = () => {
+                      if (editingDisabled) return;
+                      setLocalConfig({
+                        ...localConfig,
+                        features: {
+                          ...(localConfig.features || {}),
+                          [key]: !enabled,
+                        },
+                      });
+                    };
+                    return (
+                      <div
+                        key={key}
+                        onClick={toggleFeature}
+                        title={feature.description ? `${feature.label}：${feature.description}` : feature.label}
+                        className={cn(
+                          'flex cursor-pointer items-center justify-between rounded-[10px] px-3 py-2.5 transition-colors select-none',
+                          enabled ? 'bg-muted/65 hover:bg-muted dark:bg-white/[0.05]' : 'hover:bg-[var(--hover)]',
+                        )}
+                      >
+                        <div className="min-w-0 flex-1 pr-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-body font-medium text-foreground">
+                              {feature.label}
                             </span>
+                            <code className="shrink-0 truncate font-mono text-[10.5px] text-[var(--label)]">
+                              {key}
+                            </code>
+                            {feature.defaultEnabled && (
+                              <span
+                                title="官方默认开启：未配置时也生效"
+                                className="shrink-0 rounded-full bg-[var(--button-fill)] px-1.5 py-px text-[10px] font-medium text-muted-foreground"
+                              >
+                                默认
+                              </span>
+                            )}
+                          </div>
+                          {feature.description && (
+                            <p className="mt-0.5 truncate text-caption text-muted-foreground">
+                              {feature.description}
+                            </p>
                           )}
                         </div>
-                        {feature.description && (
-                          <p className="text-label text-muted-foreground truncate mt-0.5">
-                            {feature.description}
-                          </p>
-                        )}
+                        <ToggleSwitch
+                          checked={enabled}
+                          label={feature.label}
+                          disabled={editingDisabled}
+                          onToggle={toggleFeature}
+                          size="sm"
+                        />
                       </div>
-                      <ToggleSwitch
-                        checked={enabled}
-                        label={feature.label}
-                        disabled={editingDisabled}
-                        onToggle={toggleFeature}
-                        size="sm"
-                      />
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
+
+              <SaveBar
+                {...saveBarProps}
+                canSave={canSaveStructured}
+                status={
+                  <span className="text-muted-foreground tabular-nums">
+                    已开启 {enabledFeatureCount} / {OFFICIAL_FEATURE_KEYS.length} 项官方特性
+                  </span>
+                }
+              />
             </div>
+          )}
 
-            <SaveBar
-              {...saveBarProps}
-              canSave={canSaveStructured}
-              status={
-                <span className="text-muted-foreground tabular-nums">
-                  已开启 {enabledFeatureCount} / {OFFICIAL_FEATURE_KEYS.length} 项官方特性
-                </span>
-              }
-            />
-          </div>
-        )}
+          {/* 高级配置 (TOML) — Bento 深色控制台风格 */}
+          {activeTab === 'advanced' && (
+            <div className="bento-group flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="bento-console flex-1 rounded-b-none border-0">
+                <div className="flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 py-2.5">
+                  <div className="flex items-center gap-1.5 font-mono text-[12px] text-[#e5e5ea]">
+                    <File size={13} className="shrink-0 text-[#8e8e93]" />
+                    <span>config.toml</span>
+                  </div>
 
-        {/* 高级配置 (TOML) */}
-        {activeTab === 'advanced' && (
-          <div className="flex-1 min-h-0 flex flex-col rounded-xl border bg-card shadow-xs overflow-hidden">
-            <div className="border-b bg-muted/40 px-4 py-2 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-1.5 text-foreground text-label font-mono">
-                <File size={13} className="text-muted-foreground shrink-0" />
-                <span>config.toml</span>
-              </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className="font-mono text-[11px] text-[#8e8e93] tabular-nums">
+                      {localToml.split('\n').length} 行 · {localToml.length} 字符
+                    </span>
+                    {tomlError ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-[#ff453a]">
+                        <span className="bento-status-dot" data-tone="error" aria-hidden="true" />
+                        {tomlError.line ? `第 ${tomlError.line} 行语法错误` : '语法错误'}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[#a1a1a6]">
+                        <span className="bento-status-dot" data-tone="running" aria-hidden="true" />
+                        语法有效
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="text-caption font-mono text-muted-foreground">
-                  {localToml.split('\n').length} 行 · {localToml.length} 字符
-                </span>
-                {tomlError ? (
-                  <span className="inline-flex items-center gap-1.5 text-caption font-medium text-destructive bg-destructive/5 border border-destructive/20 px-2 py-0.5 rounded-md">
-                    <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
-                    {tomlError.line ? `第 ${tomlError.line} 行语法错误` : '语法错误'}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-caption font-medium text-success bg-success/10 border border-success/25 px-2 py-0.5 rounded-md">
-                    <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                    语法有效
-                  </span>
+                <TomlEditor
+                  value={localToml}
+                  onChange={setLocalToml}
+                  disabled={editingDisabled}
+                  errorLine={tomlError?.line}
+                />
+
+                {tomlError && (
+                  <div role="alert" className="flex shrink-0 items-center gap-2 border-t border-white/[0.08] bg-[#ff453a]/12 px-4 py-2 text-label text-[#ff6961]">
+                    <CircleAlert size={14} className="shrink-0" />
+                    <span className="font-mono">{tomlError.message}</span>
+                  </div>
                 )}
               </div>
+
+              <SaveBar
+                {...saveBarProps}
+                canSave={!!draft}
+                status={<span className="text-muted-foreground">直接编辑原始 TOML，注释与格式原样保留</span>}
+              />
             </div>
-
-            <TomlEditor
-              value={localToml}
-              onChange={setLocalToml}
-              disabled={editingDisabled}
-              errorLine={tomlError?.line}
-            />
-
-            {tomlError && (
-              <div role="alert" className="shrink-0 border-t border-destructive/20 bg-destructive/5 px-4 py-2 text-label text-destructive flex items-center gap-2">
-                <CircleAlert size={14} className="shrink-0" />
-                <span className="font-mono">{tomlError.message}</span>
-              </div>
-            )}
-
-            <SaveBar
-              {...saveBarProps}
-              canSave={!!draft}
-              status={<span className="text-muted-foreground">直接编辑原始 TOML，注释与格式会原样保留</span>}
-            />
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <DiffModal

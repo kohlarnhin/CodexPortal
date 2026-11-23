@@ -44,38 +44,39 @@ interface StatCardProps {
 }
 
 const StatCard: React.FC<StatCardProps> = ({ label, value, details, subtext, icon }) => (
-  <div className="flex flex-col justify-between rounded-xl border bg-card p-4 shadow-xs">
-    <div className="flex items-center justify-between gap-1.5 mb-1.5">
-      <span className="text-body text-muted-foreground truncate">{label}</span>
-      {icon && <div className="text-muted-foreground shrink-0">{icon}</div>}
-    </div>
-    <div>
-      <div className="text-stat font-semibold tracking-tight text-foreground tabular-nums leading-tight">
+  <section className="bento-card flex flex-col justify-between overflow-hidden">
+    <div className="px-4 pt-3.5 pb-3">
+      <div className="mb-1.5 flex items-center justify-between gap-1.5">
+        <span className="truncate text-label text-[var(--label)]">{label}</span>
+        {icon && <div className="shrink-0 text-[var(--label)]">{icon}</div>}
+      </div>
+      <div className="text-stat font-semibold leading-tight tracking-[-0.02em] text-foreground tabular-nums">
         {value}
       </div>
-      {details && details.length > 0 ? (
-        <div className="mt-3 pt-2.5 border-t flex flex-col gap-1 text-label">
-          {details.map((d, i) => (
-            <div key={i} className="flex items-center justify-between gap-2" title={`${d.label}: ${d.value}`}>
-              <span className="text-muted-foreground shrink-0 select-none">{d.label}</span>
-              <span
-                className={cn(
-                  'tabular-nums truncate text-right',
-                  d.highlight ? 'text-success font-medium' : 'text-foreground'
-                )}
-              >
-                {d.value}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-1.5 text-caption text-muted-foreground min-h-[16px]">
-          {subtext || '\u00A0'}
-        </div>
-      )}
     </div>
-  </div>
+
+    {details && details.length > 0 ? (
+      <div className="flex flex-col gap-1 border-t border-[var(--hairline-divider)] px-4 py-2.5 text-caption">
+        {details.map((d, i) => (
+          <div key={i} className="flex items-center justify-between gap-2" title={`${d.label}: ${d.value}`}>
+            <span className="shrink-0 text-[var(--label)] select-none">{d.label}</span>
+            <span
+              className={cn(
+                'truncate text-right tabular-nums',
+                d.highlight ? 'font-medium text-success' : 'text-foreground',
+              )}
+            >
+              {d.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="min-h-[16px] px-4 pb-3 text-caption text-[var(--label)]">
+        {subtext || '\u00A0'}
+      </div>
+    )}
+  </section>
 );
 
 interface DistributionItemProps {
@@ -101,46 +102,40 @@ const DistributionItem: React.FC<DistributionItemProps> = ({
   const sharePercent = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
 
   return (
-    <div className="group rounded-md p-2 transition-colors hover:bg-muted/60 flex flex-col gap-1.5">
-      {/* 头部行：序号 + 图标 + 项目/模型全名（独占空间，不被挤压截断） + Token用量 */}
-      <div className="flex items-center justify-between gap-2.5 min-w-0">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-caption font-medium tabular-nums text-muted-foreground bg-muted">
+    <div className="flex flex-col gap-1.5 rounded-[10px] px-2.5 py-2 transition-colors hover:bg-[var(--hover)]">
+      <div className="flex min-w-0 items-center justify-between gap-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="grid size-5 shrink-0 place-items-center rounded-full bg-[var(--button-fill)] text-[10.5px] font-medium text-muted-foreground tabular-nums">
             {rank}
           </span>
-          <div className="shrink-0 text-muted-foreground">
-            {iconType === 'project' ? (
-              <Folder size={14} />
-            ) : (
-              <Bot size={14} />
-            )}
+          <div className="shrink-0 text-[var(--label)]">
+            {iconType === 'project' ? <Folder size={13.5} /> : <Bot size={13.5} />}
           </div>
           <span
             className={cn(
-              'truncate text-body font-medium text-foreground select-text leading-tight',
-              iconType === 'model' && 'font-mono text-body'
+              'truncate text-body font-medium leading-tight text-foreground select-text',
+              iconType === 'model' && 'font-mono',
             )}
             title={label}
           >
             {label}
           </span>
         </div>
-        <span className="text-body font-medium text-foreground tabular-nums shrink-0">
+        <span className="shrink-0 text-body font-semibold text-foreground tabular-nums">
           {formatTokens(value)}
         </span>
       </div>
 
-      {/* 第二行：与名称左对齐的细进度条 + 会话数与占比信息 */}
       <div className="flex items-center gap-3 pl-7">
-        <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-primary/10">
+        <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-[var(--button-fill)]">
           <div
             className="h-full rounded-full bg-primary transition-all duration-500"
             style={{ width: `${relativePercent}%` }}
           />
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 text-caption tabular-nums text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-1.5 text-caption text-[var(--label)] tabular-nums">
           {sublabel && <span>{sublabel}</span>}
-          {sublabel && <span className="text-muted-foreground/50">·</span>}
+          {sublabel && <span>·</span>}
           <span className="font-medium text-foreground">{sharePercent}%</span>
         </div>
       </div>
@@ -219,12 +214,10 @@ const TokenUsagePage: React.FC = () => {
     [days],
   );
 
-  // 输入缓存率：缓存命中占比（输入为 0 时为 0）。
   const cacheRate = totals.inputTokens > 0
     ? Math.min(100, (totals.cachedInputTokens / totals.inputTokens) * 100)
     : 0;
 
-  // 多天查询时把每天的项目/模型分布合并为范围聚合。
   const mergedProjects = useMemo(() => {
     const map = new Map<string, ProjectTokenUsage>();
     for (const day of days) {
@@ -269,10 +262,8 @@ const TokenUsagePage: React.FC = () => {
     (peak, bucket) => (bucket.totalTokens > (peak?.totalTokens ?? 0) ? bucket : peak),
     null,
   );
-  // 单日范围没有趋势可看：隐藏趋势页签，回落到项目分布。
   const hasTrend = trend.buckets.length >= 2;
   const activeInsightView: InsightView = insightView === 'trend' && !hasTrend ? 'projects' : insightView;
-  // 项目 / 模型默认用堆叠趋势图展示，单日范围只能看排行列表。
   const showDistributionChart = hasTrend && distributionMode === 'chart';
   const projectTrend = useMemo(
     () => buildSeriesTrend(days, trend.buckets, trend.granularity, 'project'),
@@ -286,7 +277,6 @@ const TokenUsagePage: React.FC = () => {
   const maxProjectTokens = mergedProjects[0]?.totalTokens ?? 0;
   const maxModelTokens = mergedModels[0]?.totalTokens ?? 0;
 
-  // 消耗金额：按内置 API 单价及模型倍率实时计算，覆盖所选范围内的历史记录。
   const totalCost = useMemo(() => {
     let cost = 0;
     for (const model of mergedModels) {
@@ -317,61 +307,58 @@ const TokenUsagePage: React.FC = () => {
   }, [startDate, endDate, allDates]);
 
   return (
-    <div className="page-layout pt-4">
-      {/* 标题栏 + 日期控制 */}
+    <div className="page-layout">
       <PageHeader
         title="Token 用量"
-        description="按天统计会话消耗，支持任意历史日期查询与费用估算"
         actions={
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <DateRangePicker
-            startDate={startDate}
-            endDate={endDate}
-            allDates={allDates}
-            onChange={(start, end) => setRange(start, end)}
-          />
-          <SegmentedControl<'today' | '7days' | '30days' | 'all'>
-            size="sm"
-            value={activeQuickRange}
-            onChange={key => {
-              if (key === 'today') setRange(todayStr(), todayStr());
-              else if (key === '7days') setRange(daysAgoStr(6), todayStr());
-              else if (key === '30days') setRange(daysAgoStr(29), todayStr());
-              else if (key === 'all') setAllDates(true);
-            }}
-            options={[
-              { id: 'today', label: '今天' },
-              { id: '7days', label: '近 7 天' },
-              { id: '30days', label: '近 30 天' },
-              { id: 'all', label: '全部' },
-            ]}
-          />
-        </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <DateRangePicker
+              startDate={startDate}
+              endDate={endDate}
+              allDates={allDates}
+              onChange={(start, end) => setRange(start, end)}
+            />
+            <SegmentedControl<'today' | '7days' | '30days' | 'all'>
+              size="sm"
+              label="快捷日期范围"
+              value={activeQuickRange}
+              onChange={key => {
+                if (key === 'today') setRange(todayStr(), todayStr());
+                else if (key === '7days') setRange(daysAgoStr(6), todayStr());
+                else if (key === '30days') setRange(daysAgoStr(29), todayStr());
+                else if (key === 'all') setAllDates(true);
+              }}
+              options={[
+                { id: 'today', label: '今天' },
+                { id: '7days', label: '近 7 天' },
+                { id: '30days', label: '近 30 天' },
+                { id: 'all', label: '全部' },
+              ]}
+            />
+          </div>
         }
       />
 
-      {error && (
-        <div className="mb-3 shrink-0 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 text-label text-destructive">
-          {error}
-        </div>
-      )}
+      <div className="page-body gap-3.5 overflow-hidden">
+        {error && (
+          <div className="bento-card shrink-0 px-4 py-2.5 text-label text-destructive">
+            {error}
+          </div>
+        )}
 
-      {/* 页面主视图：固定高度不溢出，无外层滚动条 */}
-      <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
         {isLoading ? (
-          <div className="grid grid-cols-2 @min-[640px]/page:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 @min-[640px]/page:grid-cols-4 gap-3.5">
             {[1, 2, 3, 4].map(i => (
-              <div key={i} className="h-28 bg-muted/50 rounded-xl animate-pulse" />
+              <div key={i} className="h-28 rounded-[14px] bg-[var(--button-fill)]/70 animate-pulse" />
             ))}
           </div>
         ) : days.length === 0 ? (
-          <div className="flex-1 min-h-[260px] rounded-xl border border-dashed flex items-center justify-center">
-            <p className="text-body text-muted-foreground">该时间段暂无 token 用量数据（同步完成后可见）</p>
+          <div className="bento-empty flex-1">
+            <p className="text-body text-muted-foreground">该时间段暂无 Token 用量数据（同步完成后可见）</p>
           </div>
         ) : (
           <>
-            {/* 统计卡片：统一四宫格标准 */}
-            <div className="grid grid-cols-2 @min-[640px]/page:grid-cols-4 gap-3 shrink-0">
+            <div className="grid shrink-0 grid-cols-2 @min-[640px]/page:grid-cols-4 gap-3.5">
               <StatCard
                 label="合计 Token"
                 value={formatTokens(totals.totalTokens)}
@@ -379,9 +366,7 @@ const TokenUsagePage: React.FC = () => {
                   { label: '输入总计', value: formatTokens(totals.inputTokens) },
                   { label: '输出总计', value: formatTokens(totals.outputTokens) },
                 ]}
-                icon={
-                  <Sigma size={15} />
-                }
+                icon={<Sigma size={14} />}
               />
               <StatCard
                 label="输入 Token"
@@ -394,9 +379,7 @@ const TokenUsagePage: React.FC = () => {
                     highlight: cacheRate > 0,
                   },
                 ]}
-                icon={
-                  <ArrowDownLeft size={15} />
-                }
+                icon={<ArrowDownLeft size={14} />}
               />
               <StatCard
                 label="输出 Token"
@@ -408,9 +391,7 @@ const TokenUsagePage: React.FC = () => {
                     value: formatTokens(Math.max(0, totals.outputTokens - totals.reasoningTokens)),
                   },
                 ]}
-                icon={
-                  <ArrowUpRight size={15} />
-                }
+                icon={<ArrowUpRight size={14} />}
               />
               <StatCard
                 label="预估费用"
@@ -419,17 +400,15 @@ const TokenUsagePage: React.FC = () => {
                   { label: '计费说明', value: 'API 标准价，Astra ×2' },
                   { label: '涉及模型', value: `${mergedModels.length} 个模型` },
                 ]}
-                icon={
-                  <CircleDollarSign size={15} />
-                }
+                icon={<CircleDollarSign size={14} />}
               />
             </div>
 
-            {/* 趋势 / 项目 / 模型 三个视图切换展示，占满剩余空间，仅视图内部超出时滚动 */}
-            <section className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card p-4 shadow-xs mb-0.5">
-              <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b pb-3">
+            <section className="bento-group flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+              <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-[var(--hairline-divider)] pb-3">
                 <SegmentedControl<InsightView>
                   size="sm"
+                  label="统计维度"
                   value={activeInsightView}
                   onChange={setInsightView}
                   options={[
@@ -439,7 +418,7 @@ const TokenUsagePage: React.FC = () => {
                   ]}
                 />
                 <div className="flex items-center gap-2.5">
-                  <span className="text-label text-muted-foreground tabular-nums">
+                  <span className="text-caption text-[var(--label)] tabular-nums">
                     {activeInsightView === 'trend'
                       ? trendPeak
                         ? `${GRANULARITY_LABEL[trend.granularity]} · 峰值 ${trendPeak.label} ${formatTokens(trendPeak.totalTokens)}`
@@ -449,7 +428,11 @@ const TokenUsagePage: React.FC = () => {
                         : '按消耗占比排序'}
                   </span>
                   {activeInsightView !== 'trend' && hasTrend && (
-                    <div className="flex items-center rounded-md border p-0.5" role="group" aria-label="展示方式">
+                    <div
+                      className="inline-flex items-center rounded-full p-0.5 shadow-[inset_0_0_0_1px_var(--hairline-control)]"
+                      role="group"
+                      aria-label="展示方式"
+                    >
                       {([
                         { id: 'chart', label: '图表', icon: ChartColumnStacked },
                         { id: 'list', label: '排行列表', icon: List },
@@ -461,13 +444,13 @@ const TokenUsagePage: React.FC = () => {
                             aria-pressed={distributionMode === option.id}
                             onClick={() => setDistributionMode(option.id)}
                             className={cn(
-                              'flex h-6 w-6 cursor-pointer items-center justify-center rounded-[5px] transition-colors',
+                              'grid size-6 cursor-pointer place-items-center rounded-full transition-colors',
                               distributionMode === option.id
-                                ? 'bg-muted text-foreground'
+                                ? 'bg-[var(--button-fill)] text-foreground'
                                 : 'text-muted-foreground hover:text-foreground',
                             )}
                           >
-                            <option.icon size={13} />
+                            <option.icon size={12.5} />
                           </button>
                         </ActionTooltip>
                       ))}
@@ -493,7 +476,7 @@ const TokenUsagePage: React.FC = () => {
                   ariaLabel={activeInsightView === 'projects' ? '按项目堆叠的 Token 用量趋势' : '按模型堆叠的 Token 用量趋势'}
                 />
               ) : activeInsightView === 'projects' ? (
-                <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">
+                <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1 -mr-1">
                   {mergedProjects.map((project, idx) => (
                     <DistributionItem
                       key={project.projectPath}
@@ -508,7 +491,7 @@ const TokenUsagePage: React.FC = () => {
                   ))}
                 </div>
               ) : (
-                <div className="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-1.5 pr-1.5">
+                <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1 -mr-1">
                   {mergedModels.map((model, idx) => (
                     <DistributionItem
                       key={model.model}

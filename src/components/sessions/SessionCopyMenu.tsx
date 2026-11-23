@@ -122,9 +122,9 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
             close();
           }
         }}
-        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-caption text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+        className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-caption font-medium text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground"
       >
-        {copied ? <Check aria-hidden="true" size={13} /> : <Copy aria-hidden="true" size={13} />}
+        {copied ? <Check aria-hidden="true" size={12.5} className="text-success" /> : <Copy aria-hidden="true" size={12.5} />}
         <span role="status">{copied ? '已复制' : '复制'}</span>
         <ChevronDown aria-hidden="true" size={10} />
       </button>
@@ -152,7 +152,7 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
               : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
             items[next].focus();
           }}
-          className="fixed z-[120] w-44 max-h-[calc(100vh-12px)] overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
+          className="bento-popup animate-fade-in fixed z-[120] w-44 max-h-[calc(100vh-12px)] overflow-y-auto p-1"
         >
           {options.map(option => (
             <button
@@ -163,12 +163,12 @@ export default function SessionCopyMenu({ session }: { session: SessionRecord })
               disabled={copying || !option.value.trim()}
               title={option.value || '此会话未记录该路径'}
               onClick={() => void copy(option.value)}
-              className="flex w-full rounded-md px-3 py-2 text-left text-label text-muted-foreground hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex w-full cursor-pointer items-center rounded-[7px] px-2.5 py-1.5 text-left text-[12.5px] text-foreground transition-colors hover:bg-[var(--hover)] focus:bg-[var(--hover)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
             >
               {option.label}
             </button>
           ))}
-          {error && <p role="alert" className="px-3 py-2 text-caption text-destructive">{error}</p>}
+          {error && <p role="alert" className="px-2.5 py-1.5 text-caption text-destructive">{error}</p>}
         </div>,
         document.body,
       )}

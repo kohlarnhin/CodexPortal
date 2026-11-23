@@ -30,8 +30,8 @@ export default function ModelPricingModal() {
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-12">
+      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-3rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-[var(--hairline-divider)] px-6 py-4 pr-14">
           <DialogTitle>模型价格</DialogTitle>
           <DialogDescription>
             API 标准短上下文单价 · 美元 / 百万 tokens
@@ -41,7 +41,7 @@ export default function ModelPricingModal() {
         <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
           <table className="w-full text-body">
             <caption className="sr-only">当前 {pricingEntries.length} 个内置模型的单价和计费倍率</caption>
-            <thead className="sticky top-0 bg-muted/40 text-label text-muted-foreground">
+            <thead className="sticky top-0 bg-[var(--surface)] text-caption text-[var(--label)] shadow-[inset_0_-1px_0_var(--hairline-divider)]">
               <tr>
                 <th scope="col" className="whitespace-nowrap px-6 py-3 text-left font-medium">模型</th>
                 <th scope="col" className="whitespace-nowrap px-4 py-3 text-right font-medium">输入</th>
@@ -50,17 +50,29 @@ export default function ModelPricingModal() {
                 <th scope="col" className="whitespace-nowrap py-3 pl-4 pr-6 text-right font-medium">计费倍率</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody className="divide-y divide-[var(--hairline-divider)]">
               {pricingEntries.map(([model, pricing]) => (
-                <tr key={model} className="transition-colors hover:bg-muted/50">
-                  <th scope="row" className="whitespace-nowrap px-6 py-3 text-left font-mono font-medium text-foreground">{model}</th>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono tabular-nums text-muted-foreground">{priceFormatter.format(pricing.inputPer1M)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono tabular-nums text-muted-foreground">{priceFormatter.format(pricing.cachedInputPer1M)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono tabular-nums text-muted-foreground">{priceFormatter.format(pricing.outputPer1M)}</td>
+                <tr key={model} className="transition-colors hover:bg-[var(--hover)]">
+                  <th scope="row" className="whitespace-nowrap px-6 py-3 text-left font-mono font-medium text-foreground">
+                    {model}
+                  </th>
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground tabular-nums">
+                    {priceFormatter.format(pricing.inputPer1M)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground tabular-nums">
+                    {priceFormatter.format(pricing.cachedInputPer1M)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-muted-foreground tabular-nums">
+                    {priceFormatter.format(pricing.outputPer1M)}
+                  </td>
                   <td className="py-3 pl-4 pr-6 text-right">
-                    <span className={`inline-flex rounded-md px-2 py-0.5 font-mono text-label tabular-nums ${
-                      (pricing.costMultiplier ?? 1) === 1 ? 'text-muted-foreground' : 'bg-foreground text-background'
-                    }`}>
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 font-mono text-caption tabular-nums ${
+                        (pricing.costMultiplier ?? 1) === 1
+                          ? 'text-[var(--label)]'
+                          : 'bg-primary text-primary-foreground'
+                      }`}
+                    >
                       ×{pricing.costMultiplier ?? 1}
                     </span>
                   </td>
@@ -70,12 +82,11 @@ export default function ModelPricingModal() {
           </table>
         </div>
 
-        <div className="shrink-0 border-t border-border bg-muted/40 px-6 py-4">
-          <p className="text-label leading-relaxed text-muted-foreground">
-            预估费用按表中单价计算后，再乘以对应倍率。
-          </p>
-          <DialogFooter className="pt-3">
-            <span className="mr-auto text-label text-muted-foreground">共 {pricingEntries.length} 个内置模型</span>
+        <div className="shrink-0 border-t border-[var(--hairline-divider)] px-6 py-3.5">
+          <DialogFooter className="pt-0">
+            <span className="mr-auto text-caption text-[var(--label)]">
+              共 {pricingEntries.length} 个内置模型 · 预估费用按单价乘以对应倍率计算
+            </span>
             <DialogClose asChild>
               <Button type="button" size="sm">关闭</Button>
             </DialogClose>

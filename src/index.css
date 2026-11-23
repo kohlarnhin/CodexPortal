@@ -1,42 +1,142 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
-/* shadcn/ui neutral 主题 token */
+/* Bento 设计系统：中性黑白灰 + 克制状态色 + 一体化窗口 */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-accent: oklch(0.955 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  /* 状态语义色：徽标用 /10 底色 + /25 边框，进度条与状态点用实色 */
-  --success: oklch(0.596 0.145 163.225);
-  --warning: oklch(0.666 0.179 58.318);
-  --info: oklch(0.546 0.245 262.881);
-  --scrollbar: oklch(0 0 0 / 0.12);
-  --scrollbar-hover: oklch(0 0 0 / 0.22);
+  color-scheme: light;
+  --radius: 14px;
+  --radius-control: 9px;
+
+  --surface: #ffffff;
+  --background: #ffffff;
+  --foreground: #1d1d1f;
+  --card: #ffffff;
+  --card-foreground: #1d1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1d1d1f;
+  --primary: #1d1d1f;
+  --primary-foreground: #ffffff;
+  --primary-hover: #303032;
+  --secondary: #f0f0f2;
+  --secondary-foreground: #1d1d1f;
+  --muted: #f5f5f7;
+  --muted-foreground: #6e6e73;
+  --accent: rgba(0, 0, 0, 0.035);
+  --accent-foreground: #1d1d1f;
+  --border: rgba(0, 0, 0, 0.08);
+  --input: rgba(0, 0, 0, 0.14);
+  --ring: #000000;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1d1d1f;
+  --sidebar-accent: rgba(0, 0, 0, 0.028);
+  --sidebar-accent-foreground: #1d1d1f;
+  --sidebar-border: rgba(0, 0, 0, 0.06);
+
+  /* Bento 表面、按钮、发丝边与阴影 token */
+  --panel-edge: rgba(0, 0, 0, 0.14);
+  --card-border: rgba(0, 0, 0, 0.10);
+  --line: rgba(0, 0, 0, 0.06);
+  --control-line: rgba(0, 0, 0, 0.14);
+  --selected-line: rgba(0, 0, 0, 0.28);
+  --hover: rgba(0, 0, 0, 0.028);
+  --button-fill: #f0f0f2;
+  --button-hover: #e8e8ed;
+  --label: #86868b;
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  --selected-shadow: inset 0 0 0 1px var(--hairline-selection), 0 1px 3px rgba(0, 0, 0, 0.07);
+  --segment-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.11), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --popup-shadow: 0 12px 34px rgba(0, 0, 0, 0.13);
+  --dialog-overlay: rgba(0, 0, 0, 0.14);
+
+  /* 克制的状态语义色（Apple HIG / Bento） */
+  --success: #34c759;
+  --warning: #ff9f0a;
+  --destructive: #ff3b30;
+  --info: #007aff;
+
+  /* 控制台 / 代码区（与 Bento 深色输出面板一致） */
+  --console-surface: #1c1c1e;
+  --console-foreground: #d1d1d6;
+  --console-muted: #96969d;
+  --console-border: rgba(0, 0, 0, 0.15);
+  --console-scrollbar: #4b4b4e;
+  --console-scrollbar-hover: #626265;
+
+  --scrollbar: rgba(0, 0, 0, 0.18);
+  --scrollbar-hover: rgba(0, 0, 0, 0.30);
+}
+
+:root.dark {
+  color-scheme: dark;
+  --surface: #1c1c1e;
+  --background: #1c1c1e;
+  --foreground: #f0f0f2;
+  --card: #1c1c1e;
+  --card-foreground: #f0f0f2;
+  --popover: #242426;
+  --popover-foreground: #f0f0f2;
+  --primary: #f0f0f2;
+  --primary-foreground: #1c1c1e;
+  --primary-hover: #dedee0;
+  --secondary: #303032;
+  --secondary-foreground: #f0f0f2;
+  --muted: #262629;
+  --muted-foreground: #adadb2;
+  --accent: rgba(255, 255, 255, 0.06);
+  --accent-foreground: #f0f0f2;
+  --border: rgba(255, 255, 255, 0.12);
+  --input: rgba(255, 255, 255, 0.22);
+  --ring: #ffffff;
+
+  --sidebar: #1c1c1e;
+  --sidebar-foreground: #f0f0f2;
+  --sidebar-accent: rgba(255, 255, 255, 0.055);
+  --sidebar-accent-foreground: #f0f0f2;
+  --sidebar-border: rgba(255, 255, 255, 0.10);
+
+  --panel-edge: rgba(255, 255, 255, 0.14);
+  --card-border: rgba(255, 255, 255, 0.14);
+  --line: rgba(255, 255, 255, 0.10);
+  --control-line: rgba(255, 255, 255, 0.22);
+  --selected-line: rgba(255, 255, 255, 0.34);
+  --hover: rgba(255, 255, 255, 0.055);
+  --button-fill: #303032;
+  --button-hover: #3b3b3d;
+  --label: #adadb2;
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  --selected-shadow: inset 0 0 0 1px var(--hairline-selection), 0 1px 3px rgba(0, 0, 0, 0.32);
+  --segment-shadow: var(--selected-shadow);
+  --popup-shadow: 0 12px 34px rgba(0, 0, 0, 0.38);
+  --dialog-overlay: rgba(0, 0, 0, 0.38);
+
+  --success: #30d158;
+  --warning: #ffd60a;
+  --destructive: #ff453a;
+  --info: #0a84ff;
+
+  --console-surface: #161618;
+  --console-foreground: #d1d1d6;
+  --console-muted: #8e8e93;
+  --console-border: rgba(255, 255, 255, 0.14);
+  --console-scrollbar: #4b4b4e;
+  --console-scrollbar-hover: #626265;
+
+  --scrollbar: rgba(255, 255, 255, 0.20);
+  --scrollbar-hover: rgba(255, 255, 255, 0.32);
+}
+
+/* 模拟 0.5px 物理发丝线，避免亚像素描边不一致 */
+:root {
+  --hairline-divider: color-mix(in srgb, var(--line) 50%, transparent);
+  --hairline-control: color-mix(in srgb, var(--control-line) 50%, transparent);
+  --hairline-selection: color-mix(in srgb, var(--selected-line) 50%, transparent);
+  --hairline-card: color-mix(in srgb, var(--card-border) 50%, transparent);
 }
 
 @theme inline {
-  --font-sans: 'Inter', 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif;
-  --font-mono: 'SF Mono', ui-monospace, Menlo, Monaco, 'Cascadia Mono', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Monaco, monospace;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -65,49 +165,63 @@
   --color-warning: var(--warning);
   --color-info: var(--info);
 
-  /* 字号阶梯：全站只用这 7 级（大号数字展示除外） */
+  /* Bento 字号阶梯 */
   --text-caption: 11px;
   --text-label: 12px;
   --text-body: 13px;
-  --text-subtitle: 14px;
+  --text-subtitle: 13.5px;
   --text-title: 15px;
   --text-heading: 20px;
   --text-stat: 22px;
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-control: var(--radius-control);
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
 }
 
 @layer base {
   * {
-    border-color: var(--color-border);
-    outline-color: color-mix(in oklab, var(--color-ring) 50%, transparent);
+    border-color: var(--hairline-divider);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-  }
-
-  /* 输入类控件聚焦只加深边框，不画外溢光晕（避免被滚动容器裁切） */
-  input:focus,
-  textarea:focus,
-  select:focus {
-    outline: none;
   }
 
   html, body, #root {
     height: 100%;
     margin: 0;
     overflow: hidden;
-    background-color: var(--color-background);
-    color: var(--color-foreground);
+    background-color: var(--surface);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+  }
+
+  code, pre, samp, kbd {
+    font-family: var(--font-mono);
+  }
+
+  ::selection {
+    background-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus {
+    outline: none;
+  }
+
+  :where(button, a, summary, [tabindex]):focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--ring) 25%, transparent);
+    outline-offset: 2px;
   }
 }
 
-/* macOS 风格细滚动条 */
+/* 细滚动条（悬停显隐） */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -116,9 +230,7 @@
 
 ::-webkit-scrollbar-thumb {
   background-color: transparent;
-  border: 2px solid transparent;
   border-radius: 999px;
-  background-clip: padding-box;
 }
 
 *:hover::-webkit-scrollbar-thumb {
@@ -130,7 +242,391 @@
 }
 
 @layer components {
-  /* Breakpoints follow the space left after the sidebar and page gutters. */
+  /* 一体化单窗口布局（左右同色、发丝竖线分隔） */
+  .bento-window {
+    --sidebar-width: 276px;
+    container: bento-window / inline-size;
+    display: grid;
+    height: 100%;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    background-color: var(--surface);
+  }
+
+  .bento-sidebar-panel,
+  .bento-main {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--surface);
+  }
+
+  .bento-sidebar-panel {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--hairline-divider);
+    contain: paint;
+  }
+
+  .bento-main {
+    --workspace-inset-top: 32px;
+    --workspace-inset-inline: 36px;
+    --workspace-inset-bottom: 28px;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    isolation: isolate;
+  }
+
+  /* 卡片 0.5px 视觉发丝描边 */
+  :is(.bento-group, .bento-card)::after {
+    content: '';
+    position: absolute;
+    z-index: 5;
+    inset: 0;
+    border: 1px solid color-mix(in srgb, var(--frame-edge) 50%, transparent);
+    border-radius: inherit;
+    pointer-events: none;
+  }
+
+  .bento-group,
+  .bento-card {
+    --frame-edge: var(--card-border);
+    position: relative;
+    border-radius: 14px;
+    background-color: var(--card);
+  }
+
+  .bento-group {
+    box-shadow: var(--card-shadow);
+  }
+
+  .bento-card-selected {
+    box-shadow: var(--selected-shadow);
+  }
+
+  .bento-card-selected::after {
+    --frame-edge: var(--selected-line);
+  }
+
+  .bento-group-title {
+    color: var(--label);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.015em;
+    line-height: 16px;
+  }
+
+  .bento-card-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 18px 4px;
+    color: var(--label);
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .bento-list-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 50px;
+    padding: 11px 16px;
+  }
+
+  .bento-list-row + .bento-list-row {
+    border-top: 1px solid var(--hairline-divider);
+  }
+
+  .bento-divider {
+    border-color: var(--hairline-divider);
+  }
+
+  /* 按钮与行内胶囊 */
+  .button-neutral {
+    border: 0;
+    background: var(--button-fill);
+    color: var(--foreground);
+  }
+
+  .button-neutral:hover:enabled {
+    background: var(--button-hover);
+  }
+
+  .bento-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 24px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    color: var(--foreground);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .bento-tag:hover:enabled {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  /* 状态点 */
+  .bento-status-dot {
+    display: inline-block;
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: var(--label);
+  }
+
+  .bento-status-dot[data-tone="running"],
+  .bento-status-dot[data-tone="success"] {
+    background-color: var(--success);
+  }
+
+  .bento-status-dot[data-tone="warning"] {
+    background-color: var(--warning);
+  }
+
+  .bento-status-dot[data-tone="error"],
+  .bento-status-dot[data-tone="danger"] {
+    background-color: var(--destructive);
+  }
+
+  /* 输入控件与弹层 */
+  .bento-field {
+    border: 1px solid var(--hairline-control);
+    border-radius: var(--radius-control);
+    background-color: var(--surface);
+    color: var(--foreground);
+    transition: box-shadow 140ms ease, border-color 140ms ease;
+  }
+
+  .bento-field:focus-visible,
+  .bento-field:focus,
+  .bento-field[aria-expanded="true"],
+  .bento-field[data-open="true"] {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 22%, transparent);
+  }
+
+  .bento-field[aria-invalid="true"] {
+    border-color: var(--destructive);
+  }
+
+  .bento-popup,
+  .bento-dialog {
+    border: 1px solid var(--hairline-card);
+    color: var(--foreground);
+    background: var(--surface);
+    box-shadow: var(--popup-shadow);
+  }
+
+  .bento-popup {
+    border-radius: 12px;
+  }
+
+  .bento-dialog {
+    border-radius: 18px;
+  }
+
+  .bento-choice-row {
+    display: flex;
+    min-height: 32px;
+    align-items: center;
+    gap: 8px;
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 12.5px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 120ms ease;
+  }
+
+  .bento-choice-row:hover {
+    background: var(--hover);
+  }
+
+  .bento-choice-row[aria-selected="true"] {
+    color: var(--foreground);
+    box-shadow: inset 0 0 0 1px var(--hairline-selection);
+    font-weight: 600;
+  }
+
+  /* 开关 */
+  .bento-switch {
+    border: 0;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--hairline-control);
+    padding: 2px;
+  }
+
+  .bento-switch > span {
+    background: var(--primary);
+  }
+
+  .bento-switch[data-state="checked"] {
+    background: var(--primary);
+    box-shadow: none;
+  }
+
+  .bento-switch[data-state="checked"] > span {
+    background: var(--primary-foreground);
+  }
+
+  /* 分段控件（Bento 胶囊轨道 + 滑动白胶囊） */
+  .segmented-control {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    padding: 3px;
+    border-radius: 999px;
+    background-color: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--hairline-control);
+    isolation: isolate;
+    user-select: none;
+  }
+
+  .segmented-indicator {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    left: 0;
+    border-radius: 999px;
+    background-color: var(--surface);
+    box-shadow: var(--segment-shadow);
+    pointer-events: none;
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), width 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease;
+  }
+
+  .segmented-option {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border-radius: 999px;
+    color: var(--muted-foreground);
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 150ms ease;
+  }
+
+  .segmented-option:hover,
+  .segmented-option[aria-checked="true"] {
+    color: var(--foreground);
+  }
+
+  .segmented-option[aria-checked="true"] {
+    font-weight: 600;
+  }
+
+  /* 侧边栏样式 */
+  .sidebar-titlebar {
+    flex: none;
+    padding: 14px 16px 10px;
+  }
+
+  .sidebar-chrome {
+    display: flex;
+    height: 26px;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .sidebar-group-heading {
+    padding: 0 10px 6px;
+    color: var(--label);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    user-select: none;
+  }
+
+  .sidebar-nav-surface {
+    position: relative;
+    border-radius: 10px;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  .sidebar-nav-surface:hover {
+    background: var(--hover);
+  }
+
+  .sidebar-nav-surface[data-selected="true"] {
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--hairline-selection);
+    font-weight: 600;
+    color: var(--foreground);
+  }
+
+  .sidebar-nav-icon {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    place-items: center;
+    border-radius: 8px;
+    background: var(--button-fill);
+    color: var(--muted-foreground);
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  .sidebar-nav-surface[data-selected="true"] .sidebar-nav-icon {
+    background: var(--button-fill);
+    color: var(--foreground);
+  }
+
+  /* 深色控制台 / 代码输出面板（对应 Bento .dash-output-panel） */
+  .bento-console {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    border: 1px solid var(--console-border);
+    border-radius: 14px;
+    background: var(--console-surface);
+    color: var(--console-foreground);
+    overflow: hidden;
+  }
+
+  .bento-console ::-webkit-scrollbar-thumb {
+    background-color: var(--console-scrollbar);
+  }
+
+  .bento-console ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--console-scrollbar-hover);
+  }
+
+  .bento-console .segmented-control {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .bento-console .segmented-indicator {
+    background: rgba(255, 255, 255, 0.14);
+    box-shadow: none;
+  }
+
+  .bento-console .segmented-option {
+    color: #a1a1a6;
+  }
+
+  .bento-console .segmented-option:hover,
+  .bento-console .segmented-option[aria-checked="true"] {
+    color: #ffffff;
+  }
+
+  /* 主内容页容器 */
   .page-layout {
     container: page / inline-size;
     display: flex;
@@ -144,11 +640,21 @@
   .page-header {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
+    align-items: center;
     justify-content: space-between;
     flex-shrink: 0;
-    gap: 12px 16px;
-    margin-bottom: 20px;
+    gap: 10px 16px;
+    padding: var(--workspace-inset-top) var(--workspace-inset-inline) 18px;
+    min-height: calc(44px + var(--workspace-inset-top));
+  }
+
+  .page-body {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    padding: 0 var(--workspace-inset-inline) var(--workspace-inset-bottom);
   }
 
   .page-scroll {
@@ -156,36 +662,83 @@
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
-    padding-right: 12px;
-    margin-right: -12px;
+    padding: 0 var(--workspace-inset-inline) var(--workspace-inset-bottom);
+  }
+
+  .page-scroll-inner {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 10px;
+    margin-right: -10px;
+  }
+
+  /* 空状态虚线面板 */
+  .bento-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--hairline-control);
+    border-radius: 14px;
+    padding: 40px 24px;
+    text-align: center;
+  }
+
+  /* 按压微动效（使用独立 scale 属性，不干扰 translate 定位） */
+  :is(button, [role="button"]):not(:disabled):not([aria-disabled="true"]):not([data-no-press]):active {
+    scale: 0.97;
   }
 }
 
-/* 默认允许选中文字（长按/拖拽选择），仅交互控件与拖拽区不可选 */
+@container bento-window (max-width: 1020px) {
+  .bento-main {
+    --workspace-inset-inline: 24px;
+  }
+}
+
+/* 拖拽与文字选择规则（对齐 Bento） */
+[data-tauri-drag-region]:not([data-tauri-drag-region="false"]) {
+  -webkit-app-region: drag;
+}
+
 button,
 [role="button"],
 select,
-[data-tauri-drag-region] {
+input,
+textarea,
+summary,
+code,
+pre,
+a,
+.no-drag,
+[data-tauri-no-drag],
+[data-tauri-drag-region="false"] {
+  -webkit-app-region: no-drag;
+}
+
+button,
+[role="button"],
+select,
+[data-tauri-drag-region]:not([data-tauri-drag-region="false"]) {
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* 确保输入框、文本域、代码内文字始终可选 */
-input, textarea, code {
+input,
+textarea,
+code,
+pre {
   user-select: text;
   -webkit-user-select: text;
 }
 
-/* Enable native macOS dragging */
-[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-}
-
-/* Modal animation */
+/* 动效 */
 @keyframes modal-in {
   from {
     opacity: 0;
-    transform: scale(0.98);
+    transform: scale(0.96);
   }
   to {
     opacity: 1;
@@ -194,22 +747,18 @@ input, textarea, code {
 }
 
 @keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.animate-modal-in {
-  animation: modal-in 0.15s ease-out forwards;
-}
-
-.animate-fade-in {
-  animation: fade-in 0.1s ease-out forwards;
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
@@ -217,34 +766,24 @@ input, textarea, code {
   }
 }
 
+.animate-modal-in {
+  animation: modal-in 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 140ms ease-out forwards;
+}
+
 .animate-toast-in {
-  animation: toast-in 0.18s ease-out;
-}
-
-/* Radix Dialog 开合动画（替代 tailwindcss-animate） */
-@keyframes dialog-overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* Tailwind v4 的 translate-* 使用独立的 translate 属性，这里只动 scale，不会与居中偏移叠加 */
-@keyframes dialog-content-in {
-  from {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  animation: toast-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .dialog-overlay[data-state="open"] {
-  animation: dialog-overlay-in 0.15s ease-out;
+  animation: fade-in 160ms ease-out;
 }
 
 .dialog-content[data-state="open"] {
-  animation: dialog-content-in 0.15s ease-out;
+  animation: modal-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Logo 圆点与外圈光条沿 C 字轨道反向往复滑动 */
@@ -281,5 +820,13 @@ input, textarea, code {
   .portal-logo-dot,
   .portal-logo-strip {
     animation: none;
+  }
+
+  .segmented-indicator {
+    transition: none;
+  }
+
+  :is(button, [role="button"]):active {
+    scale: none;
   }
 }

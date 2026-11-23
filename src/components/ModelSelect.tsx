@@ -53,7 +53,6 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
     if (disabled) setIsOpen(false);
   }, [disabled]);
 
-  // 浮层放到页面根部，避免配置卡片的滚动区域裁切选项。
   useLayoutEffect(() => {
     if (!open) return;
     const updatePosition = () => {
@@ -166,10 +165,7 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
-        className={cn(
-          'h-9 pr-9 font-medium text-foreground hover:border-foreground/25 focus-visible:border-foreground/60',
-          open && 'border-foreground/60',
-        )}
+        className="h-9 pr-9 font-medium text-foreground"
       />
       <button
         type="button"
@@ -184,18 +180,23 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
           if (open) setIsOpen(false);
           else openMenu();
         }}
-        className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
+        className="absolute right-1.5 top-1.5 grid size-6 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--hover)] hover:text-foreground disabled:pointer-events-none disabled:opacity-45"
       >
-        <ChevronDown aria-hidden="true" size={13} strokeWidth={1.75} className={cn('transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-180')} />
+        <ChevronDown
+          aria-hidden="true"
+          size={13}
+          strokeWidth={1.75}
+          className={cn('transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-180')}
+        />
       </button>
       {open && createPortal(
         <div
           ref={menuRef}
           style={position}
           onMouseDown={event => event.preventDefault()}
-          className="fixed z-[100] flex flex-col overflow-hidden rounded-md border bg-popover shadow-md animate-fade-in motion-reduce:animate-none"
+          className="bento-popup animate-fade-in fixed z-[100] flex flex-col overflow-hidden motion-reduce:animate-none"
         >
-          <div className="flex shrink-0 items-center justify-between px-3.5 pt-2.5 pb-1.5 text-caption text-muted-foreground" aria-hidden="true">
+          <div className="flex shrink-0 items-center justify-between px-3 pt-2.5 pb-1.5 text-caption text-[var(--label)]" aria-hidden="true">
             <span className="font-medium">{query ? '匹配模型' : '选择模型'}</span>
             <span>支持自定义</span>
           </div>
@@ -210,24 +211,23 @@ export default function ModelSelect({ id, describedBy, value, onChange, models, 
                 onMouseEnter={() => setActiveValue(option.value)}
                 onClick={() => selectModel(option.value)}
                 className={cn(
-                  'flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-body transition-colors',
-                  activeValue === option.value ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50',
-                  value === option.value && 'font-medium text-foreground',
+                  'bento-choice-row justify-between',
+                  activeValue === option.value && value !== option.value && 'bg-[var(--hover)]',
                   index === 0 && 'mb-1',
                 )}
               >
                 <span className="min-w-0 flex-1 truncate" title={option.label}>{option.label}</span>
-                {option.custom && <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-caption font-normal text-muted-foreground">自定义</span>}
-                <span className="flex w-3.5 shrink-0 items-center justify-center">
-                  {value === option.value && (
-                    <Check aria-hidden="true" size={13} />
-                  )}
-                </span>
+                {option.custom && (
+                  <span className="shrink-0 rounded-full bg-[var(--button-fill)] px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                    自定义
+                  </span>
+                )}
+                {value === option.value && <Check aria-hidden="true" size={13} className="shrink-0" />}
               </div>
             ))}
           </div>
-          <div className="shrink-0 border-t border-border bg-muted/40 px-3.5 py-2 text-caption text-muted-foreground" aria-hidden="true">
-            ↑ ↓ 选择 <span className="mx-1.5 text-muted-foreground/50">·</span> Enter 确认 <span className="mx-1.5 text-muted-foreground/50">·</span> Esc 收起
+          <div className="shrink-0 border-t border-[var(--hairline-divider)] px-3 py-2 text-caption text-[var(--label)]" aria-hidden="true">
+            ↑ ↓ 选择 · Enter 确认 · Esc 收起
           </div>
         </div>,
         document.body,

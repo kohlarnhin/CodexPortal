@@ -16,10 +16,9 @@ export interface TrendBucket {
   cost: number;
 }
 
-/** 分类色板（dataviz 参考色板前 5 槽，已通过相邻对色盲校验）；其余归入中性灰「其他」。 */
 const SERIES_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4'];
-const OTHER_COLOR = '#a3a3a3';
-const TOTAL_COLOR = 'color-mix(in oklab, var(--primary) 72%, transparent)';
+const OTHER_COLOR = '#8e8e93';
+const TOTAL_COLOR = 'color-mix(in srgb, var(--primary) 78%, transparent)';
 const OTHER_KEY = '__other__';
 
 export const GRANULARITY_LABEL: Record<Granularity, string> = { day: '按天', week: '按周', month: '按月' };
@@ -36,7 +35,7 @@ function toDateStr(date: Date): string {
 
 function startOfWeek(date: Date): Date {
   const result = new Date(date);
-  result.setDate(result.getDate() - ((result.getDay() + 6) % 7)); // 周一为一周开始
+  result.setDate(result.getDate() - ((result.getDay() + 6) % 7));
   return result;
 }
 
@@ -56,7 +55,6 @@ function bucketLabel(key: string, granularity: Granularity): string {
   return granularity === 'week' ? `${md} 当周` : md;
 }
 
-/** 坐标轴上限取 1/2/5 × 10^n 的整数，刻度更干净。 */
 function niceCeil(value: number): number {
   if (value <= 0) return 1;
   const exponent = 10 ** Math.floor(Math.log10(value));
@@ -89,7 +87,6 @@ export function buildTrendBuckets(days: DailyTokenUsage[], startDate: string | n
   const spanDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
   const granularity: Granularity = spanDays <= 62 ? 'day' : spanDays <= 366 ? 'week' : 'month';
 
-  // 先按范围补齐空桶，没有会话的日期也显示为 0，趋势才不会失真。
   const map = new Map<string, TrendBucket>();
   for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
     const key = bucketKey(cursor, granularity);
@@ -124,7 +121,6 @@ export interface TrendSeries {
   color: string;
 }
 
-/** 把项目 / 模型按时间桶拆分：取总量前 5，其余合并为「其他」。 */
 export function buildSeriesTrend(
   days: DailyTokenUsage[],
   buckets: TrendBucket[],
@@ -172,40 +168,34 @@ export function buildSeriesTrend(
 
 interface StackedColumnChartProps {
   buckets: TrendBucket[];
-  /** values[桶][序列]，自下而上堆叠 */
   values: number[][];
   colors: string[];
   ariaLabel: string;
   renderTooltip: (index: number) => React.ReactNode;
 }
 
-/** 柱状趋势图（单序列或堆叠），高度随容器伸缩。 */
 const StackedColumnChart: React.FC<StackedColumnChartProps> = ({ buckets, values, colors, ariaLabel, renderTooltip }) => {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const columnTotals = values.map(row => row.reduce((sum, value) => sum + value, 0));
   const axisMax = niceCeil(Math.max(0, ...columnTotals));
-  // x 轴只标首、中、尾三个刻度，避免标签拥挤。
   const tickIndexes = new Set([0, Math.floor((buckets.length - 1) / 2), buckets.length - 1]);
-  // 提示框放在悬停柱的侧边（前半段在右、后半段在左），不遮挡该柱。
   const tooltipOnRight = hoverIndex !== null && hoverIndex < buckets.length / 2;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-[120px] flex-1 gap-2">
-        {/* y 轴刻度 */}
-        <div className="flex w-9 shrink-0 flex-col justify-between text-right text-caption leading-none text-muted-foreground tabular-nums">
+        <div className="flex w-9 shrink-0 flex-col justify-between text-right text-caption leading-none text-[var(--label)] tabular-nums">
           <span>{formatTokens(axisMax)}</span>
           <span>{formatTokens(axisMax / 2)}</span>
           <span>0</span>
         </div>
 
         <div className="relative min-w-0 flex-1">
-          {/* 网格线：发丝线，退后于数据 */}
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col justify-between">
-            <div className="h-px bg-border" />
-            <div className="h-px bg-border" />
-            <div className="h-px bg-border" />
+            <div className="h-px bg-[var(--hairline-divider)]" />
+            <div className="h-px bg-[var(--hairline-divider)]" />
+            <div className="h-px bg-[var(--hairline-divider)]" />
           </div>
 
           <div
@@ -226,13 +216,12 @@ const StackedColumnChart: React.FC<StackedColumnChartProps> = ({ buckets, values
                   <div
                     className={cn(
                       'flex w-full max-w-6 flex-col-reverse overflow-hidden rounded-t-[4px] transition-opacity',
-                      hoverIndex !== null && hoverIndex !== index && 'opacity-45',
+                      hoverIndex !== null && hoverIndex !== index && 'opacity-40',
                     )}
                     style={{ height: total > 0 ? `max(2px, ${(total / axisMax) * 100}%)` : 0 }}
                   >
                     {values[index].map((value, seriesIdx) => {
                       if (value <= 0) return null;
-                      // 堆叠段之间留 2px 卡片底色的间隙，而不是描边。
                       const gap = drawn++ > 0;
                       return (
                         <div
@@ -250,7 +239,7 @@ const StackedColumnChart: React.FC<StackedColumnChartProps> = ({ buckets, values
 
           {hoverIndex !== null && (
             <div
-              className="pointer-events-none absolute top-1 z-10 w-56 rounded-lg border bg-popover px-3 py-2 text-label shadow-md"
+              className="bento-popup pointer-events-none absolute top-1 z-10 w-56 px-3 py-2.5 text-label"
               style={
                 tooltipOnRight
                   ? { left: `calc(${((hoverIndex + 1) / buckets.length) * 100}% + 6px)` }
@@ -263,8 +252,7 @@ const StackedColumnChart: React.FC<StackedColumnChartProps> = ({ buckets, values
         </div>
       </div>
 
-      {/* x 轴：首 / 中 / 尾 */}
-      <div className="mt-1.5 ml-11 flex h-3.5 shrink-0 gap-0.5 text-caption text-muted-foreground tabular-nums" aria-hidden="true">
+      <div className="mt-1.5 ml-11 flex h-3.5 shrink-0 gap-0.5 text-caption text-[var(--label)] tabular-nums" aria-hidden="true">
         {buckets.map((bucket, index) => (
           <div key={bucket.key} className="relative min-w-0 flex-1">
             {tickIndexes.has(index) && (
@@ -287,14 +275,13 @@ const StackedColumnChart: React.FC<StackedColumnChartProps> = ({ buckets, values
 const TooltipRow = ({ label, value, color, strong }: { label: string; value: string; color?: string; strong?: boolean }) => (
   <div className="flex items-center justify-between gap-3">
     <dt className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-      {color && <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ backgroundColor: color }} />}
+      {color && <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />}
       <span className="truncate">{label}</span>
     </dt>
-    <dd className={cn('shrink-0 tabular-nums', strong ? 'font-medium text-foreground' : 'text-foreground')}>{value}</dd>
+    <dd className={cn('shrink-0 tabular-nums', strong ? 'font-semibold text-foreground' : 'text-foreground')}>{value}</dd>
   </div>
 );
 
-/** 总用量趋势：单序列柱状图。 */
 export const TotalTrendChart: React.FC<{ buckets: TrendBucket[]; granularity: Granularity }> = ({ buckets, granularity }) => {
   const values = useMemo(() => buckets.map(bucket => [bucket.totalTokens]), [buckets]);
   const peak = Math.max(0, ...buckets.map(bucket => bucket.totalTokens));
@@ -309,7 +296,7 @@ export const TotalTrendChart: React.FC<{ buckets: TrendBucket[]; granularity: Gr
           const bucket = buckets[index];
           return (
             <>
-              <p className="mb-1 font-medium text-foreground">{bucket.label}</p>
+              <p className="mb-1.5 font-semibold text-foreground">{bucket.label}</p>
               <dl className="space-y-0.5">
                 <TooltipRow label="合计" value={formatTokens(bucket.totalTokens)} strong />
                 <TooltipRow label="输入 / 缓存" value={`${formatTokens(bucket.inputTokens)} / ${formatTokens(bucket.cachedInputTokens)}`} />
@@ -339,7 +326,6 @@ export const TotalTrendChart: React.FC<{ buckets: TrendBucket[]; granularity: Gr
   );
 };
 
-/** 按项目 / 模型堆叠的趋势：图例（含总量与占比）+ 堆叠柱状图。 */
 export const SeriesTrendChart: React.FC<{
   buckets: TrendBucket[];
   series: TrendSeries[];
@@ -354,10 +340,10 @@ export const SeriesTrendChart: React.FC<{
     <>
       <ul className="mb-3 flex shrink-0 flex-wrap gap-x-4 gap-y-1.5" aria-label="图例">
         {series.map(item => (
-          <li key={item.key} className="flex min-w-0 items-center gap-1.5 text-label" title={`${item.label}: ${formatTokens(item.total)}`}>
-            <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} aria-hidden="true" />
-            <span className="max-w-[180px] truncate text-foreground">{item.label}</span>
-            <span className="shrink-0 text-muted-foreground tabular-nums">
+          <li key={item.key} className="flex min-w-0 items-center gap-1.5 text-caption" title={`${item.label}: ${formatTokens(item.total)}`}>
+            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />
+            <span className="max-w-[180px] truncate font-medium text-foreground">{item.label}</span>
+            <span className="shrink-0 text-[var(--label)] tabular-nums">
               {formatTokens(item.total)} · {share(item.total)}
             </span>
           </li>
@@ -373,10 +359,9 @@ export const SeriesTrendChart: React.FC<{
           const total = row.reduce((sum, value) => sum + value, 0);
           return (
             <>
-              <p className="mb-1 font-medium text-foreground">{buckets[index].label}</p>
+              <p className="mb-1.5 font-semibold text-foreground">{buckets[index].label}</p>
               <dl className="space-y-0.5">
                 <TooltipRow label="合计" value={formatTokens(total)} strong />
-                {/* 与堆叠顺序一致：自上而下 */}
                 {series
                   .map((item, seriesIdx) => ({ item, value: row[seriesIdx] }))
                   .filter(({ value }) => value > 0)

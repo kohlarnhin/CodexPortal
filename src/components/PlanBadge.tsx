@@ -1,20 +1,17 @@
-import React from 'react';
 import type { Account } from '../types/account';
 
 /**
- * 账号订阅类型铭牌（team/plus/pro/free 等）。
- * 来自 whoami 返回的 chatgpt_plan_type。
+ * 账号订阅类型铭牌（Bento 克制单色胶囊风格）。
  */
-
 const PLAN_META: Record<string, { label: string; className: string }> = {
-  openai_api_key: { label: 'OpenAI API', className: 'bg-muted text-foreground border-border' },
-  team: { label: 'Team', className: 'bg-primary text-primary-foreground border-primary' },
-  business: { label: 'Business', className: 'bg-primary text-primary-foreground border-primary' },
-  enterprise: { label: 'Enterprise', className: 'bg-primary text-primary-foreground border-primary' },
-  pro: { label: 'Pro', className: 'bg-warning/10 text-warning border-warning/25' },
-  plus: { label: 'Plus', className: 'bg-info/10 text-info border-info/25' },
-  free: { label: 'Free', className: 'bg-muted text-muted-foreground border-border' },
-  edu: { label: 'Edu', className: 'bg-success/10 text-success border-success/25' },
+  openai_api_key: { label: 'OpenAI API', className: 'bg-[var(--button-fill)] text-foreground border-transparent' },
+  team: { label: 'Team', className: 'bg-primary text-primary-foreground border-transparent' },
+  business: { label: 'Business', className: 'bg-primary text-primary-foreground border-transparent' },
+  enterprise: { label: 'Enterprise', className: 'bg-primary text-primary-foreground border-transparent' },
+  pro: { label: 'Pro', className: 'bg-transparent text-foreground border-[var(--hairline-selection)]' },
+  plus: { label: 'Plus', className: 'bg-[var(--button-fill)] text-foreground border-transparent' },
+  free: { label: 'Free', className: 'bg-transparent text-muted-foreground border-[var(--hairline-control)]' },
+  edu: { label: 'Edu', className: 'bg-[var(--button-fill)] text-foreground border-transparent' },
 };
 
 export default function PlanBadge({ planType, accountType }: { planType?: string | null; accountType?: Account['accountType'] }) {
@@ -24,14 +21,14 @@ export default function PlanBadge({ planType, accountType }: { planType?: string
   if (!meta) {
     if (!planType) return null;
     return (
-      <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 border border-border bg-muted text-muted-foreground rounded-md text-caption font-medium">
+      <span className="shrink-0 inline-flex items-center rounded-full border border-[var(--hairline-control)] px-2 py-0.5 text-[10.5px] leading-tight font-medium text-muted-foreground">
         {planType}
       </span>
     );
   }
 
   return (
-    <span className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 border rounded-md text-caption font-medium ${meta.className}`}>
+    <span className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-[10.5px] leading-tight font-medium ${meta.className}`}>
       {meta.label}
     </span>
   );

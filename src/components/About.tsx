@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { getVersion, getName, getTauriVersion } from '@tauri-apps/api/app';
 import type { UpdaterController } from '../hooks/useUpdater';
 import Logo from './Logo';
@@ -13,7 +13,7 @@ interface AboutProps {
 }
 
 export default function About({ updater }: AboutProps) {
-  const [appVersion, setAppVersion] = useState<string>('0.5.0');
+  const [appVersion, setAppVersion] = useState<string>('0.5.1');
   const [appName, setAppName] = useState<string>('Codex Portal');
   const [tauriVersion, setTauriVersion] = useState<string>('2.11.5');
 
@@ -42,7 +42,7 @@ export default function About({ updater }: AboutProps) {
     updater.pendingVersion !== null && isVersionNewer(updater.pendingVersion, appVersion);
 
   const updateStatus = updater.status === 'checking'
-    ? '正在检查...'
+    ? '正在检查…'
     : hasPendingUpdate
       ? `有新版本 v${updater.pendingVersion}`
       : updater.status === 'up-to-date'
@@ -51,43 +51,45 @@ export default function About({ updater }: AboutProps) {
           ? '检查失败'
           : '自动检查已启用';
 
-  const updateStatusColor = updater.status === 'error'
-    ? 'bg-destructive'
+  const updateTone = updater.status === 'error'
+    ? 'error'
     : hasPendingUpdate
-      ? 'bg-warning'
+      ? 'warning'
       : updater.status === 'up-to-date'
-        ? 'bg-success'
-        : 'bg-muted-foreground/60';
+        ? 'success'
+        : 'idle';
 
   return (
-    <div className="page-layout pt-4">
-      <PageHeader title="关于" description="关于 Codex Portal 应用程序" />
+    <div className="page-layout">
+      <PageHeader title="关于" description="关于 Codex Portal 应用程序与更新状态。" />
 
-      <div className="page-scroll">
-        <div className="mx-auto flex w-full max-w-md flex-col items-center pt-6 text-center">
-          <Logo className="h-14 w-14 rounded-xl" />
-          <h1 className="mt-4 text-heading font-semibold tracking-tight text-foreground select-none">{appName}</h1>
-          <p className="mt-1.5 text-body leading-relaxed text-muted-foreground">
+      <div className="page-scroll flex flex-col">
+        <div className="mx-auto my-auto flex w-full max-w-[460px] flex-col items-center py-6 pb-10 text-center">
+          <Logo className="size-16 rounded-[16px]" />
+          <h1 className="mt-4 text-heading font-semibold tracking-[-0.015em] text-foreground select-none">
+            {appName}
+          </h1>
+          <p className="mt-1.5 max-w-sm text-body leading-relaxed text-muted-foreground">
             Codex 账号与本地环境配置的管理入口，帮助你智能调度账号、管理会话与配置。
           </p>
 
-          <div className="mt-6 w-full divide-y rounded-xl border bg-card text-left shadow-xs">
-            <div className="flex items-center justify-between px-4 py-3">
+          <div className="bento-group mt-6 w-full overflow-hidden text-left">
+            <div className="bento-list-row">
               <span className="text-body text-muted-foreground">应用程序版本</span>
-              <span className="font-mono text-body font-medium text-foreground">{appVersion}</span>
+              <span className="font-mono text-body font-medium text-foreground tabular-nums">v{appVersion}</span>
             </div>
 
-            <div className="flex items-center justify-between px-4 py-3">
+            <div className="bento-list-row">
               <span className="text-body text-muted-foreground">Tauri 核心版本</span>
-              <span className="font-mono text-body font-medium text-foreground">{tauriVersion}</span>
+              <span className="font-mono text-body font-medium text-foreground tabular-nums">v{tauriVersion}</span>
             </div>
 
-            <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="bento-list-row">
               <div className="min-w-0">
-                <div className="text-body text-muted-foreground">软件更新</div>
-                <div className="mt-1 inline-flex items-center gap-1.5 text-label">
-                  <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', updateStatusColor)} />
-                  <span className={updater.status === 'error' ? 'font-medium text-destructive' : 'text-foreground'}>
+                <div className="text-body text-foreground">软件更新</div>
+                <div className="mt-0.5 inline-flex items-center gap-1.5 text-label">
+                  <span className="bento-status-dot" data-tone={updateTone} aria-hidden="true" />
+                  <span className={updater.status === 'error' ? 'font-medium text-destructive' : 'text-muted-foreground'}>
                     {updateStatus}
                   </span>
                 </div>
@@ -98,9 +100,9 @@ export default function About({ updater }: AboutProps) {
                 onClick={() => void updater.checkNow()}
                 disabled={updater.status === 'checking' || updater.isBusy}
               >
-                <RotateCcw size={14} className={cn(updater.status === 'checking' && 'animate-spin')} />
+                <RotateCcw size={13} className={cn(updater.status === 'checking' && 'animate-spin')} />
                 {updater.status === 'checking'
-                  ? '检查中...'
+                  ? '检查中…'
                   : hasPendingUpdate
                     ? '立即更新'
                     : updater.status === 'error'
@@ -110,7 +112,7 @@ export default function About({ updater }: AboutProps) {
             </div>
           </div>
 
-          <div className="mt-6 text-label text-muted-foreground">
+          <div className="mt-6 text-caption text-[var(--label)]">
             © {new Date().getFullYear()} Codex Portal. All rights reserved.
           </div>
         </div>

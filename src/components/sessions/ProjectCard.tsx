@@ -12,35 +12,40 @@ interface ProjectCardProps {
 const ProjectCard: React.FC<ProjectCardProps> = ({ project, onOpen }) => {
   return (
     <button
+      type="button"
+      data-no-press
       onClick={() => onOpen(project)}
       title={project.path}
-      className="group min-w-0 text-left bg-card rounded-xl border shadow-xs hover:bg-accent/40 transition-colors p-4 flex flex-col cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className="bento-card group flex min-h-[128px] min-w-0 cursor-pointer flex-col overflow-hidden text-left outline-none transition-colors hover:bg-[var(--hover)] focus-visible:ring-2 focus-visible:ring-ring/25"
     >
-      <div className="flex items-center gap-3 mb-3 min-w-0 w-full">
-        <div className="w-8 h-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
-          <Folder size={16} />
+      <div className="flex w-full min-w-0 items-start gap-3.5 px-5 pt-5 pb-4">
+        <div className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-[var(--button-fill)] text-muted-foreground">
+          <Folder size={18} />
         </div>
-        <div className="min-w-0">
-          <h3 className="truncate text-subtitle font-medium text-foreground">{project.name}</h3>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <h3 className="truncate text-title font-semibold tracking-[-0.01em] text-foreground">
+            {project.name}
+          </h3>
+          <p className="mt-1 truncate font-mono text-caption text-[var(--label)]">{project.path}</p>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-3 border-t mt-auto w-full">
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-caption font-medium text-muted-foreground">
-            会话 <span className="font-medium text-foreground tabular-nums">{project.sessionCount}</span>
+      <div className="mt-auto flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[var(--hairline-divider)] px-5 py-3">
+        <div className="flex shrink-0 items-center gap-2 text-label text-muted-foreground">
+          <span>
+            会话 <span className="font-semibold text-foreground tabular-nums">{project.sessionCount}</span>
           </span>
           {project.totalTokens > 0 && (
             <>
-              <span className="text-muted-foreground/50">·</span>
-              <span className="text-caption text-muted-foreground">
-                <span className="font-medium text-foreground tabular-nums">{formatTokens(project.totalTokens)}</span>{' '}
+              <span className="text-[var(--label)]">·</span>
+              <span>
+                <span className="font-semibold text-foreground tabular-nums">{formatTokens(project.totalTokens)}</span>{' '}
                 tokens
               </span>
             </>
           )}
         </div>
-        <span className="text-caption text-muted-foreground truncate">
+        <span className="truncate text-label text-[var(--label)]">
           最近活跃 {formatRelativeTime(project.lastSessionAt)}
         </span>
       </div>

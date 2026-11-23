@@ -4,10 +4,11 @@ import { SkillDetail, SkillInfo } from '../types/skill';
 import Markdown from './Markdown';
 import ConfirmModal from './ConfirmModal';
 import Button from './ui/button';
+import Input from './ui/input';
 import PageHeader from './ui/page-header';
 import { ActionTooltip } from './ui/tooltip';
-import { Dialog, DialogContent } from './ui/dialog';
-import { LoaderCircle, Plus, Trash2, WandSparkles, X } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { LoaderCircle, Plus, Trash2, WandSparkles } from 'lucide-react';
 
 const SkillManager: React.FC = () => {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -90,11 +91,14 @@ const SkillManager: React.FC = () => {
   };
 
   return (
-    <div className="page-layout pt-4">
-      {/* 标题栏 */}
+    <div className="page-layout">
       <PageHeader
         title="Skill 管理"
-        description={<><code className="font-mono text-label">~/.agents/skills</code> · Codex 读取的 Skill 目录</>}
+        badge={
+          <code className="font-mono text-[12px] text-[var(--label)]">
+            ~/.agents/skills{skills.length > 0 ? ` · ${skills.length} 项` : ''}
+          </code>
+        }
         actions={
           <Button
             size="sm"
@@ -111,62 +115,73 @@ const SkillManager: React.FC = () => {
       />
 
       {error && (
-        <div className="mb-4 shrink-0 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2.5 text-label text-destructive">
-          {error}
+        <div className="mb-3 shrink-0 px-[var(--workspace-inset-inline)]">
+          <div className="bento-card px-4 py-2.5 text-label text-destructive">{error}</div>
         </div>
       )}
 
-      {/* 内容区 */}
-      <div className="page-scroll">
+      <div className="page-scroll flex flex-col">
         {isLoading ? (
-          <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1024px]/page:grid-cols-3 @min-[1400px]/page:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1160px]/page:grid-cols-3 gap-4">
             {[1, 2, 3, 4].map(i => (
-              <div key={i} className="h-28 bg-muted/50 rounded-xl animate-pulse" />
+              <div key={i} className="h-[152px] rounded-[14px] bg-[var(--button-fill)]/70 animate-pulse" />
             ))}
           </div>
         ) : skills.length === 0 ? (
-          <div className="rounded-xl border border-dashed py-16 px-8 text-center">
-            <p className="text-body text-muted-foreground">~/.agents/skills 下暂无 Skill，点击右上角添加</p>
+          <div className="bento-empty flex-1 py-16">
+            <div className="mb-3.5 grid size-11 place-items-center rounded-[12px] bg-[var(--button-fill)] text-muted-foreground">
+              <WandSparkles size={20} />
+            </div>
+            <p className="text-body text-muted-foreground">~/.agents/skills 下暂无 Skill，点击右上角添加。</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1024px]/page:grid-cols-3 @min-[1400px]/page:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 @min-[640px]/page:grid-cols-2 @min-[1160px]/page:grid-cols-3 gap-4">
             {skills.map(skill => (
               <div
                 key={skill.name}
                 onClick={() => void openDetail(skill.dirName)}
-                className="group relative min-w-0 bg-card rounded-xl border shadow-xs hover:bg-accent/40 transition-colors p-4 cursor-pointer"
+                className="bento-card group relative flex min-h-[152px] min-w-0 cursor-pointer flex-col overflow-hidden transition-colors hover:bg-[var(--hover)]"
               >
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-8 h-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
-                      <WandSparkles size={15} />
+                <div className="flex flex-1 flex-col px-5 pt-5 pb-4">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-[var(--button-fill)] text-muted-foreground">
+                        <WandSparkles size={17} />
+                      </div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <h3 className="min-w-0 truncate text-title font-semibold tracking-[-0.01em] text-foreground">
+                          {skill.name}
+                        </h3>
+                        {skill.isSymlink && (
+                          <span className="shrink-0 rounded-full bg-[var(--button-fill)] px-2 py-0.5 text-caption font-medium text-muted-foreground">
+                            链接
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <h3 className="min-w-0 truncate text-subtitle font-medium text-foreground">
-                      {skill.name}
-                    </h3>
-                    {skill.isSymlink && (
-                      <span className="shrink-0 rounded-md bg-muted border border-border px-2 py-0.5 text-caption font-medium text-muted-foreground">
-                        链接
-                      </span>
-                    )}
+                    <ActionTooltip label="删除 Skill">
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          setDeleteName(skill.dirName);
+                        }}
+                        aria-label="删除 Skill"
+                        className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        <Trash2 size={14} strokeWidth={2.2} />
+                      </button>
+                    </ActionTooltip>
                   </div>
-                  <ActionTooltip label="删除 Skill">
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        setDeleteName(skill.dirName);
-                      }}
-                      aria-label="删除 Skill"
-                      className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all"
-                    >
-                      <Trash2 size={13} strokeWidth={2.5} />
-                    </button>
-                  </ActionTooltip>
+                  <p className="line-clamp-2 min-h-[40px] text-body leading-relaxed text-muted-foreground">
+                    {skill.description || '（无描述）'}
+                  </p>
                 </div>
-                <p className="text-label text-muted-foreground leading-relaxed line-clamp-2 min-h-[32px]">
-                  {skill.description || '（无描述）'}
-                </p>
-                <p className="mt-2 truncate text-caption font-mono text-muted-foreground/70">{skill.path}</p>
+                <div className="mt-auto border-t border-[var(--hairline-divider)] px-5 py-2.5">
+                  <p className="truncate font-mono text-caption text-[var(--label)]" title={skill.path}>
+                    {skill.path}
+                  </p>
+                </div>
               </div>
             ))}
           </div>
@@ -175,78 +190,65 @@ const SkillManager: React.FC = () => {
 
       {/* 详情弹窗 */}
       <Dialog open={!!detail} onOpenChange={(open) => { if (!open) setDetail(null); }}>
-        <DialogContent className="max-w-2xl p-0 max-h-[82vh] flex flex-col overflow-hidden gap-0" showCloseButton={false}>
-          <div className="px-6 py-4 border-b border-border flex items-start justify-between gap-4 shrink-0">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-title text-foreground tracking-tight">{detail?.name}</h3>
-                {detail?.isSymlink && (
-                  <span className="rounded-md bg-muted border border-border px-2 py-0.5 text-caption font-medium text-muted-foreground">链接</span>
-                )}
-              </div>
-              <p className="mt-1 text-caption font-mono text-muted-foreground truncate">{detail?.path}</p>
+        <DialogContent className="flex max-h-[82vh] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b border-[var(--hairline-divider)] px-6 py-4 pr-14">
+            <div className="flex items-center gap-2">
+              <DialogTitle>{detail?.name}</DialogTitle>
+              {detail?.isSymlink && (
+                <span className="rounded-full bg-[var(--button-fill)] px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground">
+                  链接
+                </span>
+              )}
             </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setDetail(null)}
-              className="text-muted-foreground hover:text-foreground"
-              aria-label="关闭"
-            >
-              <X size={15} strokeWidth={2.5} />
-            </Button>
-          </div>
-          <div className="px-6 py-2 bg-muted/40 border-b text-label text-muted-foreground shrink-0">
-            {detail?.fileCount} 个文件
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+            <DialogDescription className="truncate font-mono text-caption">
+              {detail?.path} · {detail?.fileCount} 个文件
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
             {detail && <Markdown content={detail.content} />}
           </div>
         </DialogContent>
       </Dialog>
 
       {detailLoading && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/10">
-          <div className="bg-popover rounded-lg shadow-lg border px-5 py-4 flex items-center gap-2.5 text-body text-muted-foreground">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--dialog-overlay)]">
+          <div className="bento-popup flex items-center gap-2.5 px-5 py-3.5 text-body text-muted-foreground">
             <LoaderCircle className="animate-spin" size={14} strokeWidth={2.5} />
-            加载详情中...
+            加载详情中…
           </div>
         </div>
       )}
 
       {/* 添加弹窗 */}
       <Dialog open={isAddOpen} onOpenChange={(open) => { if (!open) setIsAddOpen(false); }}>
-        <DialogContent className="max-w-md p-0 overflow-hidden gap-0" showCloseButton={false}>
-          <div className="px-5 py-4 border-b border-border">
-            <h3 className="font-semibold text-title text-foreground tracking-tight">添加 Skill</h3>
-          </div>
-          <div className="p-5 flex flex-col gap-4">
-            <div className="text-label text-muted-foreground leading-relaxed">
-              输入包含 <code className="font-mono text-foreground">SKILL.md</code> 的本地目录路径，
-              将复制到 <code className="font-mono">~/.agents/skills/</code>。
-            </div>
-            <input
+        <DialogContent className="max-w-md gap-4 p-6">
+          <DialogHeader>
+            <DialogTitle>添加 Skill</DialogTitle>
+            <DialogDescription>
+              输入包含 <code className="font-mono text-foreground">SKILL.md</code> 的本地目录路径，将复制到{' '}
+              <code className="font-mono">~/.agents/skills/</code>。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-3">
+            <Input
               value={addPath}
               onChange={e => {
                 setAddPath(e.target.value);
                 setAddError(null);
               }}
               placeholder="例如：/Users/you/projects/my-skill"
-              className="h-9 w-full px-3 bg-background border border-input rounded-md shadow-xs focus:border-foreground/60 outline-none transition-[color,box-shadow] text-body font-mono text-foreground placeholder:text-muted-foreground"
+              className="font-mono text-body"
             />
             {addError && (
-              <div className="rounded-md bg-destructive/5 border border-destructive/20 px-3 py-2 text-label text-destructive break-all">
+              <div className="rounded-[9px] bg-destructive/8 px-3 py-2 text-label text-destructive break-all">
                 {addError}
               </div>
             )}
           </div>
-          <div className="px-5 py-3 bg-muted/40 border-t flex items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsAddOpen(false)}
-              disabled={isAdding}
-            >
+
+          <DialogFooter className="border-t border-[var(--hairline-divider)] pt-3">
+            <Button variant="outline" size="sm" onClick={() => setIsAddOpen(false)} disabled={isAdding}>
               取消
             </Button>
             <Button
@@ -254,14 +256,12 @@ const SkillManager: React.FC = () => {
               size="sm"
               onClick={() => void handleAdd()}
               disabled={isAdding}
-              className="min-w-[88px]"
+              className="min-w-[84px]"
             >
-              {isAdding && (
-                <LoaderCircle className="animate-spin mr-1.5" size={12} strokeWidth={2.5} />
-              )}
-              {isAdding ? '添加中...' : '添加'}
+              {isAdding && <LoaderCircle className="animate-spin" size={12} strokeWidth={2.5} />}
+              {isAdding ? '添加中…' : '添加'}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -269,6 +269,7 @@ const SkillManager: React.FC = () => {
         isOpen={deleteName !== null}
         title="删除 Skill"
         message={`确定删除 Skill "${deleteName}" 吗？将同时删除 ~/.agents/skills/${deleteName} 目录。`}
+        confirmDisabled={isDeleting}
         onConfirm={() => void handleDelete()}
         onCancel={() => setDeleteName(null)}
       />

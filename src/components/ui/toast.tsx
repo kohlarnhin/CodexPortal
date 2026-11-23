@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { CircleAlert, CircleCheck, Info, TriangleAlert, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 type ToastKind = 'success' | 'error' | 'warning' | 'info';
@@ -72,11 +72,11 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-const KIND_META: Record<ToastKind, { icon: typeof Info; className: string }> = {
-  success: { icon: CircleCheck, className: 'text-success' },
-  error: { icon: CircleAlert, className: 'text-destructive' },
-  warning: { icon: TriangleAlert, className: 'text-warning' },
-  info: { icon: Info, className: 'text-info' },
+const KIND_TONE: Record<ToastKind, string> = {
+  success: 'success',
+  error: 'error',
+  warning: 'warning',
+  info: 'idle',
 };
 
 export function Toaster() {
@@ -85,34 +85,35 @@ export function Toaster() {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed right-4 bottom-4 z-[200] flex w-[360px] max-w-[calc(100vw-2rem)] flex-col gap-2"
+      className="pointer-events-none fixed right-5 bottom-5 z-[200] flex w-[348px] max-w-[calc(100vw-2.5rem)] flex-col gap-2"
     >
-      {toasts.map(item => {
-        const { icon: Icon, className } = KIND_META[item.kind];
-        return (
-          <div
-            key={item.id}
-            role={item.kind === 'error' ? 'alert' : 'status'}
-            className="animate-toast-in pointer-events-auto flex items-start gap-2.5 rounded-lg border bg-popover px-3.5 py-3 text-popover-foreground shadow-lg"
-          >
-            <Icon size={16} className={cn('mt-px shrink-0', className)} aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              {item.title && <p className="text-body font-medium break-all">{item.title}</p>}
-              <p className={cn('text-label break-words whitespace-pre-wrap', item.title ? 'mt-0.5 text-muted-foreground' : 'text-body')}>
-                {item.message}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => dismiss(item.id)}
-              aria-label="关闭提示"
-              className="-mr-1 -mt-0.5 shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <X size={13} />
-            </button>
+      {toasts.map(item => (
+        <div
+          key={item.id}
+          role={item.kind === 'error' ? 'alert' : 'status'}
+          className="animate-toast-in pointer-events-auto flex items-start gap-2.5 rounded-[16px] bg-[var(--surface)] px-4 py-3 text-foreground shadow-[var(--selected-shadow)]"
+        >
+          <span
+            className="bento-status-dot mt-[6px]"
+            data-tone={KIND_TONE[item.kind]}
+            aria-hidden="true"
+          />
+          <div className="min-w-0 flex-1">
+            {item.title && <p className="text-body font-semibold break-all">{item.title}</p>}
+            <p className={cn('break-words whitespace-pre-wrap leading-relaxed', item.title ? 'mt-0.5 text-label text-muted-foreground' : 'text-body')}>
+              {item.message}
+            </p>
           </div>
-        );
-      })}
+          <button
+            type="button"
+            onClick={() => dismiss(item.id)}
+            aria-label="关闭提示"
+            className="button-neutral -mr-1 -mt-0.5 grid size-6 shrink-0 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
