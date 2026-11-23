@@ -115,7 +115,7 @@ pub(crate) struct EventContext {
     switching: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn get_codex_event_context(
     app: tauri::AppHandle, state: State<'_, EventListenerState>,
 ) -> Result<EventContext, String> {
@@ -129,7 +129,7 @@ pub(crate) fn get_codex_event_context(
         epoch: state.epoch.load(Ordering::Acquire), switching: state.switching.load(Ordering::Acquire) })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn save_codex_live_usage(
     app: tauri::AppHandle,
     state: State<'_, EventListenerState>,
@@ -431,7 +431,7 @@ fn format_window(label: &str, window: Option<QuotaWindow>) -> Option<String> {
 }
 
 // 只接收结构化状态与额度数字，绝不把完整 RPC、账号信息或错误响应写入日志。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn report_codex_listener_event(report: ListenerReport) {
     match report {
         ListenerReport::Connected => {

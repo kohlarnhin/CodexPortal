@@ -46,7 +46,7 @@ fn read_pending_update(db: &rusqlite::Connection) -> Result<Option<String>, Stri
 }
 
 /// 清除已提醒过的新版本号，避免版本追上后仍显示旧提示。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn clear_pending_update(state: State<'_, AppState>) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
@@ -58,7 +58,7 @@ pub(crate) fn clear_pending_update(state: State<'_, AppState>) -> Result<(), Str
 }
 
 /// 记录已提醒过的新版本号（每次检测到新版本时写入，无论弹窗是否被关闭）。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn set_pending_update(
     state: State<'_, AppState>,
     version: String,

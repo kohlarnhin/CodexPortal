@@ -89,7 +89,7 @@ pub(crate) async fn get_quota_quiet_hours(app: tauri::AppHandle) -> Result<Quota
     crate::db::with_db(app, read_quiet_hours).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn set_quota_quiet_hours(
     state: State<'_, AppState>,
     settings: QuotaQuietHours,

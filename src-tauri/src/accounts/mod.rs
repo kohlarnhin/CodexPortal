@@ -209,7 +209,7 @@ fn set_account_enabled_in_db(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn set_account_enabled(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -250,7 +250,7 @@ fn update_account_notes_in_db(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn update_account_notes(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -699,7 +699,7 @@ pub(crate) async fn update_account(
 }
 
 /// 保存 team 账号的 Access Token（at），用于获取重置卡等 PAT 无法访问的接口。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn set_account_access_token(
     state: State<'_, AppState>,
     id: String,

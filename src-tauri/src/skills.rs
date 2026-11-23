@@ -125,14 +125,14 @@ fn scan_skills(root: &PathBuf) -> Vec<SkillInfo> {
 }
 
 /// 列出 ~/.agents/skills 下的全部 skill。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn list_skills() -> Result<Vec<SkillInfo>, String> {
     let dir = skills_dir()?;
     Ok(scan_skills(&dir))
 }
 
 /// 读取单个 skill 的详情（SKILL.md 全文 + 目录内文件数）。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn get_skill_detail(name: String) -> Result<SkillDetail, String> {
     if !is_valid_skill_dir_name(&name) {
         return Err("Skill 名称无效".to_string());
@@ -260,14 +260,14 @@ fn delete_skill_from(root: &PathBuf, name: &str) -> Result<(), String> {
 }
 
 /// 从本地目录添加 skill 到 ~/.agents/skills（复制）。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn add_skill(source_path: String) -> Result<SkillInfo, String> {
     let root = skills_dir()?;
     add_skill_to(&root, &PathBuf::from(source_path.trim()))
 }
 
 /// 删除 ~/.agents/skills 下的 skill。
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn delete_skill(name: String) -> Result<(), String> {
     let root = skills_dir()?;
     delete_skill_from(&root, &name)

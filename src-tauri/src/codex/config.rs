@@ -28,12 +28,12 @@ fn read_codex_config_file(path: &PathBuf) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn get_codex_config_path() -> Result<String, String> {
     Ok(codex_config_path()?.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn get_codex_config() -> Result<String, String> {
     let _guard = CONFIG_FILE_LOCK.lock().map_err(|e| e.to_string())?;
     read_codex_config_file(&codex_config_path()?)
@@ -84,7 +84,7 @@ fn write_codex_config_file(
     result
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn save_codex_config(content: String, expected_content: String) -> Result<(), String> {
     let _guard = CONFIG_FILE_LOCK.lock().map_err(|e| e.to_string())?;
     let result = write_codex_config_file(&codex_config_path()?, &content, &expected_content);
