@@ -170,8 +170,13 @@ const AccountModal: React.FC<AccountModalProps> = ({
           }
           return;
         }
-      } catch {
-        // 轮询中的瞬时错误忽略
+      } catch (err: any) {
+        // 授权码只能兑换一次，失败后回到表单提示，由用户重新发起登录。
+        if (!disposed) {
+          setError(err?.toString() || 'OAuth 登录失败，请重新登录');
+          setStep('form');
+        }
+        return;
       }
       // 等本次请求完成再继续，避免授权码兑换较慢时产生重叠请求。
       if (!disposed) timer = window.setTimeout(() => void poll(), 1500);

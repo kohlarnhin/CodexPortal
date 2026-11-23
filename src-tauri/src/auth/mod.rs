@@ -9,6 +9,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
+use std::io::Write;
+use std::path::Path;
 
 pub(crate) const PERSONAL_ACCESS_TOKEN_METADATA_URL: &str =
     "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami";
@@ -488,9 +490,36 @@ pub(crate) fn apply_auth_json(content: &str) -> Result<(), String> {
     }
 
     let auth_file_path = codex_dir.join("auth.json");
-    fs::write(&auth_file_path, content).map_err(|e| format!("Failed to write auth.json: {}", e))?;
+    write_auth_file(&auth_file_path, content).map_err(|e| format!("Failed to write auth.json: {}", e))?;
 
     Ok(())
+}
+
+fn write_auth_file(path: &Path, content: &str) -> std::io::Result<()> {
+    let target = if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let temporary = target.with_file_name(format!(".auth-{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| {
+        let mut file = options.open(&temporary)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, &target)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[cfg(test)]

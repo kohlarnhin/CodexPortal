@@ -18,8 +18,13 @@ use std::io::Write;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::thread;
+use std::time::{Duration, Instant};
 use tauri::Manager;
 use tauri::State;
+
+const CALLBACK_WAIT: Duration = Duration::from_secs(10 * 60);
+const CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const LISTENER_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct OAuthLoginInfo {
@@ -42,7 +47,10 @@ fn urldecode(value: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(hex) = u8::from_str_radix(&value[i + 1..i + 3], 16) {
+            if let Some(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+            {
                 out.push(hex);
                 i += 3;
                 continue;
@@ -232,7 +240,20 @@ pub(crate) async fn start_oauth_login(app: tauri::AppHandle) -> Result<OAuthLogi
     let (verifier, challenge) = generate_pkce();
     let state = generate_oauth_state();
 
-    let listener = bind_oauth_listener().map_err(|e| format!("无法启动本地回调服务器：{e}"))?;
+    let superseded = {
+        let app_state = app.state::<AppState>();
+        let mut oauth = app_state.oauth.lock().map_err(|e| e.to_string())?;
+        oauth.state.take().is_some()
+    };
+    let listener = tauri::async_runtime::spawn_blocking(move || {
+        if superseded {
+            thread::sleep(LISTENER_POLL * 2);
+        }
+        bind_oauth_listener()
+    })
+    .await
+    .map_err(|e| format!("无法启动本地回调服务器：{e}"))?
+    .map_err(|e| format!("无法启动本地回调服务器：{e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect_uri = format!("http://localhost:{port}/auth/callback");
 
@@ -245,27 +266,10 @@ pub(crate) async fn start_oauth_login(app: tauri::AppHandle) -> Result<OAuthLogi
         oauth.callback_code = None;
     }
 
-    // 后台线程监听一次回调。
+    // 后台线程等待回调，直到收到有效回调、超时或被新的登录替换。
     let thread_app = app.clone();
     let expected_state = state.clone();
-    thread::spawn(move || {
-        if let Ok((mut stream, _addr)) = listener.accept() {
-            let message = match read_http_request(&mut stream) {
-                Ok(request_line) => match parse_callback_query(&request_line) {
-                    Some((code, callback_state)) if callback_state == expected_state => {
-                        let app_state = thread_app.state::<AppState>();
-                        if let Ok(mut oauth) = app_state.oauth.lock() {
-                            oauth.callback_code = Some(code);
-                        }
-                        "登录成功，可以关闭此窗口"
-                    }
-                    _ => "回调参数无效",
-                },
-                Err(_) => "回调请求读取失败",
-            };
-            let _ = write_http_response(&mut stream, message);
-        }
-    });
+    thread::spawn(move || serve_oauth_callback(&thread_app, listener, &expected_state));
 
     let url = build_oauth_authorize_url(OAUTH_CLIENT_ID, &redirect_uri, &challenge, &state);
     Ok(OAuthLoginInfo { url, redirect_uri })
@@ -277,9 +281,9 @@ pub(crate) async fn check_oauth_callback(
     state: State<'_, AppState>,
 ) -> Result<Option<RtTokenInfo>, String> {
     let (code, verifier, redirect_uri) = {
-        let oauth = state.oauth.lock().map_err(|e| e.to_string())?;
+        let mut oauth = state.oauth.lock().map_err(|e| e.to_string())?;
         (
-            oauth.callback_code.clone(),
+            oauth.callback_code.take(),
             oauth.code_verifier.clone(),
             oauth.redirect_uri.clone(),
         )
@@ -289,7 +293,7 @@ pub(crate) async fn check_oauth_callback(
         return Ok(None);
     };
 
-    let info = tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let mut info = exchange_oauth_code(
             &code,
             &redirect_uri.unwrap_or_default(),
@@ -300,10 +304,11 @@ pub(crate) async fn check_oauth_callback(
         Ok::<RtTokenInfo, String>(info)
     })
     .await
-    .map_err(|e| format!("OAuth 兑换任务失败：{e}"))??;
+    .map_err(|e| format!("OAuth 兑换任务失败：{e}"))
+    .and_then(|result| result);
 
     clear_oauth_session(&state);
-    Ok(Some(info))
+    result.map(Some)
 }
 
 /// 用户手动粘贴本地回调地址（在其它设备/浏览器登录后）完成认证。
@@ -353,6 +358,65 @@ fn clear_oauth_session(state: &AppState) {
         oauth.redirect_uri = None;
         oauth.callback_code = None;
     }
+}
+
+fn serve_oauth_callback(app: &tauri::AppHandle, listener: TcpListener, expected_state: &str) {
+    if listener.set_nonblocking(true).is_err() {
+        return;
+    }
+    let deadline = Instant::now() + CALLBACK_WAIT;
+    while Instant::now() < deadline && oauth_session_matches(app, expected_state) {
+        match listener.accept() {
+            Ok((stream, _addr)) => {
+                if handle_callback_request(app, stream, expected_state) {
+                    return;
+                }
+            }
+            Err(_) => thread::sleep(LISTENER_POLL),
+        }
+    }
+}
+
+fn handle_callback_request(app: &tauri::AppHandle, mut stream: TcpStream, expected_state: &str) -> bool {
+    if stream.set_nonblocking(false).is_err()
+        || stream.set_read_timeout(Some(CALLBACK_READ_TIMEOUT)).is_err()
+    {
+        return false;
+    }
+    let (captured, message) = match read_http_request(&mut stream) {
+        Ok(request_line) => match parse_callback_query(&request_line) {
+            Some((code, callback_state)) if callback_state == expected_state => {
+                if store_callback_code(app, expected_state, code) {
+                    (true, "登录成功，可以关闭此窗口")
+                } else {
+                    (false, "回调参数无效")
+                }
+            }
+            _ => (false, "回调参数无效"),
+        },
+        Err(_) => (false, "回调请求读取失败"),
+    };
+    let _ = write_http_response(&mut stream, message);
+    captured
+}
+
+fn oauth_session_matches(app: &tauri::AppHandle, expected_state: &str) -> bool {
+    app.state::<AppState>()
+        .oauth
+        .lock()
+        .is_ok_and(|oauth| oauth.state.as_deref() == Some(expected_state))
+}
+
+fn store_callback_code(app: &tauri::AppHandle, expected_state: &str, code: String) -> bool {
+    let app_state = app.state::<AppState>();
+    let Ok(mut oauth) = app_state.oauth.lock() else {
+        return false;
+    };
+    if oauth.state.as_deref() != Some(expected_state) {
+        return false;
+    }
+    oauth.callback_code = Some(code);
+    true
 }
 
 #[cfg(test)]
