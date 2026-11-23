@@ -75,6 +75,7 @@ pub fn run() {
             tray::start(app.handle().clone())?;
             accounts::scheduler::start_bootstrap(app.handle().clone());
             patrol::start(app.handle().clone());
+            sessions::storage::start_content_cleanup(app.handle().clone());
 
             // 账号库为空时，后台自动从 ~/.codex/auth.json 导入账号（异步，失败静默）。
             {

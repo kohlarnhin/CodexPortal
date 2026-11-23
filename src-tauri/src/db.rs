@@ -163,7 +163,7 @@ pub(crate) fn init_db(conn: &Connection) -> SqlResult<()> {
         [],
     )?;
 
-    // 每个 session 文件的完整内容（JSONL 原文）与解析出的元信息（含 token 消耗）。
+    // 每个 session 文件解析出的元信息（含 token 消耗）；正文按 file_path 从本地文件读取，content 列保留为空。
     conn.execute(
         "CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,

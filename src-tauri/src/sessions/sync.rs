@@ -418,7 +418,7 @@ fn sync_sessions_inner(
                         parsed.output_tokens,
                         parsed.reasoning_tokens,
                         parsed.total_tokens,
-                        content,
+                        "",
                         now,
                         meta.is_subagent
                     ],

@@ -1,5 +1,6 @@
 pub(crate) mod list;
 pub(crate) mod parser;
+pub(crate) mod storage;
 pub(crate) mod sync;
 pub(crate) mod usage;
 
@@ -201,13 +202,24 @@ pub(crate) async fn get_session_content(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<String, String> {
-    crate::db::with_db(app, move |db| {
+    let file_path = crate::db::with_db(app, move |db| {
         db.query_row(
-            "SELECT content FROM sessions WHERE id = ?1",
+            "SELECT file_path FROM sessions WHERE id = ?1",
             params![id],
             |row| row.get::<_, String>(0),
         )
         .map_err(|_| "会话不存在".to_string())
     })
-    .await
+    .await?;
+    tauri::async_runtime::spawn_blocking(move || std::fs::read_to_string(file_path))
+        .await
+        .map_err(|error| format!("读取会话任务失败：{error}"))?
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                sync::request_session_sync();
+                "会话文件已不存在，可能已被移动或删除。".to_string()
+            } else {
+                format!("无法读取会话文件：{error}")
+            }
+        })
 }
