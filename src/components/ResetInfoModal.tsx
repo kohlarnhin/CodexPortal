@@ -10,8 +10,6 @@ interface ResetInfoModalProps {
   getResetCredits: (id: string, force?: boolean) => Promise<ResetCreditsInfo>;
   setAccountAccessToken: (id: string, accessToken: string) => Promise<void>;
   consumeResetCredit: (id: string, creditId: string) => Promise<ResetCreditsInfo>;
-  /** 重置成功后刷新账号额度。 */
-  onRefreshUsage: (id: string) => void;
 }
 
 function formatTimestamp(value: number | null | undefined): string {
@@ -45,7 +43,6 @@ export default function ResetInfoModal({
   getResetCredits,
   setAccountAccessToken,
   consumeResetCredit,
-  onRefreshUsage,
 }: ResetInfoModalProps) {
   const [info, setInfo] = useState<ResetCreditsInfo | null>(null);
   const [needsAt, setNeedsAt] = useState(false);
@@ -116,8 +113,6 @@ export default function ResetInfoModal({
       setConsumeSuccess(true);
       setConfirmCredit(null);
       window.setTimeout(() => setConsumeSuccess(false), 4000);
-      // 额度窗口已重置，自动刷新该账号的额度。
-      onRefreshUsage(account.id);
     } catch (err: any) {
       const message = err?.toString() || '使用重置卡失败';
       if (message.includes('请重新输入 Access Token')) {

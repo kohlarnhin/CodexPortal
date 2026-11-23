@@ -383,7 +383,6 @@ const AccountList: React.FC<AccountListProps> = ({
           getResetCredits={getResetCredits}
           setAccountAccessToken={setAccountAccessToken}
           consumeResetCredit={consumeResetCredit}
-          onRefreshUsage={handleRefreshUsage}
         />
       )}
     </div>

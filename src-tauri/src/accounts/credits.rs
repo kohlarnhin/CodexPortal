@@ -1,3 +1,4 @@
+use super::usage::{begin_account_refresh, refresh_account_usage_observation, UsageObservation};
 use crate::codex::version::codex_cli_user_agent;
 use crate::http::{append_curl_header, curl_config_quote, run_curl};
 use crate::state::AppState;
@@ -257,6 +258,7 @@ fn build_consume_error(status: u16, body: &str) -> String {
 /// 成功后刷新并缓存最新的重置卡列表返回。
 #[tauri::command]
 pub(crate) async fn consume_reset_credit(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
     credit_id: String,
@@ -321,6 +323,18 @@ pub(crate) async fn consume_reset_credit(
     .await
     .map_err(|e| format!("使用重置卡任务失败：{e}"))??;
 
+    refresh_usage_after_reset(&app, &state, &id).await;
     // 使用成功后强制刷新卡片列表（状态会变为已兑换/可用数减少）并返回。
     load_reset_credits_cached(&state, id, true).await
+}
+
+async fn refresh_usage_after_reset(app: &tauri::AppHandle, state: &AppState, id: &str) {
+    let enabled = state.db.lock().is_ok_and(|db| super::ensure_account_enabled(&db, id).is_ok());
+    if !enabled {
+        return;
+    }
+    let Ok(_guard) = begin_account_refresh(state, id, Some(app.clone())) else {
+        return;
+    };
+    let _ = refresh_account_usage_observation(app, state, id, UsageObservation::Activation).await;
 }
