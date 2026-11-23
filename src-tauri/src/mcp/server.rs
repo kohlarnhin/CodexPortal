@@ -29,7 +29,8 @@ pub(super) fn handle(message: &Value, call: impl Fn(&str) -> Result<Value, Strin
         "initialize" => json!({
             "protocolVersion": message["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"),
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "codex-portal", "version": env!("CARGO_PKG_VERSION")}
+            "serverInfo": {"name": "codex-portal", "version": env!("CARGO_PKG_VERSION")},
+            "instructions": "查询 Codex 账号的剩余额度、重置时间或接替账号时，调用 get_status。仅在 Codex 因额度耗尽无法继续时调用 switch_account，Portal 会核对实时额度并决定是否切换。使用工具时请保持 Codex Portal 运行。"
         }),
         "ping" => json!({}),
         "tools/list" => tools(),

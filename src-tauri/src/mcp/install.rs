@@ -1,14 +1,30 @@
+use crate::codex::config::{get_codex_config, save_codex_config};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use toml_edit::{value, Array, DocumentMut, Item, Table, TableLike};
 
 const SERVER_NAME: &str = "codex-portal";
+const SERVER_ARG: &str = "mcp";
+const CODEX_SERVERS_TABLE: &str = "mcp_servers";
+const CODEX_SERVERS_TABLE_ERROR: &str = "Codex 的 mcp_servers 配置必须是 TOML 表。";
+const CODEX_HTTP_FIELDS: &[&str] = &[
+    "url",
+    "auth",
+    "bearer_token",
+    "bearer_token_env_var",
+    "http_headers",
+    "env_http_headers",
+    "http_headers_helper",
+    "oauth",
+    "oauth_resource",
+];
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum ClaudeMcpStatus {
+pub(crate) enum McpInstallStatus {
     ClaudeNotFound,
     NotInstalled,
     Installed,
@@ -20,19 +36,19 @@ fn config_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法获取用户目录。".into())
 }
 
-fn status(config: &Value, executable: &Path) -> ClaudeMcpStatus {
+fn status(config: &Value, executable: &Path) -> McpInstallStatus {
     match config.get("mcpServers").and_then(|servers| servers.get(SERVER_NAME)) {
-        None => ClaudeMcpStatus::NotInstalled,
+        None => McpInstallStatus::NotInstalled,
         Some(entry) if entry.get("command").and_then(Value::as_str).is_some_and(|command| Path::new(command) == executable)
-            && entry.get("args") == Some(&json!(["mcp"])) => ClaudeMcpStatus::Installed,
-        Some(_) => ClaudeMcpStatus::Outdated,
+            && entry.get("args") == Some(&json!([SERVER_ARG])) => McpInstallStatus::Installed,
+        Some(_) => McpInstallStatus::Outdated,
     }
 }
 
-fn status_at(path: &Path, executable: &Path) -> Result<ClaudeMcpStatus, String> {
+fn status_at(path: &Path, executable: &Path) -> Result<McpInstallStatus, String> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(ClaudeMcpStatus::ClaudeNotFound),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(McpInstallStatus::ClaudeNotFound),
         Err(error) => return Err(error.to_string()),
     };
     let config = serde_json::from_slice(&bytes).map_err(|error| format!("Claude Code 配置解析失败：{error}"))?;
@@ -45,7 +61,7 @@ fn merge(config: &mut Value, executable: &Path) -> Result<(), String> {
     let servers = root.entry("mcpServers").or_insert_with(|| json!({})).as_object_mut()
         .ok_or_else(|| "Claude Code 的 mcpServers 配置必须是 JSON 对象。".to_string())?;
     servers.insert(SERVER_NAME.into(), json!({
-        "type": "stdio", "command": command, "args": ["mcp"], "env": {}
+        "type": "stdio", "command": command, "args": [SERVER_ARG], "env": {}
     }));
     Ok(())
 }
@@ -79,16 +95,97 @@ fn install_at(path: &Path, executable: &Path) -> Result<(), String> {
     result
 }
 
-#[tauri::command]
-pub(crate) fn get_claude_mcp_status() -> Result<ClaudeMcpStatus, String> {
+#[tauri::command(async)]
+pub(crate) fn get_claude_mcp_status() -> Result<McpInstallStatus, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     status_at(&config_path()?, &executable)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn install_claude_mcp() -> Result<(), String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     install_at(&config_path()?, &executable)
+}
+
+fn parse_codex_config(content: &str) -> Result<DocumentMut, String> {
+    content
+        .parse()
+        .map_err(|_| "Codex 的 config.toml 格式无效，请修正后重试。".into())
+}
+
+fn codex_status(config: &DocumentMut, executable: &Path) -> Result<McpInstallStatus, String> {
+    let Some(servers) = config.get(CODEX_SERVERS_TABLE) else {
+        return Ok(McpInstallStatus::NotInstalled);
+    };
+    let servers = servers.as_table_like().ok_or(CODEX_SERVERS_TABLE_ERROR)?;
+    let Some(server) = servers.get(SERVER_NAME) else {
+        return Ok(McpInstallStatus::NotInstalled);
+    };
+    let Some(server) = server.as_table_like() else {
+        return Ok(McpInstallStatus::Outdated);
+    };
+
+    let has_command = server
+        .get("command")
+        .and_then(Item::as_str)
+        .is_some_and(|command| Path::new(command) == executable);
+    let has_args = server.get("args").and_then(Item::as_array).is_some_and(|args| {
+        args.len() == 1 && args.get(0).and_then(toml_edit::Value::as_str) == Some(SERVER_ARG)
+    });
+    let has_http_fields = CODEX_HTTP_FIELDS.iter().any(|key| server.contains_key(key));
+    Ok(if has_command && has_args && !has_http_fields {
+        McpInstallStatus::Installed
+    } else {
+        McpInstallStatus::Outdated
+    })
+}
+
+fn set_codex_stdio(server: &mut dyn TableLike, command: &str) {
+    // 切换为本地 STDIO，同时保留该服务的工具审批、超时等设置。
+    for field in CODEX_HTTP_FIELDS {
+        server.remove(field);
+    }
+    let mut args = Array::new();
+    args.push(SERVER_ARG);
+    server.insert("command", value(command));
+    server.insert("args", value(args));
+}
+
+fn merge_codex(config: &mut DocumentMut, executable: &Path) -> Result<(), String> {
+    let command = executable.to_str().ok_or("无法读取 Codex Portal 程序路径。")?;
+    let servers = config.entry(CODEX_SERVERS_TABLE).or_insert_with(|| {
+        let mut table = Table::new();
+        table.set_implicit(true);
+        Item::Table(table)
+    });
+    let servers = servers.as_table_like_mut().ok_or(CODEX_SERVERS_TABLE_ERROR)?;
+    if let Some(server) = servers.get_mut(SERVER_NAME).and_then(Item::as_table_like_mut) {
+        set_codex_stdio(server, command);
+    } else {
+        let mut server = Table::new();
+        set_codex_stdio(&mut server, command);
+        servers.insert(SERVER_NAME, Item::Table(server));
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub(crate) fn get_codex_mcp_status() -> Result<McpInstallStatus, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let config = parse_codex_config(&get_codex_config()?)?;
+    codex_status(&config, &executable)
+}
+
+#[tauri::command(async)]
+pub(crate) fn install_codex_mcp() -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let original = get_codex_config()?;
+    let mut config = parse_codex_config(&original)?;
+    if codex_status(&config, &executable)? != McpInstallStatus::Installed {
+        merge_codex(&mut config, &executable)?;
+        save_codex_config(config.to_string(), original)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -139,21 +236,21 @@ mod tests {
         let mut empty = json!({"other": true});
         merge(&mut empty, &fixture.executable).unwrap();
         assert_eq!(empty["other"], true);
-        assert_eq!(status(&empty, &fixture.executable), ClaudeMcpStatus::Installed);
+        assert_eq!(status(&empty, &fixture.executable), McpInstallStatus::Installed);
     }
 
     #[test]
     fn status_covers_missing_not_installed_installed_and_outdated() {
         let fixture = TestConfig::new();
-        assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), ClaudeMcpStatus::ClaudeNotFound);
+        assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), McpInstallStatus::ClaudeNotFound);
         assert!(install_at(&fixture.path, &fixture.executable).is_err());
         assert!(!fixture.path.exists());
         for config in [json!({}), json!({"mcpServers": {"another": {}}})] {
             fixture.write(&config);
-            assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), ClaudeMcpStatus::NotInstalled);
+            assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), McpInstallStatus::NotInstalled);
         }
         install_at(&fixture.path, &fixture.executable).unwrap();
-        assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), ClaudeMcpStatus::Installed);
+        assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), McpInstallStatus::Installed);
         let config: Value = serde_json::from_slice(&fs::read(&fixture.path).unwrap()).unwrap();
         for (command, args) in [
             (json!(fixture.directory.join("moved-portal")), json!(["mcp"])),
@@ -164,13 +261,13 @@ mod tests {
             config["mcpServers"][SERVER_NAME]["command"] = command;
             config["mcpServers"][SERVER_NAME]["args"] = args;
             fixture.write(&config);
-            assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), ClaudeMcpStatus::Outdated);
+            assert_eq!(status_at(&fixture.path, &fixture.executable).unwrap(), McpInstallStatus::Outdated);
         }
         for (status, expected) in [
-            (ClaudeMcpStatus::ClaudeNotFound, "claudeNotFound"),
-            (ClaudeMcpStatus::NotInstalled, "notInstalled"),
-            (ClaudeMcpStatus::Installed, "installed"),
-            (ClaudeMcpStatus::Outdated, "outdated"),
+            (McpInstallStatus::ClaudeNotFound, "claudeNotFound"),
+            (McpInstallStatus::NotInstalled, "notInstalled"),
+            (McpInstallStatus::Installed, "installed"),
+            (McpInstallStatus::Outdated, "outdated"),
         ] {
             assert_eq!(serde_json::to_value(status).unwrap(), expected);
         }
@@ -218,7 +315,7 @@ mod tests {
         install_at(&fixture.path, &fixture.executable).unwrap();
         assert!(fs::symlink_metadata(&fixture.path).unwrap().file_type().is_symlink());
         assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
-        assert_eq!(status_at(&target, &fixture.executable).unwrap(), ClaudeMcpStatus::Installed);
+        assert_eq!(status_at(&target, &fixture.executable).unwrap(), McpInstallStatus::Installed);
         let config: Value = serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
         assert_eq!(config["numStartups"], 42);
         assert_eq!(fs::read_dir(target_directory).unwrap().count(), 1);

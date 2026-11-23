@@ -116,6 +116,8 @@ pub fn run() {
             tray::set_tray_icon,
             mcp::install::get_claude_mcp_status,
             mcp::install::install_claude_mcp,
+            mcp::install::get_codex_mcp_status,
+            mcp::install::install_codex_mcp,
             auth::validate_personal_token,
             auth::exchange_refresh_token,
             accounts::save_rt_account,
